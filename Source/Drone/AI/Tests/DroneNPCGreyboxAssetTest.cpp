@@ -49,6 +49,10 @@ constexpr const TCHAR* HostilePatrolStateTreePackage =
 	TEXT("/Game/Drone/AI/StateTrees/ST_NPC_HostilePatrol");
 constexpr const TCHAR* HostilePatrolStateTreeObjectPath =
 	TEXT("/Game/Drone/AI/StateTrees/ST_NPC_HostilePatrol.ST_NPC_HostilePatrol");
+constexpr const TCHAR* FriendlyBaseRoutineStateTreePackage =
+	TEXT("/Game/Drone/AI/StateTrees/ST_NPC_FriendlyBaseRoutine");
+constexpr const TCHAR* FriendlyBaseRoutineStateTreeObjectPath =
+	TEXT("/Game/Drone/AI/StateTrees/ST_NPC_FriendlyBaseRoutine.ST_NPC_FriendlyBaseRoutine");
 
 struct FNPCExpectation
 {
@@ -118,8 +122,9 @@ bool HasExpectedActivityTags(const ADroneNPCAIController* Controller, const FDro
 	}
 	if (Profile.Faction == EDroneNPCFaction::Friendly)
 	{
-		return Activities.HasTagExact(DroneAITags::Activity_FriendlyBasePatrol)
-			&& Activities.HasTagExact(DroneAITags::Activity_Ambient)
+		// StateTree 실행 전에는 두 후보가 모두 설정되고, 실행 중에는 현재 검색 종류 하나만 남는다.
+		return (Activities.HasTagExact(DroneAITags::Activity_FriendlyBasePatrol)
+				|| Activities.HasTagExact(DroneAITags::Activity_Ambient))
 			&& !Activities.HasTagExact(DroneAITags::Activity_EnemyPatrol);
 	}
 	return false;
@@ -298,10 +303,10 @@ private:
 	double StartedAt = 0.0;
 };
 
-class FValidateHostilePatrolPIECommand final : public IAutomationLatentCommand
+class FValidateNPCBaseRoutinesPIECommand final : public IAutomationLatentCommand
 {
 public:
-	explicit FValidateHostilePatrolPIECommand(FAutomationTestBase* InTest)
+	explicit FValidateNPCBaseRoutinesPIECommand(FAutomationTestBase* InTest)
 		: Test(InTest)
 	{
 	}
@@ -319,7 +324,7 @@ public:
 		{
 			if (Now - StartedAt > 20.0)
 			{
-				Test->AddError(TEXT("Hostile Patrol PIE World did not begin play within 20 seconds"));
+				Test->AddError(TEXT("NPC Base Routines PIE World did not begin play within 20 seconds"));
 				return true;
 			}
 			return false;
@@ -346,20 +351,12 @@ public:
 			if (Now - StartedAt > 20.0)
 			{
 				Test->AddError(FString::Printf(
-					TEXT("Hostile Patrol PIE expected 2 Hostile and 2 Friendly NPCs, found %d and %d"),
+					TEXT("NPC Base Routines PIE expected 2 Hostile and 2 Friendly NPCs, found %d and %d"),
 					Hostiles.Num(),
 					Friendlies.Num()));
 				return true;
 			}
 			return false;
-		}
-
-		if (FriendlyStartLocations.IsEmpty())
-		{
-			for (ADroneNPCCharacter* Friendly : Friendlies)
-			{
-				FriendlyStartLocations.Add(Friendly->GetFName(), Friendly->GetActorLocation());
-			}
 		}
 
 		bool bAllHostilesCompleted = true;
@@ -372,8 +369,20 @@ public:
 				&& Controller->GetCompletedPatrolCycles() >= 2
 				&& Controller->GetVisitedPatrolSlotCount() >= 2;
 		}
+		bool bAllFriendliesCompleted = true;
+		for (ADroneNPCCharacter* Friendly : Friendlies)
+		{
+			ADroneNPCAIController* Controller = Cast<ADroneNPCAIController>(Friendly->GetController());
+			bAllFriendliesCompleted &= Controller
+				&& Controller->GetStateTreeAIComponent()
+				&& Controller->GetStateTreeAIComponent()->IsRunning()
+				&& Controller->GetCompletedFriendlyRoutineCycles() >= 2
+				&& Controller->GetVisitedFriendlySlotCount() >= 2
+				&& Controller->HasVisitedFriendlyActivity(DroneAITags::Activity_FriendlyBasePatrol)
+				&& Controller->HasVisitedFriendlyActivity(DroneAITags::Activity_Ambient);
+		}
 
-		if (!bAllHostilesCompleted && Now - StartedAt <= 35.0)
+		if ((!bAllHostilesCompleted || !bAllFriendliesCompleted) && Now - StartedAt <= 35.0)
 		{
 			return false;
 		}
@@ -391,16 +400,25 @@ public:
 			}
 		}
 
+		Test->TestTrue(
+			TEXT("Both Friendly NPCs complete two cycles across Base Patrol and Ambient slots"),
+			bAllFriendliesCompleted);
 		for (ADroneNPCCharacter* Friendly : Friendlies)
 		{
-			const FVector* StartLocation = FriendlyStartLocations.Find(Friendly->GetFName());
-			Test->TestTrue(
-				TEXT("Friendly NPC stays in place until AI-FRIEND-01"),
-				StartLocation && FVector::DistSquared2D(*StartLocation, Friendly->GetActorLocation()) <= FMath::Square(10.0f));
-			const ADroneNPCAIController* Controller = Cast<ADroneNPCAIController>(Friendly->GetController());
-			Test->TestTrue(
-				TEXT("Friendly StateTree remains stopped until AI-FRIEND-01"),
-				Controller && !Controller->GetStateTreeAIComponent()->IsRunning());
+			ADroneNPCAIController* Controller = Cast<ADroneNPCAIController>(Friendly->GetController());
+			Test->TestNotNull(TEXT("Friendly Base NPC keeps Drone AI Controller"), Controller);
+			if (Controller)
+			{
+				Test->TestTrue(TEXT("Friendly Base Routine StateTree is running"), Controller->GetStateTreeAIComponent()->IsRunning());
+				Test->TestTrue(TEXT("Friendly completes at least two activity cycles"), Controller->GetCompletedFriendlyRoutineCycles() >= 2);
+				Test->TestTrue(TEXT("Friendly visits at least two distinct activity slots"), Controller->GetVisitedFriendlySlotCount() >= 2);
+				Test->TestTrue(
+					TEXT("Friendly visits a Friendly Base Patrol slot"),
+					Controller->HasVisitedFriendlyActivity(DroneAITags::Activity_FriendlyBasePatrol));
+				Test->TestTrue(
+					TEXT("Friendly visits an Ambient slot"),
+					Controller->HasVisitedFriendlyActivity(DroneAITags::Activity_Ambient));
+			}
 		}
 		return true;
 	}
@@ -408,7 +426,6 @@ public:
 private:
 	FAutomationTestBase* Test;
 	double StartedAt = 0.0;
-	TMap<FName, FVector> FriendlyStartLocations;
 };
 } // namespace DroneNPCGreybox
 
@@ -579,6 +596,23 @@ bool FDroneHostilePatrolStateTreeAssetTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDroneFriendlyBaseRoutineStateTreeAssetTest,
+	"Drone.AI.FriendlyBaseRoutineStateTreeAsset",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDroneFriendlyBaseRoutineStateTreeAssetTest::RunTest(const FString& Parameters)
+{
+	using namespace DroneNPCGreybox;
+	UStateTree* StateTree = LoadObject<UStateTree>(nullptr, FriendlyBaseRoutineStateTreeObjectPath);
+	TestNotNull(TEXT("Friendly Base Routine StateTree loads"), StateTree);
+	TestTrue(TEXT("Friendly Base Routine StateTree is compiled and ready"), StateTree && StateTree->IsReadyToRun());
+	TestTrue(
+		TEXT("Friendly Base Routine StateTree keeps the authored Claim-Move-Wait-Release contract"),
+		UDroneAIStateTreeAuthoringLibrary::ValidateFriendlyBaseRoutineStateTree(FriendlyBaseRoutineStateTreePackage));
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FDroneNPCGreyboxPIETest,
 	"Drone.AI.NPCGreyboxPIE",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
@@ -612,11 +646,11 @@ bool FDroneNPCGreyboxPIETest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FDroneHostilePatrolPIETest,
-	"Drone.AI.HostilePatrolPIE",
+	FDroneNPCBaseRoutinesPIETest,
+	"Drone.AI.NPCBaseRoutinesPIE",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
-bool FDroneHostilePatrolPIETest::RunTest(const FString& Parameters)
+bool FDroneNPCBaseRoutinesPIETest::RunTest(const FString& Parameters)
 {
 	using namespace DroneNPCGreybox;
 	AddExpectedError(
@@ -626,7 +660,7 @@ bool FDroneHostilePatrolPIETest::RunTest(const FString& Parameters)
 
 	if (!GEditor || GEditor->IsPlaySessionInProgress() || FindPIEWorld())
 	{
-		AddError(TEXT("Hostile Patrol PIE test requires an idle Editor"));
+		AddError(TEXT("NPC Base Routines PIE test requires an idle Editor"));
 		return false;
 	}
 
@@ -639,7 +673,7 @@ bool FDroneHostilePatrolPIETest::RunTest(const FString& Parameters)
 	}
 
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIEForAutomationCommand(MakePlayParams()));
-	ADD_LATENT_AUTOMATION_COMMAND(FValidateHostilePatrolPIECommand(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FValidateNPCBaseRoutinesPIECommand(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
 	return true;
 }
