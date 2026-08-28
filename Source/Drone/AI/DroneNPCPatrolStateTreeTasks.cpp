@@ -32,6 +32,20 @@ namespace
 			? EStateTreeRunStatus::Succeeded
 			: EStateTreeRunStatus::Running;
 	}
+
+	EStateTreeRunStatus TryClaimFriendlyActivitySlot(FStateTreeExecutionContext& Context)
+	{
+		ADroneNPCAIController* Controller = GetDroneController(Context);
+		if (!Controller || !Controller->IsFriendlyNPC())
+		{
+			return EStateTreeRunStatus::Failed;
+		}
+
+		FTransform SlotTransform;
+		return Controller->ClaimNextFriendlyActivitySlot(SlotTransform)
+			? EStateTreeRunStatus::Succeeded
+			: EStateTreeRunStatus::Running;
+	}
 }
 
 FDroneStateTreeClaimPatrolSlotTask::FDroneStateTreeClaimPatrolSlotTask()
@@ -66,6 +80,40 @@ EStateTreeRunStatus FDroneStateTreeClaimPatrolSlotTask::Tick(
 
 	InstanceData.TimeUntilRetry = FMath::Max(0.1f, InstanceData.RetryInterval);
 	return TryClaimPatrolSlot(Context);
+}
+
+FDroneStateTreeClaimFriendlyActivityTask::FDroneStateTreeClaimFriendlyActivityTask()
+{
+	bShouldCallTick = true;
+}
+
+const UStruct* FDroneStateTreeClaimFriendlyActivityTask::GetInstanceDataType() const
+{
+	return FInstanceDataType::StaticStruct();
+}
+
+EStateTreeRunStatus FDroneStateTreeClaimFriendlyActivityTask::EnterState(
+	FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.TimeUntilRetry = 0.0f;
+	return TryClaimFriendlyActivitySlot(Context);
+}
+
+EStateTreeRunStatus FDroneStateTreeClaimFriendlyActivityTask::Tick(
+	FStateTreeExecutionContext& Context,
+	const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.TimeUntilRetry -= DeltaTime;
+	if (InstanceData.TimeUntilRetry > 0.0f)
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
+	InstanceData.TimeUntilRetry = FMath::Max(0.1f, InstanceData.RetryInterval);
+	return TryClaimFriendlyActivitySlot(Context);
 }
 
 FDroneStateTreeMoveToPatrolSlotTask::FDroneStateTreeMoveToPatrolSlotTask()
@@ -223,5 +271,24 @@ EStateTreeRunStatus FDroneStateTreeReleasePatrolSlotTask::EnterState(
 	}
 
 	Controller->CompleteCurrentPatrolSlot();
+	return EStateTreeRunStatus::Succeeded;
+}
+
+const UStruct* FDroneStateTreeReleaseFriendlyActivityTask::GetInstanceDataType() const
+{
+	return FInstanceDataType::StaticStruct();
+}
+
+EStateTreeRunStatus FDroneStateTreeReleaseFriendlyActivityTask::EnterState(
+	FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	ADroneNPCAIController* Controller = GetDroneController(Context);
+	if (!Controller)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	Controller->CompleteCurrentFriendlyActivitySlot();
 	return EStateTreeRunStatus::Succeeded;
 }

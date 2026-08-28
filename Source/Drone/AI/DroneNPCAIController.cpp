@@ -14,6 +14,8 @@ namespace
 {
 	constexpr const TCHAR* HostilePatrolStateTreePath =
 		TEXT("/Game/Drone/AI/StateTrees/ST_NPC_HostilePatrol.ST_NPC_HostilePatrol");
+	constexpr const TCHAR* FriendlyBaseRoutineStateTreePath =
+		TEXT("/Game/Drone/AI/StateTrees/ST_NPC_FriendlyBaseRoutine.ST_NPC_FriendlyBaseRoutine");
 }
 
 ADroneNPCAIController::ADroneNPCAIController()
@@ -53,7 +55,7 @@ void ADroneNPCAIController::BeginPlay()
 
 	// UWorldSubsystem::OnWorldBeginPlay 뒤라 Smart Object Runtime 조회가 안전하다.
 	// 레벨에 미리 배치된 Controller는 OnPossess에서 Asset만 지정하고 여기서 실행한다.
-	TryStartHostilePatrol();
+	TryStartAssignedStateTree();
 }
 
 void ADroneNPCAIController::OnPossess(APawn* InPawn)
@@ -66,8 +68,7 @@ void ADroneNPCAIController::OnPossess(APawn* InPawn)
 	}
 	ConfigureDefaultPatrolActivities();
 
-	// AI-PATROL-01은 Hostile 전용 최소 순찰 Tree만 자동 시작한다.
-	// Friendly StateTree는 AI-FRIEND-01에서 별도 Asset으로 연결한다.
+	// 역할별 Asset을 명시적으로 분리해 Friendly가 적 전투 분기를 공유하지 않게 한다.
 	if (IsHostileNPC())
 	{
 		if (UStateTree* HostilePatrolStateTree = LoadObject<UStateTree>(nullptr, HostilePatrolStateTreePath))
@@ -77,15 +78,26 @@ void ADroneNPCAIController::OnPossess(APawn* InPawn)
 			// 레벨 로딩 중 Possess라면 BeginPlay가 Smart Object 초기화 뒤 시작한다.
 			if (HasActorBegunPlay())
 			{
-				TryStartHostilePatrol();
+				TryStartAssignedStateTree();
+			}
+		}
+	}
+	else if (IsFriendlyNPC())
+	{
+		if (UStateTree* FriendlyStateTree = LoadObject<UStateTree>(nullptr, FriendlyBaseRoutineStateTreePath))
+		{
+			StateTreeAIComponent->SetStateTree(FriendlyStateTree);
+			if (HasActorBegunPlay())
+			{
+				TryStartAssignedStateTree();
 			}
 		}
 	}
 }
 
-void ADroneNPCAIController::TryStartHostilePatrol()
+void ADroneNPCAIController::TryStartAssignedStateTree()
 {
-	if (IsHostileNPC()
+	if ((IsHostileNPC() || IsFriendlyNPC())
 		&& StateTreeAIComponent
 		&& !StateTreeAIComponent->IsRunning())
 	{
@@ -213,6 +225,80 @@ void ADroneNPCAIController::CompleteCurrentPatrolSlot()
 		}
 	}
 	ReservationComponent->ReleaseReservation();
+}
+
+bool ADroneNPCAIController::ClaimNextFriendlyActivitySlot(FTransform& OutSlotTransform)
+{
+	OutSlotTransform = FTransform::Identity;
+	if (!IsFriendlyNPC() || !GetPawn())
+	{
+		return false;
+	}
+
+	const FGameplayTag PreferredActivity = bPreferAmbientActivity
+		? DroneAITags::Activity_Ambient
+		: DroneAITags::Activity_FriendlyBasePatrol;
+	const FGameplayTag FallbackActivity = bPreferAmbientActivity
+		? DroneAITags::Activity_FriendlyBasePatrol
+		: DroneAITags::Activity_Ambient;
+
+	auto TryClaimActivity = [this, &OutSlotTransform](const FGameplayTag Activity)
+	{
+		FGameplayTagContainer Activities;
+		Activities.AddTag(Activity);
+		ReservationComponent->SetRequiredActivityTags(Activities);
+
+		const bool bClaimed = bHasCompletedFriendlySlot
+			? ReservationComponent->ClaimNearestAvailableSlotAvoiding(
+				GetPawn()->GetActorLocation(),
+				LastCompletedFriendlySlotLocation,
+				PatrolRepeatAvoidanceRadius,
+				OutSlotTransform)
+			: ReservationComponent->ClaimNearestAvailableSlot(GetPawn()->GetActorLocation(), OutSlotTransform);
+		if (bClaimed)
+		{
+			CurrentFriendlyActivity = Activity;
+		}
+		return bClaimed;
+	};
+
+	// 선호 종류의 모든 Slot이 사용 중이면 다른 아군 활동으로 넘어가 전체 루틴 정지를 피한다.
+	return TryClaimActivity(PreferredActivity) || TryClaimActivity(FallbackActivity);
+}
+
+void ADroneNPCAIController::CompleteCurrentFriendlyActivitySlot()
+{
+	FTransform SlotTransform;
+	if (ReservationComponent->GetReservedSlotTransform(SlotTransform))
+	{
+		LastCompletedFriendlySlotLocation = SlotTransform.GetLocation();
+		bHasCompletedFriendlySlot = true;
+		++CompletedFriendlyRoutineCycles;
+
+		const bool bAlreadyVisited = VisitedFriendlySlotLocations.ContainsByPredicate(
+			[this](const FVector& Location)
+			{
+				return Location.Equals(LastCompletedFriendlySlotLocation, 10.0f);
+			});
+		if (!bAlreadyVisited)
+		{
+			VisitedFriendlySlotLocations.Add(LastCompletedFriendlySlotLocation);
+		}
+
+		if (CurrentFriendlyActivity.IsValid())
+		{
+			VisitedFriendlyActivities.AddTag(CurrentFriendlyActivity);
+			bPreferAmbientActivity = CurrentFriendlyActivity == DroneAITags::Activity_FriendlyBasePatrol;
+		}
+	}
+
+	CurrentFriendlyActivity = FGameplayTag();
+	ReservationComponent->ReleaseReservation();
+}
+
+bool ADroneNPCAIController::HasVisitedFriendlyActivity(const FGameplayTag ActivityTag) const
+{
+	return ActivityTag.IsValid() && VisitedFriendlyActivities.HasTagExact(ActivityTag);
 }
 
 void ADroneNPCAIController::HandleTargetPerceptionUpdated(AActor* Actor, const FAIStimulus Stimulus)

@@ -36,6 +36,20 @@ struct DRONE_API FDroneStateTreeClaimPatrolSlotTask : public FStateTreeAITaskBas
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, float DeltaTime) const override;
 };
 
+/** FriendlyBasePatrol/Ambient Slot을 찾을 때까지 재시도한다. */
+USTRUCT(meta=(DisplayName="Claim Friendly Activity Slot", Category="Drone|AI|Friendly"))
+struct DRONE_API FDroneStateTreeClaimFriendlyActivityTask : public FStateTreeAITaskBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FDroneStateTreeClaimPatrolSlotTaskInstanceData;
+
+	FDroneStateTreeClaimFriendlyActivityTask();
+	virtual const UStruct* GetInstanceDataType() const override;
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, float DeltaTime) const override;
+};
+
 /** 예약된 Slot까지 NavMesh 경로로 이동한다. */
 USTRUCT()
 struct FDroneStateTreeMoveToPatrolSlotTaskInstanceData
@@ -98,6 +112,18 @@ struct FDroneStateTreeReleasePatrolSlotTaskInstanceData
 
 USTRUCT(meta=(DisplayName="Release Patrol Slot", Category="Drone|AI|Patrol"))
 struct DRONE_API FDroneStateTreeReleasePatrolSlotTask : public FStateTreeAITaskBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FDroneStateTreeReleasePatrolSlotTaskInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override;
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+};
+
+/** 아군 활동 완료 기록을 남기고 Smart Object Claim을 해제한다. */
+USTRUCT(meta=(DisplayName="Release Friendly Activity Slot", Category="Drone|AI|Friendly"))
+struct DRONE_API FDroneStateTreeReleaseFriendlyActivityTask : public FStateTreeAITaskBase
 {
 	GENERATED_BODY()
 

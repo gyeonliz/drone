@@ -21,4 +21,12 @@ public:
 	/** 저장된 StateTree의 Schema·상태 순서·Task 종류·컴파일 상태를 확인한다. */
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Authoring")
 	static bool ValidateHostilePatrolStateTree(const FString& AssetPath);
+
+	/** AI-FRIEND-01의 아군 기지 활동 StateTree를 새로 생성한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Authoring")
+	static bool CreateFriendlyBaseRoutineStateTree(const FString& AssetPath);
+
+	/** 저장된 아군 StateTree의 상태 순서·Task 종류·컴파일 상태를 확인한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Authoring")
+	static bool ValidateFriendlyBaseRoutineStateTree(const FString& AssetPath);
 };

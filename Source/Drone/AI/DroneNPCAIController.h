@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "AIController.h"
+#include "GameplayTagContainer.h"
 #include "Perception/AIPerceptionTypes.h"
 #include "DroneNPCAIController.generated.h"
 
@@ -74,6 +75,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Patrol")
 	void CompleteCurrentPatrolSlot();
 
+	/** FriendlyBasePatrol과 Ambient를 번갈아 검색해 다음 기지 활동 Slot을 예약한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Friendly")
+	bool ClaimNextFriendlyActivitySlot(FTransform& OutSlotTransform);
+
+	/** 아군 활동 완료 기록을 남기고 현재 Slot을 해제한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Friendly")
+	void CompleteCurrentFriendlyActivitySlot();
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Patrol")
 	int32 GetCompletedPatrolCycles() const { return CompletedPatrolCycles; }
 
@@ -82,6 +91,15 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Patrol")
 	const TArray<FVector>& GetVisitedPatrolSlotLocations() const { return VisitedPatrolSlotLocations; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Friendly")
+	int32 GetCompletedFriendlyRoutineCycles() const { return CompletedFriendlyRoutineCycles; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Friendly")
+	int32 GetVisitedFriendlySlotCount() const { return VisitedFriendlySlotLocations.Num(); }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Friendly")
+	bool HasVisitedFriendlyActivity(FGameplayTag ActivityTag) const;
 
 	UPROPERTY(BlueprintAssignable, Category="Drone|AI|Perception")
 	FDroneTargetPerceptionChangedSignature OnDronePerceptionChanged;
@@ -92,10 +110,10 @@ protected:
 	virtual void OnUnPossess() override;
 
 	/**
-	 * WorldSubsystem의 Smart Object Runtime 초기화가 끝난 뒤 Hostile 순찰을 시작한다.
+	 * WorldSubsystem의 Smart Object Runtime 초기화가 끝난 뒤 역할별 StateTree를 시작한다.
 	 * 레벨 로딩 중 OnPossess에서 바로 조회하면 아직 초기화되지 않은 Runtime을 건드릴 수 있다.
 	 */
-	void TryStartHostilePatrol();
+	void TryStartAssignedStateTree();
 
 	UFUNCTION()
 	void HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
@@ -132,4 +150,27 @@ protected:
 
 	UPROPERTY(Transient)
 	bool bHasCompletedPatrolSlot = false;
+
+	/** 아군 루틴은 전투 순찰과 별도로 기록해 역할별 자동화 검증에서 구분한다. */
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Friendly")
+	int32 CompletedFriendlyRoutineCycles = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Friendly")
+	TArray<FVector> VisitedFriendlySlotLocations;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Friendly")
+	FGameplayTagContainer VisitedFriendlyActivities;
+
+	UPROPERTY(Transient)
+	FGameplayTag CurrentFriendlyActivity;
+
+	UPROPERTY(Transient)
+	FVector LastCompletedFriendlySlotLocation = FVector::ZeroVector;
+
+	UPROPERTY(Transient)
+	bool bHasCompletedFriendlySlot = false;
+
+	/** false면 Base Patrol, true면 Ambient를 먼저 시도한다. 완료할 때마다 전환한다. */
+	UPROPERTY(Transient)
+	bool bPreferAmbientActivity = false;
 };
