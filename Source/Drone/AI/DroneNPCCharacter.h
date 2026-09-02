@@ -32,12 +32,12 @@ public:
 	UDroneNPCWeaponComponent* GetNPCWeaponComponent() const { return NPCWeaponComponent; }
 
 protected:
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|NPC|Components")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone AI NPC Components")
 	TObjectPtr<UDroneNPCProfileComponent> NPCProfileComponent;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|NPC|Components")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone AI NPC Components")
 	TObjectPtr<USmartObjectUserComponent> SmartObjectUserComponent;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|NPC|Components")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone AI NPC Components")
 	TObjectPtr<UDroneNPCWeaponComponent> NPCWeaponComponent;
 };

@@ -37,6 +37,6 @@ public:
 	bool IsFriendly() const { return Profile.Faction == EDroneNPCFaction::Friendly; }
 
 protected:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|Profile", meta=(ShowOnlyInnerProperties))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone AI Profile")
 	FDroneNPCProfile Profile;
 };

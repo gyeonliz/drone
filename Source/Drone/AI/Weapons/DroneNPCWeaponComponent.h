@@ -61,27 +61,27 @@ public:
 	int32 GetReloadRequestCount() const { return ReloadRequestCount; }
 
 private:
-	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|AI|Weapon")
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon")
 	EDroneNPCWeaponType WeaponType = EDroneNPCWeaponType::Unarmed;
 
-	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|AI|Weapon")
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon")
 	TWeakObjectPtr<AActor> CurrentTarget;
 
-	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|AI|Weapon")
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon")
 	FVector CurrentAimPoint = FVector::ZeroVector;
 
-	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|AI|Weapon")
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon")
 	bool bIsFiring = false;
 
-	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|AI|Weapon|Debug")
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Debug")
 	int32 FireRequestCount = 0;
 
-	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|AI|Weapon|Debug")
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Debug")
 	int32 AcceptedFireRequestCount = 0;
 
-	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|AI|Weapon|Debug")
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Debug")
 	int32 StopFireRequestCount = 0;
 
-	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|AI|Weapon|Debug")
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Debug")
 	int32 ReloadRequestCount = 0;
 };
