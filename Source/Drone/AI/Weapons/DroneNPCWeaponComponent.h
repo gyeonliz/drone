@@ -9,7 +9,7 @@
 /**
  * Rifle과 Shotgun AI가 공유하는 최소 무기 호출 계약이다.
  *
- * 공용 표적·조준점 계약 뒤에 Rifle Greybox 단일 Trace를 제공한다. Shotgun Pellet,
+ * 공용 표적·조준점 계약 뒤에 Rifle 단일 Trace와 Shotgun 다중 Pellet Trace를 제공한다.
  * Damage, 탄약과 최종 표현 자산은 후속 Weapon 구현이 같은 계약 뒤에 붙인다.
  */
 UCLASS(ClassGroup=(DroneAI), BlueprintType, meta=(BlueprintSpawnableComponent))
@@ -27,13 +27,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Rifle")
 	void ConfigureRifleGreybox(float InRange, float InCooldownSeconds);
 
+	/** AI-WPN-03 시험값이다. Pellet 수와 Spread는 최종 난이도·표현 규칙이 아니다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Shotgun")
+	void ConfigureShotgunGreybox(
+		float InRange,
+		float InCooldownSeconds,
+		int32 InPelletCount,
+		float InSpreadHalfAngleDegrees);
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon")
 	EDroneNPCWeaponType GetWeaponType() const { return WeaponType; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon")
 	bool CanFire(AActor* TargetActor, FVector AimPoint) const;
 
-	/** 공용 발사 요청을 기록하고 Rifle이면 첫 단일 Trace와 반복 Timer를 시작한다. */
+	/** 공용 발사 요청을 기록하고 장비에 맞는 첫 발사와 반복 Timer를 시작한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon")
 	bool StartFire(AActor* TargetActor, FVector AimPoint);
 
@@ -90,6 +98,34 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Rifle|Debug")
 	FVector GetLastRifleTraceEnd() const { return LastRifleTraceEnd; }
 
+	/** 현재 Target을 향해 Cooldown이 허용한 Shotgun Pellet 묶음을 한 번 발사한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Shotgun")
+	bool TryFireShotgunVolley();
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Shotgun")
+	float GetShotgunRange() const { return ShotgunRange; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Shotgun")
+	float GetShotgunCooldownSeconds() const { return ShotgunCooldownSeconds; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Shotgun")
+	int32 GetShotgunPelletCount() const { return ShotgunPelletCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Shotgun")
+	float GetShotgunSpreadHalfAngleDegrees() const { return ShotgunSpreadHalfAngleDegrees; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Shotgun|Debug")
+	int32 GetShotgunVolleyAttemptCount() const { return ShotgunVolleyAttemptCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Shotgun|Debug")
+	int32 GetShotgunPelletTraceCount() const { return ShotgunPelletTraceCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Shotgun|Debug")
+	int32 GetShotgunTargetHitPelletCount() const { return ShotgunTargetHitPelletCount; }
+
+	/** 자동화가 한 Volley의 실제 Pellet 방향 분리를 확인하는 C++ 전용 조회다. */
+	const TArray<FVector>& GetLastShotgunPelletTraceEnds() const { return LastShotgunPelletTraceEnds; }
+
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
@@ -97,6 +133,9 @@ private:
 	void HandleRifleFireTimer();
 	void ClearRifleFireTimer();
 	bool IsRifleTargetInRange(AActor* TargetActor, const FVector& AimPoint) const;
+	void HandleShotgunFireTimer();
+	void ClearShotgunFireTimer();
+	bool IsShotgunTargetInRange(AActor* TargetActor, const FVector& AimPoint) const;
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon")
 	EDroneNPCWeaponType WeaponType = EDroneNPCWeaponType::Unarmed;
@@ -150,4 +189,37 @@ private:
 
 	double LastRifleShotTimeSeconds = -DBL_MAX;
 	FTimerHandle RifleFireTimerHandle;
+
+	/** 근거리 역할을 구분하기 위한 Greybox 사거리다. */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Shotgun", meta=(ClampMin="1.0", ForceUnits="cm"))
+	float ShotgunRange = 1600.0f;
+
+	/** 약 초당 1발인 Greybox 기준이다. */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Shotgun", meta=(ClampMin="0.01", ForceUnits="s"))
+	float ShotgunCooldownSeconds = 0.9f;
+
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Shotgun", meta=(ClampMin="1", ClampMax="64"))
+	int32 ShotgunPelletCount = 8;
+
+	/** 중심 Pellet을 제외한 Pellet이 퍼지는 원뿔 반각이다. */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Shotgun", meta=(ClampMin="0.0", ClampMax="45.0", ForceUnits="deg"))
+	float ShotgunSpreadHalfAngleDegrees = 6.0f;
+
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Shotgun Debug")
+	bool bDrawShotgunDebugTrace = true;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Shotgun Debug")
+	int32 ShotgunVolleyAttemptCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Shotgun Debug")
+	int32 ShotgunPelletTraceCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Shotgun Debug")
+	int32 ShotgunTargetHitPelletCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Shotgun Debug")
+	TArray<FVector> LastShotgunPelletTraceEnds;
+
+	double LastShotgunVolleyTimeSeconds = -DBL_MAX;
+	FTimerHandle ShotgunFireTimerHandle;
 };

@@ -622,6 +622,17 @@ private:
 		for (ADroneNPCAIController* Controller : Hostiles)
 		{
 			UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
+			if (WeaponComponent && Controller->UsesRifle())
+			{
+				// 이 테스트의 수동 Sight Broadcast는 실제 Sight 반경을 적용하지 않는다.
+				// 사거리 자체는 RifleTrace/ShotgunTrace에서 검증하므로 여기서는 공용
+				// Target/Aim Point 전달 계약만 분리해서 확인한다.
+				WeaponComponent->ConfigureRifleGreybox(100000.0f, 1.0f);
+			}
+			else if (WeaponComponent && Controller->UsesShotgun())
+			{
+				WeaponComponent->ConfigureShotgunGreybox(100000.0f, 1.0f, 8, 6.0f);
+			}
 			bCommonWeaponPathReady &= Controller->CanFirePersonalWeapon()
 				&& Controller->StartPersonalWeaponFire()
 				&& WeaponComponent
