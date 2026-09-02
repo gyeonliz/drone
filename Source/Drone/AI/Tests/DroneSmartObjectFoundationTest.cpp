@@ -9,6 +9,7 @@
 #include "AI/DroneNPCSpawnPoint.h"
 #include "AI/DroneSmartObjectReservationComponent.h"
 #include "AI/DroneSmartObjectStation.h"
+#include "AI/Weapons/DroneNPCWeaponComponent.h"
 #include "Components/StateTreeAIComponent.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SkeletalMesh.h"
@@ -40,6 +41,7 @@ bool FDroneSmartObjectFoundationTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("NPC auto-possesses when placed or spawned"), NPCDefaults->AutoPossessAI == EAutoPossessAI::PlacedInWorldOrSpawned);
 		TestNotNull(TEXT("NPC owns a Profile Component"), NPCDefaults->GetNPCProfileComponent());
 		TestNotNull(TEXT("NPC owns a Smart Object User Component"), NPCDefaults->GetSmartObjectUserComponent());
+		TestNotNull(TEXT("NPC owns the common Weapon Component"), NPCDefaults->GetNPCWeaponComponent());
 	}
 
 	const ADroneNPCAIController* ControllerDefaults = GetDefault<ADroneNPCAIController>();

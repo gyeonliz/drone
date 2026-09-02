@@ -11,6 +11,8 @@
 #include "AI/DroneNPCSpawnPoint.h"
 #include "AI/DroneSmartObjectReservationComponent.h"
 #include "AI/DroneSmartObjectStation.h"
+#include "AI/Weapons/DroneNPCWeaponComponent.h"
+#include "Prototype/DronePrototypePawn.h"
 #include "Animation/AnimInstance.h"
 #include "Components/BoxComponent.h"
 #include "Components/StateTreeAIComponent.h"
@@ -28,6 +30,8 @@
 #include "HAL/PlatformTime.h"
 #include "NavigationSystem.h"
 #include "NavMesh/RecastNavMesh.h"
+#include "Perception/AIPerceptionComponent.h"
+#include "Perception/AISense_Sight.h"
 #include "PlayInEditorDataTypes.h"
 #include "Settings/LevelEditorPlaySettings.h"
 #include "StateTree.h"
@@ -260,13 +264,17 @@ public:
 			ADroneNPCAIController* Controller = Cast<ADroneNPCAIController>(NPC->GetController());
 			Test->TestNotNull(TEXT("Placed NPC is possessed by Drone NPC AI Controller"), Controller);
 			const UDroneNPCProfileComponent* ProfileComponent = NPC->GetNPCProfileComponent();
+			const UDroneNPCWeaponComponent* WeaponComponent = NPC->GetNPCWeaponComponent();
 			Test->TestNotNull(TEXT("Placed NPC keeps its Profile Component"), ProfileComponent);
-			if (!Controller || !ProfileComponent)
+			Test->TestNotNull(TEXT("Placed NPC keeps its common Weapon Component"), WeaponComponent);
+			if (!Controller || !ProfileComponent || !WeaponComponent)
 			{
 				continue;
 			}
 
 			const FDroneNPCProfile& Profile = ProfileComponent->GetProfile();
+			Test->TestTrue(TEXT("Controller exposes the possessed common Weapon Component"), Controller->GetPossessedWeaponComponent() == WeaponComponent);
+			Test->TestTrue(TEXT("Possession configures Weapon Component from NPC Profile"), WeaponComponent->GetWeaponType() == Profile.WeaponType);
 			Test->TestTrue(TEXT("Controller configures role-specific Activity Tags"), HasExpectedActivityTags(Controller, Profile));
 			const FGameplayTagContainer& UserTags = Controller->GetReservationComponent()->GetUserTags();
 
@@ -426,6 +434,321 @@ public:
 private:
 	FAutomationTestBase* Test;
 	double StartedAt = 0.0;
+};
+
+class FValidateNPCPerceptionSearchPIECommand final : public IAutomationLatentCommand
+{
+public:
+	explicit FValidateNPCPerceptionSearchPIECommand(FAutomationTestBase* InTest)
+		: Test(InTest)
+	{
+	}
+
+	virtual bool Update() override
+	{
+		const double Now = FPlatformTime::Seconds();
+		if (StartedAt == 0.0)
+		{
+			StartedAt = Now;
+			PhaseStartedAt = Now;
+		}
+
+		UWorld* PIEWorld = FindPIEWorld();
+		if (!PIEWorld || !PIEWorld->HasBegunPlay())
+		{
+			return FinishWithTimeout(Now, 20.0, TEXT("NPC Perception PIE World did not begin play"));
+		}
+
+		ADronePrototypePawn* Drone = nullptr;
+		for (TActorIterator<ADronePrototypePawn> It(PIEWorld); It; ++It)
+		{
+			Drone = *It;
+			break;
+		}
+
+		TArray<ADroneNPCAIController*> Hostiles;
+		TArray<ADroneNPCAIController*> Friendlies;
+		for (TActorIterator<ADroneNPCCharacter> It(PIEWorld); It; ++It)
+		{
+			ADroneNPCCharacter* NPC = *It;
+			ADroneNPCAIController* Controller = NPC
+				? Cast<ADroneNPCAIController>(NPC->GetController())
+				: nullptr;
+			const UDroneNPCProfileComponent* Profile = NPC ? NPC->GetNPCProfileComponent() : nullptr;
+			if (!Controller || !Profile)
+			{
+				continue;
+			}
+			if (Profile->GetProfile().Faction == EDroneNPCFaction::Hostile)
+			{
+				Hostiles.Add(Controller);
+			}
+			else if (Profile->GetProfile().Faction == EDroneNPCFaction::Friendly)
+			{
+				Friendlies.Add(Controller);
+			}
+		}
+
+		if (!Drone || Hostiles.Num() != 2 || Friendlies.Num() != 2)
+		{
+			return FinishWithTimeout(Now, 20.0, TEXT("NPC Perception PIE requires one Drone, two Hostiles, and two Friendlies"));
+		}
+
+		switch (Phase)
+		{
+		case EPhase::WaitForBaseline:
+			return UpdateBaseline(Now, Drone, Hostiles, Friendlies);
+		case EPhase::WaitForDetected:
+			return UpdateDetected(Now, Drone, Hostiles, Friendlies);
+		case EPhase::WaitForSearch:
+			return UpdateSearch(Now, Hostiles, Friendlies);
+		case EPhase::WaitForReturn:
+			return UpdateReturn(Now, Hostiles, Friendlies);
+		default:
+			return true;
+		}
+	}
+
+private:
+	enum class EPhase : uint8
+	{
+		WaitForBaseline,
+		WaitForDetected,
+		WaitForSearch,
+		WaitForReturn
+	};
+
+	bool FinishWithTimeout(const double Now, const double Timeout, const TCHAR* Message)
+	{
+		if (Now - PhaseStartedAt <= Timeout)
+		{
+			return false;
+		}
+		Test->AddError(Message);
+		return true;
+	}
+
+	void AdvanceTo(const EPhase NewPhase, const double Now)
+	{
+		Phase = NewPhase;
+		PhaseStartedAt = Now;
+	}
+
+	static void BroadcastSight(ADroneNPCAIController* Controller, ADronePrototypePawn* Drone, const bool bSensed)
+	{
+		if (!Controller || !Drone || !Controller->GetDronePerceptionComponent())
+		{
+			return;
+		}
+
+		const FVector ReceiverLocation = Controller->GetPawn()
+			? Controller->GetPawn()->GetActorLocation()
+			: FVector::ZeroVector;
+		FAIStimulus Stimulus(
+			*GetDefault<UAISense_Sight>(),
+			1.0f,
+			Drone->GetActorLocation(),
+			ReceiverLocation,
+			FAIStimulus::SensingSucceeded);
+		if (!bSensed)
+		{
+			Stimulus.MarkNoLongerSensed();
+		}
+		Controller->GetDronePerceptionComponent()->OnTargetPerceptionUpdated.Broadcast(Drone, Stimulus);
+	}
+
+	bool UpdateBaseline(
+		const double Now,
+		ADronePrototypePawn* Drone,
+		const TArray<ADroneNPCAIController*>& Hostiles,
+		const TArray<ADroneNPCAIController*>& Friendlies)
+	{
+		const bool bHostileReady = Hostiles.ContainsByPredicate(
+			[](const ADroneNPCAIController* Controller)
+			{
+				return !Controller || Controller->GetCompletedPatrolCycles() < 1;
+			}) == false;
+		const bool bFriendlyReady = Friendlies.ContainsByPredicate(
+			[](const ADroneNPCAIController* Controller)
+			{
+				return !Controller || Controller->GetCompletedFriendlyRoutineCycles() < 1;
+			}) == false;
+		if (!bHostileReady || !bFriendlyReady)
+		{
+			return FinishWithTimeout(Now, 30.0, TEXT("NPC routines did not establish a patrol baseline before perception test"));
+		}
+
+		for (ADroneNPCAIController* Controller : Hostiles)
+		{
+			BaselineHostileCycles.Add(Controller, Controller->GetCompletedPatrolCycles());
+			BroadcastSight(Controller, Drone, true);
+		}
+		for (ADroneNPCAIController* Controller : Friendlies)
+		{
+			BaselineFriendlyCycles.Add(Controller, Controller->GetCompletedFriendlyRoutineCycles());
+			BroadcastSight(Controller, Drone, true);
+		}
+		AdvanceTo(EPhase::WaitForDetected, Now);
+		return false;
+	}
+
+	bool UpdateDetected(
+		const double Now,
+		ADronePrototypePawn* Drone,
+		const TArray<ADroneNPCAIController*>& Hostiles,
+		const TArray<ADroneNPCAIController*>& Friendlies)
+	{
+		bool bHostilesDetected = true;
+		for (const ADroneNPCAIController* Controller : Hostiles)
+		{
+			bHostilesDetected &= Controller->HasDetectedDrone()
+				&& Controller->GetResponseState() == EDroneNPCAIResponseState::DroneDetected
+				&& Controller->GetDroneDetectionCount() == 1
+				&& !Controller->GetReservationComponent()->HasValidReservation();
+		}
+		bool bFriendliesUnaffected = true;
+		for (const ADroneNPCAIController* Controller : Friendlies)
+		{
+			bFriendliesUnaffected &= !Controller->HasDetectedDrone()
+				&& Controller->GetResponseState() == EDroneNPCAIResponseState::Patrol
+				&& Controller->GetDroneDetectionCount() == 0;
+		}
+		if (!bHostilesDetected || !bFriendliesUnaffected)
+		{
+			return FinishWithTimeout(Now, 5.0, TEXT("Hostile-only DroneDetected response did not become stable"));
+		}
+
+		bool bCommonWeaponPathReady = true;
+		for (ADroneNPCAIController* Controller : Hostiles)
+		{
+			UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
+			bCommonWeaponPathReady &= Controller->CanFirePersonalWeapon()
+				&& Controller->StartPersonalWeaponFire()
+				&& WeaponComponent
+				&& WeaponComponent->IsFiring()
+				&& WeaponComponent->GetCurrentTarget() == Drone
+				&& WeaponComponent->GetCurrentAimPoint().Equals(Drone->GetActorLocation());
+		}
+		for (const ADroneNPCAIController* Controller : Friendlies)
+		{
+			const UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
+			bCommonWeaponPathReady &= !Controller->CanFirePersonalWeapon()
+				&& WeaponComponent
+				&& !WeaponComponent->IsFiring();
+		}
+		if (!bCommonWeaponPathReady)
+		{
+			Test->AddError(TEXT("Rifle and Shotgun did not share the detected Target/Aim Point Weapon path"));
+			return true;
+		}
+
+		for (ADroneNPCAIController* Controller : Hostiles)
+		{
+			BroadcastSight(Controller, Drone, false);
+		}
+		for (ADroneNPCAIController* Controller : Friendlies)
+		{
+			BroadcastSight(Controller, Drone, false);
+		}
+		// 실제 Sight 갱신이 수동 Lost 자극 직후 같은 Pawn을 다시 감지해
+		// Search를 중단하지 않도록 테스트 Pawn을 LoseSight 범위 밖으로 격리한다.
+		Drone->SetActorLocation(
+			FVector(100000.0f, 100000.0f, 100000.0f),
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+		AdvanceTo(EPhase::WaitForSearch, Now);
+		return false;
+	}
+
+	bool UpdateSearch(
+		const double Now,
+		const TArray<ADroneNPCAIController*>& Hostiles,
+		const TArray<ADroneNPCAIController*>& Friendlies)
+	{
+		bool bAllSearching = true;
+		for (const ADroneNPCAIController* Controller : Hostiles)
+		{
+			const UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
+			bAllSearching &= !Controller->HasDetectedDrone()
+				&& Controller->GetResponseState() == EDroneNPCAIResponseState::Search
+				&& Controller->GetDroneLostCount() == 1
+				&& Controller->GetDroneSearchStartCount() == 1
+				&& Controller->HasLastKnownDroneLocation()
+				&& WeaponComponent
+				&& !WeaponComponent->IsFiring()
+				&& WeaponComponent->GetCurrentTarget() == nullptr;
+		}
+		bool bFriendliesUnaffected = true;
+		for (const ADroneNPCAIController* Controller : Friendlies)
+		{
+			bFriendliesUnaffected &= Controller->GetResponseState() == EDroneNPCAIResponseState::Patrol
+				&& Controller->GetDroneLostCount() == 0;
+		}
+		if (!bAllSearching || !bFriendliesUnaffected)
+		{
+			return FinishWithTimeout(Now, 5.0, TEXT("DroneLost did not transition both Hostiles into Search"));
+		}
+
+		AdvanceTo(EPhase::WaitForReturn, Now);
+		return false;
+	}
+
+	bool UpdateReturn(
+		const double Now,
+		const TArray<ADroneNPCAIController*>& Hostiles,
+		const TArray<ADroneNPCAIController*>& Friendlies)
+	{
+		bool bHostilesReturned = true;
+		for (const ADroneNPCAIController* Controller : Hostiles)
+		{
+			const bool bPatrolWorkResumed = Controller->GetReservationComponent()->HasValidReservation()
+				|| Controller->GetCompletedPatrolCycles() > BaselineHostileCycles.FindRef(Controller);
+			bHostilesReturned &= Controller->GetResponseState() == EDroneNPCAIResponseState::Patrol
+				&& Controller->GetCompletedDroneSearchCount() == 1
+				&& bPatrolWorkResumed;
+		}
+		bool bFriendliesContinued = true;
+		for (const ADroneNPCAIController* Controller : Friendlies)
+		{
+			bFriendliesContinued &= Controller->GetCompletedFriendlyRoutineCycles()
+				> BaselineFriendlyCycles.FindRef(Controller);
+		}
+		if ((!bHostilesReturned || !bFriendliesContinued) && Now - PhaseStartedAt <= 20.0)
+		{
+			return false;
+		}
+		if (!bHostilesReturned)
+		{
+			for (int32 Index = 0; Index < Hostiles.Num(); ++Index)
+			{
+				const ADroneNPCAIController* Controller = Hostiles[Index];
+				Test->AddError(FString::Printf(
+					TEXT("Hostile[%d] return state=%d detected=%d detect/lost/search/complete=%d/%d/%d/%d reservation=%d patrol=%d baseline=%d"),
+					Index,
+					static_cast<int32>(Controller->GetResponseState()),
+					Controller->HasDetectedDrone() ? 1 : 0,
+					Controller->GetDroneDetectionCount(),
+					Controller->GetDroneLostCount(),
+					Controller->GetDroneSearchStartCount(),
+					Controller->GetCompletedDroneSearchCount(),
+					Controller->GetReservationComponent()->HasValidReservation() ? 1 : 0,
+					Controller->GetCompletedPatrolCycles(),
+					BaselineHostileCycles.FindRef(Controller)));
+			}
+		}
+
+		Test->TestTrue(TEXT("Both Hostiles return to Patrol after one Search"), bHostilesReturned);
+		Test->TestTrue(TEXT("Both Friendlies continue BaseRoutine during Hostile perception response"), bFriendliesContinued);
+		return true;
+	}
+
+	FAutomationTestBase* Test;
+	EPhase Phase = EPhase::WaitForBaseline;
+	double StartedAt = 0.0;
+	double PhaseStartedAt = 0.0;
+	TMap<TWeakObjectPtr<ADroneNPCAIController>, int32> BaselineHostileCycles;
+	TMap<TWeakObjectPtr<ADroneNPCAIController>, int32> BaselineFriendlyCycles;
 };
 } // namespace DroneNPCGreybox
 
@@ -592,6 +915,9 @@ bool FDroneHostilePatrolStateTreeAssetTest::RunTest(const FString& Parameters)
 	TestTrue(
 		TEXT("Hostile Patrol StateTree keeps the authored Claim-Move-Wait-Release contract"),
 		UDroneAIStateTreeAuthoringLibrary::ValidateHostilePatrolStateTree(HostilePatrolStateTreePackage));
+	TestTrue(
+		TEXT("Hostile StateTree keeps DroneDetected-Search-Patrol event transitions"),
+		UDroneAIStateTreeAuthoringLibrary::ValidateHostilePerceptionStateTree(HostilePatrolStateTreePackage));
 	return !HasAnyErrors();
 }
 
@@ -674,6 +1000,39 @@ bool FDroneNPCBaseRoutinesPIETest::RunTest(const FString& Parameters)
 
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIEForAutomationCommand(MakePlayParams()));
 	ADD_LATENT_AUTOMATION_COMMAND(FValidateNPCBaseRoutinesPIECommand(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDroneNPCPerceptionSearchPIETest,
+	"Drone.AI.NPCPerceptionSearchPIE",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDroneNPCPerceptionSearchPIETest::RunTest(const FString& Parameters)
+{
+	using namespace DroneNPCGreybox;
+	AddExpectedError(
+		TEXT("Unable to find RecastNavMesh instance while trying to create UCrowdManager instance"),
+		EAutomationExpectedErrorFlags::Contains,
+		2);
+
+	if (!GEditor || GEditor->IsPlaySessionInProgress() || FindPIEWorld())
+	{
+		AddError(TEXT("NPC Perception Search PIE test requires an idle Editor"));
+		return false;
+	}
+
+	FAutomationEditorCommonUtils::LoadMap(MapPackage);
+	UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+	if (!EditorWorld || EditorWorld->GetOutermost()->GetName() != MapPackage)
+	{
+		AddError(FString::Printf(TEXT("Could not open %s"), MapPackage));
+		return false;
+	}
+
+	ADD_LATENT_AUTOMATION_COMMAND(FStartPIEForAutomationCommand(MakePlayParams()));
+	ADD_LATENT_AUTOMATION_COMMAND(FValidateNPCPerceptionSearchPIECommand(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
 	return true;
 }

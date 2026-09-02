@@ -3,7 +3,9 @@
 #include "AI/DroneAITags.h"
 #include "AI/DroneNPCProfileComponent.h"
 #include "AI/DroneSmartObjectReservationComponent.h"
+#include "AI/Weapons/DroneNPCWeaponComponent.h"
 #include "Components/StateTreeAIComponent.h"
+#include "Navigation/PathFollowingComponent.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISense_Sight.h"
@@ -61,10 +63,26 @@ void ADroneNPCAIController::BeginPlay()
 void ADroneNPCAIController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
+	DetectedDrone.Reset();
+	ResponseState = EDroneNPCAIResponseState::Patrol;
+	bHasLastKnownDroneLocation = false;
+	LastKnownDroneLocation = FVector::ZeroVector;
+	DroneDetectionCount = 0;
+	DroneLostCount = 0;
+	DroneSearchStartCount = 0;
+	CompletedDroneSearchCount = 0;
 
 	if (const UDroneNPCProfileComponent* Profile = GetPossessedProfile())
 	{
 		ReservationComponent->SetUserTags(Profile->BuildSmartObjectUserTags());
+		if (UDroneNPCWeaponComponent* WeaponComponent = GetPossessedWeaponComponent())
+		{
+			WeaponComponent->ConfigureWeapon(Profile->GetProfile().WeaponType);
+		}
+	}
+	else if (UDroneNPCWeaponComponent* WeaponComponent = GetPossessedWeaponComponent())
+	{
+		WeaponComponent->ConfigureWeapon(EDroneNPCWeaponType::Unarmed);
 	}
 	ConfigureDefaultPatrolActivities();
 
@@ -107,8 +125,12 @@ void ADroneNPCAIController::TryStartAssignedStateTree()
 
 void ADroneNPCAIController::OnUnPossess()
 {
+	StopPersonalWeaponFire();
+	StopMovement();
 	ReservationComponent->ReleaseReservation();
 	DetectedDrone.Reset();
+	ResponseState = EDroneNPCAIResponseState::Patrol;
+	bHasLastKnownDroneLocation = false;
 	if (StateTreeAIComponent->IsRunning())
 	{
 		StateTreeAIComponent->StopLogic(TEXT("NPC UnPossessed"));
@@ -138,6 +160,94 @@ bool ADroneNPCAIController::IsFriendlyNPC() const
 {
 	const UDroneNPCProfileComponent* Profile = GetPossessedProfile();
 	return Profile && Profile->IsFriendly();
+}
+
+UDroneNPCWeaponComponent* ADroneNPCAIController::GetPossessedWeaponComponent() const
+{
+	return GetPawn() ? GetPawn()->FindComponentByClass<UDroneNPCWeaponComponent>() : nullptr;
+}
+
+bool ADroneNPCAIController::CanFirePersonalWeapon() const
+{
+	AActor* TargetActor = GetDetectedDrone();
+	const UDroneNPCWeaponComponent* WeaponComponent = GetPossessedWeaponComponent();
+	return IsHostileNPC()
+		&& TargetActor
+		&& WeaponComponent
+		&& WeaponComponent->CanFire(TargetActor, TargetActor->GetActorLocation());
+}
+
+bool ADroneNPCAIController::StartPersonalWeaponFire()
+{
+	AActor* TargetActor = GetDetectedDrone();
+	UDroneNPCWeaponComponent* WeaponComponent = GetPossessedWeaponComponent();
+	return IsHostileNPC()
+		&& TargetActor
+		&& WeaponComponent
+		&& WeaponComponent->StartFire(TargetActor, TargetActor->GetActorLocation());
+}
+
+void ADroneNPCAIController::StopPersonalWeaponFire()
+{
+	if (UDroneNPCWeaponComponent* WeaponComponent = GetPossessedWeaponComponent())
+	{
+		WeaponComponent->StopFire();
+	}
+}
+
+bool ADroneNPCAIController::ReloadPersonalWeapon()
+{
+	UDroneNPCWeaponComponent* WeaponComponent = GetPossessedWeaponComponent();
+	return IsHostileNPC() && WeaponComponent && WeaponComponent->Reload();
+}
+
+void ADroneNPCAIController::EnterDroneDetectedResponse()
+{
+	if (!IsHostileNPC())
+	{
+		return;
+	}
+
+	ResponseState = EDroneNPCAIResponseState::DroneDetected;
+	StopMovement();
+	ReservationComponent->ReleaseReservation();
+}
+
+bool ADroneNPCAIController::BeginDroneSearch(const float AcceptanceRadius)
+{
+	if (!IsHostileNPC() || HasDetectedDrone() || !bHasLastKnownDroneLocation || !GetPawn())
+	{
+		return false;
+	}
+
+	ResponseState = EDroneNPCAIResponseState::Search;
+	++DroneSearchStartCount;
+	ReservationComponent->ReleaseReservation();
+
+	MoveToLocation(
+		LastKnownDroneLocation,
+		FMath::Max(10.0f, AcceptanceRadius),
+		true,
+		true,
+		true,
+		true,
+		nullptr,
+		false);
+	// 마지막 위치가 NavMesh 밖이어도 Search 상태에서 제자리 탐색 시간을 보낸다.
+	return true;
+}
+
+void ADroneNPCAIController::CompleteDroneSearch()
+{
+	if (ResponseState != EDroneNPCAIResponseState::Search)
+	{
+		return;
+	}
+
+	StopMovement();
+	++CompletedDroneSearchCount;
+	ResponseState = EDroneNPCAIResponseState::Patrol;
+	ConfigureDefaultPatrolActivities();
 }
 
 void ADroneNPCAIController::ConfigureDefaultPatrolActivities()
@@ -318,9 +428,16 @@ void ADroneNPCAIController::HandleTargetPerceptionUpdated(AActor* Actor, const F
 
 	if (Stimulus.WasSuccessfullySensed())
 	{
+		const bool bWasAlreadyDetected = DetectedDrone.Get() == Actor;
 		DetectedDrone = Actor;
+		LastKnownDroneLocation = Actor->GetActorLocation();
+		bHasLastKnownDroneLocation = true;
 		// 순찰·대기 Slot을 붙잡은 채 전투로 넘어가지 않도록 먼저 해제한다.
-		ReservationComponent->ReleaseReservation();
+		EnterDroneDetectedResponse();
+		if (!bWasAlreadyDetected)
+		{
+			++DroneDetectionCount;
+		}
 		if (StateTreeAIComponent->IsRunning())
 		{
 			StateTreeAIComponent->SendStateTreeEvent(DroneAITags::Event_DroneDetected);
@@ -329,7 +446,11 @@ void ADroneNPCAIController::HandleTargetPerceptionUpdated(AActor* Actor, const F
 	}
 	else if (DetectedDrone.Get() == Actor)
 	{
+		LastKnownDroneLocation = Actor->GetActorLocation();
+		bHasLastKnownDroneLocation = true;
+		StopPersonalWeaponFire();
 		DetectedDrone.Reset();
+		++DroneLostCount;
 		if (StateTreeAIComponent->IsRunning())
 		{
 			StateTreeAIComponent->SendStateTreeEvent(DroneAITags::Event_DroneLost);

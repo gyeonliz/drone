@@ -22,6 +22,14 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Authoring")
 	static bool ValidateHostilePatrolStateTree(const FString& AssetPath);
 
+	/** 기존 AI-PATROL-01 Asset에 DroneDetected·Search Event 전환을 안전하게 추가한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Authoring")
+	static bool UpgradeHostilePatrolStateTreeForPerception(const FString& AssetPath);
+
+	/** AI-PER-01의 감지·실종·Search·Patrol 복귀 계약까지 확인한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Authoring")
+	static bool ValidateHostilePerceptionStateTree(const FString& AssetPath);
+
 	/** AI-FRIEND-01의 아군 기지 활동 StateTree를 새로 생성한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Authoring")
 	static bool CreateFriendlyBaseRoutineStateTree(const FString& AssetPath);

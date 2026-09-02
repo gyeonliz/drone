@@ -9,8 +9,18 @@
 class UAIPerceptionComponent;
 class UAISenseConfig_Sight;
 class UDroneNPCProfileComponent;
+class UDroneNPCWeaponComponent;
 class UDroneSmartObjectReservationComponent;
 class UStateTreeAIComponent;
+
+/** Hostile NPC의 현재 Greybox 대응 상태다. StateTree 전환을 PIE에서 명확히 검증하는 데도 사용한다. */
+UENUM(BlueprintType)
+enum class EDroneNPCAIResponseState : uint8
+{
+	Patrol,
+	DroneDetected,
+	Search
+};
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FDroneTargetPerceptionChangedSignature,
@@ -53,11 +63,57 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI")
 	bool UsesShotgun() const;
 
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon")
+	UDroneNPCWeaponComponent* GetPossessedWeaponComponent() const;
+
+	/** DetectedDrone와 그 현재 위치를 공용 Weapon 계약으로 전달한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon")
+	bool CanFirePersonalWeapon() const;
+
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon")
+	bool StartPersonalWeaponFire();
+
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon")
+	void StopPersonalWeaponFire();
+
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon")
+	bool ReloadPersonalWeapon();
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI")
 	bool IsHostileNPC() const;
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI")
 	bool IsFriendlyNPC() const;
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	EDroneNPCAIResponseState GetResponseState() const { return ResponseState; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	bool HasLastKnownDroneLocation() const { return bHasLastKnownDroneLocation; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	FVector GetLastKnownDroneLocation() const { return LastKnownDroneLocation; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	int32 GetDroneDetectionCount() const { return DroneDetectionCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	int32 GetDroneLostCount() const { return DroneLostCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	int32 GetDroneSearchStartCount() const { return DroneSearchStartCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	int32 GetCompletedDroneSearchCount() const { return CompletedDroneSearchCount; }
+
+	/** StateTree의 DroneDetected Task가 호출한다. 중복 진입은 감지 횟수로 세지 않는다. */
+	void EnterDroneDetectedResponse();
+
+	/** 마지막 감지 위치로 이동을 요청하고 Search 상태를 시작한다. */
+	bool BeginDroneSearch(float AcceptanceRadius);
+
+	/** Search 체류가 끝나 Patrol 상태로 복귀할 준비를 한다. */
+	void CompleteDroneSearch();
 
 	/** Profile에 따라 Enemy Patrol 또는 Friendly Base Patrol 검색 Tag를 다시 설정한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|SmartObject")
@@ -134,6 +190,27 @@ protected:
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
 	TWeakObjectPtr<AActor> DetectedDrone;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
+	EDroneNPCAIResponseState ResponseState = EDroneNPCAIResponseState::Patrol;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
+	FVector LastKnownDroneLocation = FVector::ZeroVector;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
+	bool bHasLastKnownDroneLocation = false;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
+	int32 DroneDetectionCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
+	int32 DroneLostCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
+	int32 DroneSearchStartCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
+	int32 CompletedDroneSearchCount = 0;
 
 	/** 직전 지점 바로 재선택을 막는 Greybox 기준값. 최종 맵 규모에 맞춰 조정한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Patrol", meta=(ClampMin="0.0", ForceUnits="cm"))

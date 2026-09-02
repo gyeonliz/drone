@@ -2,6 +2,7 @@
 
 #include "AI/DroneNPCAIController.h"
 #include "AI/DroneNPCProfileComponent.h"
+#include "AI/Weapons/DroneNPCWeaponComponent.h"
 #include "SmartObjectUserComponent.h"
 
 ADroneNPCCharacter::ADroneNPCCharacter()
@@ -14,4 +15,5 @@ ADroneNPCCharacter::ADroneNPCCharacter()
 
 	NPCProfileComponent = CreateDefaultSubobject<UDroneNPCProfileComponent>(TEXT("NPCProfileComponent"));
 	SmartObjectUserComponent = CreateDefaultSubobject<USmartObjectUserComponent>(TEXT("SmartObjectUserComponent"));
+	NPCWeaponComponent = CreateDefaultSubobject<UDroneNPCWeaponComponent>(TEXT("NPCWeaponComponent"));
 }

@@ -1,6 +1,8 @@
 #include "AI/DroneAIStateTreeAuthoringLibrary.h"
 
 #if WITH_EDITOR
+#include "AI/DroneAITags.h"
+#include "AI/DroneNPCPerceptionStateTreeTasks.h"
 #include "AI/DroneNPCPatrolStateTreeTasks.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/StateTreeAIComponentSchema.h"
@@ -31,6 +33,50 @@ namespace
 		return State
 			&& State->Tasks.Num() == 1
 			&& State->Tasks[0].Node.GetScriptStruct() == ExpectedType;
+	}
+
+	bool HasEventTransitionTo(
+		const UStateTreeState* State,
+		const FGameplayTag EventTag,
+		const FName TargetStateName)
+	{
+		return State && State->Transitions.ContainsByPredicate(
+			[EventTag, TargetStateName](const FStateTreeTransition& Transition)
+			{
+				return Transition.Trigger == EStateTreeTransitionTrigger::OnEvent
+					&& Transition.RequiredEvent.Tag == EventTag
+					&& Transition.State.LinkType == EStateTreeTransitionType::GotoState
+					&& Transition.State.Name == TargetStateName;
+			});
+	}
+
+	void AddHostilePerceptionStates(UStateTreeState& Root, UStateTreeState& Claim)
+	{
+		UStateTreeState& Detected = Root.AddChildState(TEXT("DroneDetected"));
+		UStateTreeState& Search = Root.AddChildState(TEXT("SearchLastKnownLocation"));
+
+		Detected.AddTask<FDroneStateTreeDetectedTask>();
+		Detected.AddTransition(
+			EStateTreeTransitionTrigger::OnEvent,
+			DroneAITags::Event_DroneLost,
+			EStateTreeTransitionType::GotoState,
+			&Search);
+
+		Search.AddTask<FDroneStateTreeSearchTask>();
+		Search.AddTransition(
+			EStateTreeTransitionTrigger::OnEvent,
+			DroneAITags::Event_DroneDetected,
+			EStateTreeTransitionType::GotoState,
+			&Detected);
+		Search.AddTransition(EStateTreeTransitionTrigger::OnStateSucceeded, EStateTreeTransitionType::GotoState, &Claim);
+		Search.AddTransition(EStateTreeTransitionTrigger::OnStateFailed, EStateTreeTransitionType::GotoState, &Claim);
+
+		// Root 전환은 Claim·Move·Wait·Release 어느 단계에서 감지해도 같은 대응 상태로 보낸다.
+		Root.AddTransition(
+			EStateTreeTransitionTrigger::OnEvent,
+			DroneAITags::Event_DroneDetected,
+			EStateTreeTransitionType::GotoState,
+			&Detected);
 	}
 }
 #endif
@@ -91,6 +137,7 @@ bool UDroneAIStateTreeAuthoringLibrary::CreateHostilePatrolStateTree(const FStri
 
 	Release.AddTask<FDroneStateTreeReleasePatrolSlotTask>();
 	Release.AddTransition(EStateTreeTransitionTrigger::OnStateSucceeded, EStateTreeTransitionType::GotoState, &Claim);
+	AddHostilePerceptionStates(Root, Claim);
 
 	FStateTreeCompilerLog CompilerLog;
 	if (!UStateTreeEditingSubsystem::CompileStateTree(StateTree, CompilerLog) || !StateTree->IsReadyToRun())
@@ -126,7 +173,7 @@ bool UDroneAIStateTreeAuthoringLibrary::ValidateHostilePatrolStateTree(const FSt
 	}
 
 	const UStateTreeState* Root = EditorData->SubTrees[0];
-	if (Root->Name != TEXT("HostilePatrol") || Root->Children.Num() != 4)
+	if (Root->Name != TEXT("HostilePatrol") || Root->Children.Num() < 4)
 	{
 		return false;
 	}
@@ -143,6 +190,89 @@ bool UDroneAIStateTreeAuthoringLibrary::ValidateHostilePatrolStateTree(const FSt
 		&& HasSingleTaskOfType(Wait, FDroneStateTreeWaitAtPatrolSlotTask::StaticStruct())
 		&& Release && Release->Name == TEXT("ReleasePatrolSlot")
 		&& HasSingleTaskOfType(Release, FDroneStateTreeReleasePatrolSlotTask::StaticStruct());
+#else
+	return false;
+#endif
+}
+
+bool UDroneAIStateTreeAuthoringLibrary::UpgradeHostilePatrolStateTreeForPerception(const FString& AssetPath)
+{
+#if WITH_EDITOR
+	if (ValidateHostilePerceptionStateTree(AssetPath))
+	{
+		return true;
+	}
+	if (!ValidateHostilePatrolStateTree(AssetPath))
+	{
+		return false;
+	}
+
+	UStateTree* StateTree = LoadObject<UStateTree>(nullptr, *MakeStateTreeObjectPath(AssetPath));
+	UStateTreeEditorData* EditorData = StateTree
+		? Cast<UStateTreeEditorData>(StateTree->EditorData)
+		: nullptr;
+	if (!StateTree || !EditorData || EditorData->SubTrees.Num() != 1 || !EditorData->SubTrees[0])
+	{
+		return false;
+	}
+
+	UStateTreeState* Root = EditorData->SubTrees[0];
+	if (Root->Children.Num() != 4 || !Root->Children[0])
+	{
+		// 알 수 없는 사용자 확장 Asset은 자동으로 덮어쓰지 않는다.
+		return false;
+	}
+
+	StateTree->Modify();
+	EditorData->Modify();
+	Root->Modify();
+	AddHostilePerceptionStates(*Root, *Root->Children[0]);
+
+	FStateTreeCompilerLog CompilerLog;
+	if (!UStateTreeEditingSubsystem::CompileStateTree(StateTree, CompilerLog) || !StateTree->IsReadyToRun())
+	{
+		return false;
+	}
+
+	StateTree->MarkPackageDirty();
+	return ValidateHostilePerceptionStateTree(AssetPath);
+#else
+	return false;
+#endif
+}
+
+bool UDroneAIStateTreeAuthoringLibrary::ValidateHostilePerceptionStateTree(const FString& AssetPath)
+{
+#if WITH_EDITOR
+	if (!ValidateHostilePatrolStateTree(AssetPath))
+	{
+		return false;
+	}
+
+	const UStateTree* StateTree = LoadObject<UStateTree>(nullptr, *MakeStateTreeObjectPath(AssetPath));
+	const UStateTreeEditorData* EditorData = StateTree
+		? Cast<UStateTreeEditorData>(StateTree->EditorData)
+		: nullptr;
+	if (!EditorData || EditorData->SubTrees.Num() != 1 || !EditorData->SubTrees[0])
+	{
+		return false;
+	}
+
+	const UStateTreeState* Root = EditorData->SubTrees[0];
+	if (Root->Children.Num() != 6)
+	{
+		return false;
+	}
+
+	const UStateTreeState* Detected = Root->Children[4];
+	const UStateTreeState* Search = Root->Children[5];
+	return Detected && Detected->Name == TEXT("DroneDetected")
+		&& HasSingleTaskOfType(Detected, FDroneStateTreeDetectedTask::StaticStruct())
+		&& Search && Search->Name == TEXT("SearchLastKnownLocation")
+		&& HasSingleTaskOfType(Search, FDroneStateTreeSearchTask::StaticStruct())
+		&& HasEventTransitionTo(Root, DroneAITags::Event_DroneDetected, Detected->Name)
+		&& HasEventTransitionTo(Detected, DroneAITags::Event_DroneLost, Search->Name)
+		&& HasEventTransitionTo(Search, DroneAITags::Event_DroneDetected, Detected->Name);
 #else
 	return false;
 #endif

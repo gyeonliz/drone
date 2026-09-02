@@ -5,6 +5,7 @@
 #include "DroneNPCCharacter.generated.h"
 
 class UDroneNPCProfileComponent;
+class UDroneNPCWeaponComponent;
 class USmartObjectUserComponent;
 
 /**
@@ -27,10 +28,16 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|NPC")
 	USmartObjectUserComponent* GetSmartObjectUserComponent() const { return SmartObjectUserComponent; }
 
+	UFUNCTION(BlueprintPure, Category="Drone|AI|NPC")
+	UDroneNPCWeaponComponent* GetNPCWeaponComponent() const { return NPCWeaponComponent; }
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|NPC|Components")
 	TObjectPtr<UDroneNPCProfileComponent> NPCProfileComponent;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|NPC|Components")
 	TObjectPtr<USmartObjectUserComponent> SmartObjectUserComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|NPC|Components")
+	TObjectPtr<UDroneNPCWeaponComponent> NPCWeaponComponent;
 };
