@@ -1,6 +1,7 @@
 #include "AI/DroneNPCPerceptionStateTreeTasks.h"
 
 #include "AI/DroneNPCAIController.h"
+#include "AI/Weapons/DroneNPCWeaponComponent.h"
 #include "StateTreeExecutionContext.h"
 
 namespace
@@ -32,6 +33,7 @@ EStateTreeRunStatus FDroneStateTreeDetectedTask::EnterState(
 	}
 
 	Controller->EnterDroneDetectedResponse();
+	Controller->StartPersonalWeaponFire();
 	return EStateTreeRunStatus::Running;
 }
 
@@ -39,10 +41,27 @@ EStateTreeRunStatus FDroneStateTreeDetectedTask::Tick(
 	FStateTreeExecutionContext& Context,
 	const float DeltaTime) const
 {
-	const ADroneNPCAIController* Controller = GetPerceptionDroneController(Context);
-	return Controller && Controller->IsHostileNPC()
-		? EStateTreeRunStatus::Running
-		: EStateTreeRunStatus::Failed;
+	ADroneNPCAIController* Controller = GetPerceptionDroneController(Context);
+	if (!Controller || !Controller->IsHostileNPC() || !Controller->HasDetectedDrone())
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+	if (const UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
+		WeaponComponent && !WeaponComponent->IsFiring())
+	{
+		Controller->StartPersonalWeaponFire();
+	}
+	return EStateTreeRunStatus::Running;
+}
+
+void FDroneStateTreeDetectedTask::ExitState(
+	FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	if (ADroneNPCAIController* Controller = GetPerceptionDroneController(Context))
+	{
+		Controller->StopPersonalWeaponFire();
+	}
 }
 
 FDroneStateTreeSearchTask::FDroneStateTreeSearchTask()

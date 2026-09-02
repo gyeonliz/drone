@@ -22,6 +22,7 @@ struct DRONE_API FDroneStateTreeDetectedTask : public FStateTreeAITaskBase
 	virtual const UStruct* GetInstanceDataType() const override;
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 };
 
 USTRUCT()
