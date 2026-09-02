@@ -5,7 +5,7 @@
 
 namespace
 {
-	ADroneNPCAIController* GetDroneController(FStateTreeExecutionContext& Context)
+	ADroneNPCAIController* GetPerceptionDroneController(FStateTreeExecutionContext& Context)
 	{
 		return Cast<ADroneNPCAIController>(Context.GetOwner());
 	}
@@ -25,7 +25,7 @@ EStateTreeRunStatus FDroneStateTreeDetectedTask::EnterState(
 	FStateTreeExecutionContext& Context,
 	const FStateTreeTransitionResult& Transition) const
 {
-	ADroneNPCAIController* Controller = GetDroneController(Context);
+	ADroneNPCAIController* Controller = GetPerceptionDroneController(Context);
 	if (!Controller || !Controller->IsHostileNPC())
 	{
 		return EStateTreeRunStatus::Failed;
@@ -39,7 +39,7 @@ EStateTreeRunStatus FDroneStateTreeDetectedTask::Tick(
 	FStateTreeExecutionContext& Context,
 	const float DeltaTime) const
 {
-	const ADroneNPCAIController* Controller = GetDroneController(Context);
+	const ADroneNPCAIController* Controller = GetPerceptionDroneController(Context);
 	return Controller && Controller->IsHostileNPC()
 		? EStateTreeRunStatus::Running
 		: EStateTreeRunStatus::Failed;
@@ -61,7 +61,7 @@ EStateTreeRunStatus FDroneStateTreeSearchTask::EnterState(
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	InstanceData.ElapsedTime = 0.0f;
-	ADroneNPCAIController* Controller = GetDroneController(Context);
+	ADroneNPCAIController* Controller = GetPerceptionDroneController(Context);
 	return Controller && Controller->BeginDroneSearch(InstanceData.AcceptanceRadius)
 		? EStateTreeRunStatus::Running
 		: EStateTreeRunStatus::Failed;
@@ -72,7 +72,7 @@ EStateTreeRunStatus FDroneStateTreeSearchTask::Tick(
 	const float DeltaTime) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
-	ADroneNPCAIController* Controller = GetDroneController(Context);
+	ADroneNPCAIController* Controller = GetPerceptionDroneController(Context);
 	if (!Controller)
 	{
 		return EStateTreeRunStatus::Failed;
@@ -97,7 +97,7 @@ void FDroneStateTreeSearchTask::ExitState(
 	FStateTreeExecutionContext& Context,
 	const FStateTreeTransitionResult& Transition) const
 {
-	if (ADroneNPCAIController* Controller = GetDroneController(Context))
+	if (ADroneNPCAIController* Controller = GetPerceptionDroneController(Context))
 	{
 		if (Controller->GetResponseState() == EDroneNPCAIResponseState::Search)
 		{
