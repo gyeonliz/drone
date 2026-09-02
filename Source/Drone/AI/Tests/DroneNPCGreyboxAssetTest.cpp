@@ -500,6 +500,8 @@ public:
 			return UpdateBaseline(Now, Drone, Hostiles, Friendlies);
 		case EPhase::WaitForDetected:
 			return UpdateDetected(Now, Drone, Hostiles, Friendlies);
+		case EPhase::WaitForMGTurret:
+			return UpdateMGTurret(Now, Drone, Hostiles, Friendlies);
 		case EPhase::WaitForSearch:
 			return UpdateSearch(Now, Hostiles, Friendlies);
 		case EPhase::WaitForReturn:
@@ -514,6 +516,7 @@ private:
 	{
 		WaitForBaseline,
 		WaitForDetected,
+		WaitForMGTurret,
 		WaitForSearch,
 		WaitForReturn
 	};
@@ -601,10 +604,14 @@ private:
 		bool bHostilesDetected = true;
 		for (const ADroneNPCAIController* Controller : Hostiles)
 		{
+			const EDroneNPCAIResponseState ResponseState = Controller->GetResponseState();
+			const bool bExpectedResponse = Controller->CanUseMGTurret()
+				? ResponseState == EDroneNPCAIResponseState::MoveToMGTurret
+					|| ResponseState == EDroneNPCAIResponseState::HoldMGTurret
+				: ResponseState == EDroneNPCAIResponseState::DroneDetected;
 			bHostilesDetected &= Controller->HasDetectedDrone()
-				&& Controller->GetResponseState() == EDroneNPCAIResponseState::DroneDetected
-				&& Controller->GetDroneDetectionCount() == 1
-				&& !Controller->GetReservationComponent()->HasValidReservation();
+				&& bExpectedResponse
+				&& Controller->GetDroneDetectionCount() == 1;
 		}
 		bool bFriendliesUnaffected = true;
 		for (const ADroneNPCAIController* Controller : Friendlies)
@@ -618,23 +625,49 @@ private:
 			return FinishWithTimeout(Now, 5.0, TEXT("Hostile-only DroneDetected response did not become stable"));
 		}
 
-		bool bCommonWeaponPathReady = true;
+		AdvanceTo(EPhase::WaitForMGTurret, Now);
+		return false;
+	}
+
+	bool UpdateMGTurret(
+		const double Now,
+		ADronePrototypePawn* Drone,
+		const TArray<ADroneNPCAIController*>& Hostiles,
+		const TArray<ADroneNPCAIController*>& Friendlies)
+	{
+		int32 MGTurretOperatorCount = 0;
+		int32 MGTurretReservationCount = 0;
+		bool bMGTurretOperatorReady = true;
+		bool bPersonalWeaponFallbackReady = true;
 		for (ADroneNPCAIController* Controller : Hostiles)
 		{
 			UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
-			if (WeaponComponent && Controller->UsesRifle())
+			if (Controller->GetReservationComponent()->HasValidReservation())
 			{
-				// 이 테스트의 수동 Sight Broadcast는 실제 Sight 반경을 적용하지 않는다.
-				// 사거리 자체는 RifleTrace/ShotgunTrace에서 검증하므로 여기서는 공용
-				// Target/Aim Point 전달 계약만 분리해서 확인한다.
-				WeaponComponent->ConfigureRifleGreybox(100000.0f, 1.0f);
+				++MGTurretReservationCount;
 			}
-			else if (WeaponComponent && Controller->UsesShotgun())
+
+			if (Controller->CanUseMGTurret())
 			{
+				++MGTurretOperatorCount;
+				bMGTurretOperatorReady &= Controller->GetResponseState() == EDroneNPCAIResponseState::HoldMGTurret
+					&& Controller->GetMGTurretClaimCount() == 1
+					&& Controller->GetMGTurretArrivalCount() == 1
+					&& Controller->GetReservationComponent()->HasValidReservation()
+					&& WeaponComponent
+					&& !WeaponComponent->IsFiring();
+				continue;
+			}
+
+			if (WeaponComponent && Controller->UsesShotgun())
+			{
+				// 수동 Sight Broadcast는 실제 Sight 반경을 적용하지 않는다. Shotgun의
+				// 사거리 자체는 전용 테스트에 맡기고 여기서는 MG 실패 시 개인 무기
+				// Fallback과 공용 Target/Aim Point 전달만 분리 검증한다.
 				WeaponComponent->ConfigureShotgunGreybox(100000.0f, 1.0f, 8, 6.0f);
 			}
-			bCommonWeaponPathReady &= Controller->CanFirePersonalWeapon()
-				&& Controller->StartPersonalWeaponFire()
+			bPersonalWeaponFallbackReady &= Controller->GetResponseState() == EDroneNPCAIResponseState::DroneDetected
+				&& Controller->CanFirePersonalWeapon()
 				&& WeaponComponent
 				&& WeaponComponent->IsFiring()
 				&& WeaponComponent->GetCurrentTarget() == Drone
@@ -643,14 +676,16 @@ private:
 		for (const ADroneNPCAIController* Controller : Friendlies)
 		{
 			const UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
-			bCommonWeaponPathReady &= !Controller->CanFirePersonalWeapon()
+			bPersonalWeaponFallbackReady &= !Controller->CanFirePersonalWeapon()
 				&& WeaponComponent
 				&& !WeaponComponent->IsFiring();
 		}
-		if (!bCommonWeaponPathReady)
+		if (MGTurretOperatorCount != 1
+			|| MGTurretReservationCount != 1
+			|| !bMGTurretOperatorReady
+			|| !bPersonalWeaponFallbackReady)
 		{
-			Test->AddError(TEXT("Rifle and Shotgun did not share the detected Target/Aim Point Weapon path"));
-			return true;
+			return FinishWithTimeout(Now, 12.0, TEXT("MG 1-Slot Claim/Move or personal Weapon fallback did not become stable"));
 		}
 
 		for (ADroneNPCAIController* Controller : Hostiles)
@@ -929,6 +964,9 @@ bool FDroneHostilePatrolStateTreeAssetTest::RunTest(const FString& Parameters)
 	TestTrue(
 		TEXT("Hostile StateTree keeps DroneDetected-Search-Patrol event transitions"),
 		UDroneAIStateTreeAuthoringLibrary::ValidateHostilePerceptionStateTree(HostilePatrolStateTreePackage));
+	TestTrue(
+		TEXT("Hostile StateTree keeps MG Claim-Move-Hold and personal Weapon fallback transitions"),
+		UDroneAIStateTreeAuthoringLibrary::ValidateHostileMGTurretStateTree(HostilePatrolStateTreePackage));
 	return !HasAnyErrors();
 }
 

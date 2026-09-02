@@ -19,6 +19,8 @@ enum class EDroneNPCAIResponseState : uint8
 {
 	Patrol,
 	DroneDetected,
+	MoveToMGTurret,
+	HoldMGTurret,
 	Search
 };
 
@@ -63,6 +65,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI")
 	bool UsesShotgun() const;
 
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	bool CanUseMGTurret() const;
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon")
 	UDroneNPCWeaponComponent* GetPossessedWeaponComponent() const;
 
@@ -106,6 +111,12 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
 	int32 GetCompletedDroneSearchCount() const { return CompletedDroneSearchCount; }
 
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	int32 GetMGTurretClaimCount() const { return MGTurretClaimCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	int32 GetMGTurretArrivalCount() const { return MGTurretArrivalCount; }
+
 	/** StateTree의 DroneDetected Task가 호출한다. 중복 진입은 감지 횟수로 세지 않는다. */
 	void EnterDroneDetectedResponse();
 
@@ -122,6 +133,18 @@ public:
 	/** Hostile이며 MG 사용 허용 Profile일 때만 MG Turret Activity 검색으로 전환한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|SmartObject")
 	bool PrepareMGTurretSearch();
+
+	/** 감지 중인 MG 사용 가능 Hostile만 빈 MGTurret 1-Slot을 예약한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
+	bool ClaimAvailableMGTurret(FTransform& OutSlotTransform);
+
+	/** 예약한 MG 위치에 도착한 뒤 AI-MG-02 전까지 Claim을 유지하는 상태로 전환한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
+	bool CompleteMGTurretMove();
+
+	/** 이동 실패·감지 실종·StateTree 중단 시 MG Claim과 이동을 함께 정리한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
+	void AbortMGTurretResponse();
 
 	/** EnemyPatrol만 검색해 직전 완료 지점과 다른 다음 Slot을 예약한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Patrol")
@@ -211,6 +234,12 @@ protected:
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
 	int32 CompletedDroneSearchCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG")
+	int32 MGTurretClaimCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG")
+	int32 MGTurretArrivalCount = 0;
 
 	/** 직전 지점 바로 재선택을 막는 Greybox 기준값. 최종 맵 규모에 맞춰 조정한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Patrol", meta=(ClampMin="0.0", ForceUnits="cm"))

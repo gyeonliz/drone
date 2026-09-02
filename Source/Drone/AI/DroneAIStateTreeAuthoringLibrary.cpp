@@ -2,6 +2,7 @@
 
 #if WITH_EDITOR
 #include "AI/DroneAITags.h"
+#include "AI/DroneNPCMGTurretStateTreeTasks.h"
 #include "AI/DroneNPCPerceptionStateTreeTasks.h"
 #include "AI/DroneNPCPatrolStateTreeTasks.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -78,6 +79,65 @@ namespace
 			EStateTreeTransitionType::GotoState,
 			&Detected);
 	}
+
+	void ReplaceEventTransition(
+		UStateTreeState& State,
+		const FGameplayTag EventTag,
+		UStateTreeState& TargetState)
+	{
+		State.Transitions.RemoveAll(
+			[EventTag](const FStateTreeTransition& Transition)
+			{
+				return Transition.Trigger == EStateTreeTransitionTrigger::OnEvent
+					&& Transition.RequiredEvent.Tag == EventTag;
+			});
+		State.AddTransition(
+			EStateTreeTransitionTrigger::OnEvent,
+			EventTag,
+			EStateTreeTransitionType::GotoState,
+			&TargetState);
+	}
+
+	void AddHostileMGTurretStates(
+		UStateTreeState& Root,
+		UStateTreeState& Detected,
+		UStateTreeState& Search)
+	{
+		UStateTreeState& ClaimMG = Root.AddChildState(TEXT("ClaimMGTurretSlot"));
+		UStateTreeState& MoveMG = Root.AddChildState(TEXT("MoveToMGTurret"));
+		UStateTreeState& HoldMG = Root.AddChildState(TEXT("HoldMGTurretReservation"));
+
+		ClaimMG.AddTask<FDroneStateTreeClaimMGTurretTask>();
+		ClaimMG.AddTransition(EStateTreeTransitionTrigger::OnStateSucceeded, EStateTreeTransitionType::GotoState, &MoveMG);
+		ClaimMG.AddTransition(EStateTreeTransitionTrigger::OnStateFailed, EStateTreeTransitionType::GotoState, &Detected);
+		ClaimMG.AddTransition(
+			EStateTreeTransitionTrigger::OnEvent,
+			DroneAITags::Event_DroneLost,
+			EStateTreeTransitionType::GotoState,
+			&Search);
+
+		MoveMG.AddTask<FDroneStateTreeMoveToMGTurretTask>();
+		MoveMG.AddTransition(EStateTreeTransitionTrigger::OnStateSucceeded, EStateTreeTransitionType::GotoState, &HoldMG);
+		MoveMG.AddTransition(EStateTreeTransitionTrigger::OnStateFailed, EStateTreeTransitionType::GotoState, &Detected);
+		MoveMG.AddTransition(
+			EStateTreeTransitionTrigger::OnEvent,
+			DroneAITags::Event_DroneLost,
+			EStateTreeTransitionType::GotoState,
+			&Search);
+
+		HoldMG.AddTask<FDroneStateTreeHoldMGTurretTask>();
+		HoldMG.AddTransition(EStateTreeTransitionTrigger::OnStateFailed, EStateTreeTransitionType::GotoState, &Detected);
+		HoldMG.AddTransition(
+			EStateTreeTransitionTrigger::OnEvent,
+			DroneAITags::Event_DroneLost,
+			EStateTreeTransitionType::GotoState,
+			&Search);
+
+		// 감지 시 MG를 먼저 한 번 시도하고 권한 없음·점유 중·검색 실패면
+		// 기존 DroneDetected 개인 무기 상태로 즉시 대체한다.
+		ReplaceEventTransition(Root, DroneAITags::Event_DroneDetected, ClaimMG);
+		ReplaceEventTransition(Search, DroneAITags::Event_DroneDetected, ClaimMG);
+	}
 }
 #endif
 
@@ -138,6 +198,7 @@ bool UDroneAIStateTreeAuthoringLibrary::CreateHostilePatrolStateTree(const FStri
 	Release.AddTask<FDroneStateTreeReleasePatrolSlotTask>();
 	Release.AddTransition(EStateTreeTransitionTrigger::OnStateSucceeded, EStateTreeTransitionType::GotoState, &Claim);
 	AddHostilePerceptionStates(Root, Claim);
+	AddHostileMGTurretStates(Root, *Root.Children[4], *Root.Children[5]);
 
 	FStateTreeCompilerLog CompilerLog;
 	if (!UStateTreeEditingSubsystem::CompileStateTree(StateTree, CompilerLog) || !StateTree->IsReadyToRun())
@@ -259,20 +320,118 @@ bool UDroneAIStateTreeAuthoringLibrary::ValidateHostilePerceptionStateTree(const
 	}
 
 	const UStateTreeState* Root = EditorData->SubTrees[0];
-	if (Root->Children.Num() != 6)
+	if (Root->Children.Num() != 6 && Root->Children.Num() != 9)
 	{
 		return false;
 	}
 
 	const UStateTreeState* Detected = Root->Children[4];
 	const UStateTreeState* Search = Root->Children[5];
-	return Detected && Detected->Name == TEXT("DroneDetected")
+	if (!Detected || !Search)
+	{
+		return false;
+	}
+	const FName DetectedEventTarget = Root->Children.Num() == 9 && Root->Children[6]
+		? Root->Children[6]->Name
+		: Detected->Name;
+	return Detected->Name == TEXT("DroneDetected")
 		&& HasSingleTaskOfType(Detected, FDroneStateTreeDetectedTask::StaticStruct())
 		&& Search && Search->Name == TEXT("SearchLastKnownLocation")
 		&& HasSingleTaskOfType(Search, FDroneStateTreeSearchTask::StaticStruct())
-		&& HasEventTransitionTo(Root, DroneAITags::Event_DroneDetected, Detected->Name)
+		&& HasEventTransitionTo(Root, DroneAITags::Event_DroneDetected, DetectedEventTarget)
 		&& HasEventTransitionTo(Detected, DroneAITags::Event_DroneLost, Search->Name)
-		&& HasEventTransitionTo(Search, DroneAITags::Event_DroneDetected, Detected->Name);
+		&& HasEventTransitionTo(Search, DroneAITags::Event_DroneDetected, DetectedEventTarget);
+#else
+	return false;
+#endif
+}
+
+bool UDroneAIStateTreeAuthoringLibrary::UpgradeHostilePerceptionStateTreeForMGTurret(const FString& AssetPath)
+{
+#if WITH_EDITOR
+	if (ValidateHostileMGTurretStateTree(AssetPath))
+	{
+		return true;
+	}
+	if (!ValidateHostilePerceptionStateTree(AssetPath))
+	{
+		return false;
+	}
+
+	UStateTree* StateTree = LoadObject<UStateTree>(nullptr, *MakeStateTreeObjectPath(AssetPath));
+	UStateTreeEditorData* EditorData = StateTree
+		? Cast<UStateTreeEditorData>(StateTree->EditorData)
+		: nullptr;
+	if (!StateTree || !EditorData || EditorData->SubTrees.Num() != 1 || !EditorData->SubTrees[0])
+	{
+		return false;
+	}
+
+	UStateTreeState* Root = EditorData->SubTrees[0];
+	if (Root->Children.Num() != 6 || !Root->Children[4] || !Root->Children[5])
+	{
+		// 알 수 없는 사용자 확장 Asset은 자동으로 덮어쓰지 않는다.
+		return false;
+	}
+
+	StateTree->Modify();
+	EditorData->Modify();
+	Root->Modify();
+	AddHostileMGTurretStates(*Root, *Root->Children[4], *Root->Children[5]);
+
+	FStateTreeCompilerLog CompilerLog;
+	if (!UStateTreeEditingSubsystem::CompileStateTree(StateTree, CompilerLog) || !StateTree->IsReadyToRun())
+	{
+		return false;
+	}
+
+	StateTree->MarkPackageDirty();
+	return ValidateHostileMGTurretStateTree(AssetPath);
+#else
+	return false;
+#endif
+}
+
+bool UDroneAIStateTreeAuthoringLibrary::ValidateHostileMGTurretStateTree(const FString& AssetPath)
+{
+#if WITH_EDITOR
+	if (!ValidateHostilePerceptionStateTree(AssetPath))
+	{
+		return false;
+	}
+
+	const UStateTree* StateTree = LoadObject<UStateTree>(nullptr, *MakeStateTreeObjectPath(AssetPath));
+	const UStateTreeEditorData* EditorData = StateTree
+		? Cast<UStateTreeEditorData>(StateTree->EditorData)
+		: nullptr;
+	if (!EditorData || EditorData->SubTrees.Num() != 1 || !EditorData->SubTrees[0])
+	{
+		return false;
+	}
+
+	const UStateTreeState* Root = EditorData->SubTrees[0];
+	if (Root->Children.Num() != 9)
+	{
+		return false;
+	}
+
+	const UStateTreeState* Detected = Root->Children[4];
+	const UStateTreeState* Search = Root->Children[5];
+	const UStateTreeState* ClaimMG = Root->Children[6];
+	const UStateTreeState* MoveMG = Root->Children[7];
+	const UStateTreeState* HoldMG = Root->Children[8];
+	return Detected && Search
+		&& ClaimMG && ClaimMG->Name == TEXT("ClaimMGTurretSlot")
+		&& HasSingleTaskOfType(ClaimMG, FDroneStateTreeClaimMGTurretTask::StaticStruct())
+		&& MoveMG && MoveMG->Name == TEXT("MoveToMGTurret")
+		&& HasSingleTaskOfType(MoveMG, FDroneStateTreeMoveToMGTurretTask::StaticStruct())
+		&& HoldMG && HoldMG->Name == TEXT("HoldMGTurretReservation")
+		&& HasSingleTaskOfType(HoldMG, FDroneStateTreeHoldMGTurretTask::StaticStruct())
+		&& HasEventTransitionTo(Root, DroneAITags::Event_DroneDetected, ClaimMG->Name)
+		&& HasEventTransitionTo(Search, DroneAITags::Event_DroneDetected, ClaimMG->Name)
+		&& HasEventTransitionTo(ClaimMG, DroneAITags::Event_DroneLost, Search->Name)
+		&& HasEventTransitionTo(MoveMG, DroneAITags::Event_DroneLost, Search->Name)
+		&& HasEventTransitionTo(HoldMG, DroneAITags::Event_DroneLost, Search->Name);
 #else
 	return false;
 #endif

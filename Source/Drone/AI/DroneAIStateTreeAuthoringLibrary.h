@@ -30,6 +30,14 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Authoring")
 	static bool ValidateHostilePerceptionStateTree(const FString& AssetPath);
 
+	/** 기존 Perception StateTree에 MG 1-Slot Claim·Move·Hold 분기를 안전하게 추가한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Authoring")
+	static bool UpgradeHostilePerceptionStateTreeForMGTurret(const FString& AssetPath);
+
+	/** AI-MG-01의 MG 우선 Claim·Move와 개인 무기 Fallback 계약을 확인한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Authoring")
+	static bool ValidateHostileMGTurretStateTree(const FString& AssetPath);
+
 	/** AI-FRIEND-01의 아군 기지 활동 StateTree를 새로 생성한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Authoring")
 	static bool CreateFriendlyBaseRoutineStateTree(const FString& AssetPath);

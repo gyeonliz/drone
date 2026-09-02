@@ -71,6 +71,8 @@ void ADroneNPCAIController::OnPossess(APawn* InPawn)
 	DroneLostCount = 0;
 	DroneSearchStartCount = 0;
 	CompletedDroneSearchCount = 0;
+	MGTurretClaimCount = 0;
+	MGTurretArrivalCount = 0;
 
 	if (const UDroneNPCProfileComponent* Profile = GetPossessedProfile())
 	{
@@ -148,6 +150,14 @@ bool ADroneNPCAIController::UsesShotgun() const
 {
 	const UDroneNPCProfileComponent* Profile = GetPossessedProfile();
 	return Profile && Profile->GetProfile().WeaponType == EDroneNPCWeaponType::Shotgun;
+}
+
+bool ADroneNPCAIController::CanUseMGTurret() const
+{
+	const UDroneNPCProfileComponent* Profile = GetPossessedProfile();
+	return Profile
+		&& Profile->IsHostile()
+		&& Profile->GetProfile().bCanUseMGTurret;
 }
 
 bool ADroneNPCAIController::IsHostileNPC() const
@@ -292,6 +302,55 @@ bool ADroneNPCAIController::PrepareMGTurretSearch()
 	return true;
 }
 
+bool ADroneNPCAIController::ClaimAvailableMGTurret(FTransform& OutSlotTransform)
+{
+	OutSlotTransform = FTransform::Identity;
+	if (!HasDetectedDrone() || !GetPawn() || !PrepareMGTurretSearch())
+	{
+		return false;
+	}
+
+	// MG 이동을 선택한 NPC는 개인 무기 Timer를 먼저 정리한다. Claim 실패 시
+	// StateTree가 DroneDetected 개인 무기 상태로 즉시 대체한다.
+	StopPersonalWeaponFire();
+	StopMovement();
+	ReservationComponent->ReleaseReservation();
+	if (!ReservationComponent->ClaimNearestAvailableSlot(GetPawn()->GetActorLocation(), OutSlotTransform))
+	{
+		ConfigureDefaultPatrolActivities();
+		return false;
+	}
+
+	ResponseState = EDroneNPCAIResponseState::MoveToMGTurret;
+	++MGTurretClaimCount;
+	return true;
+}
+
+bool ADroneNPCAIController::CompleteMGTurretMove()
+{
+	if (ResponseState != EDroneNPCAIResponseState::MoveToMGTurret
+		|| !HasDetectedDrone()
+		|| !ReservationComponent->HasValidReservation())
+	{
+		return false;
+	}
+
+	StopMovement();
+	ResponseState = EDroneNPCAIResponseState::HoldMGTurret;
+	++MGTurretArrivalCount;
+	return true;
+}
+
+void ADroneNPCAIController::AbortMGTurretResponse()
+{
+	StopMovement();
+	ReservationComponent->ReleaseReservation();
+	ConfigureDefaultPatrolActivities();
+	ResponseState = HasDetectedDrone()
+		? EDroneNPCAIResponseState::DroneDetected
+		: EDroneNPCAIResponseState::Patrol;
+}
+
 bool ADroneNPCAIController::ClaimNextEnemyPatrolSlot(FTransform& OutSlotTransform)
 {
 	OutSlotTransform = FTransform::Identity;
@@ -432,23 +491,26 @@ void ADroneNPCAIController::HandleTargetPerceptionUpdated(AActor* Actor, const F
 		DetectedDrone = Actor;
 		LastKnownDroneLocation = Actor->GetActorLocation();
 		bHasLastKnownDroneLocation = true;
-		// 순찰·대기 Slot을 붙잡은 채 전투로 넘어가지 않도록 먼저 해제한다.
-		EnterDroneDetectedResponse();
 		if (!bWasAlreadyDetected)
 		{
+			// 순찰·대기 Slot을 붙잡은 채 전투로 넘어가지 않도록 첫 감지에서만 해제한다.
+			// 같은 Target의 반복 자극이 MG 이동·Claim을 취소하지 않게 한다.
+			EnterDroneDetectedResponse();
 			++DroneDetectionCount;
+			if (StateTreeAIComponent->IsRunning())
+			{
+				StateTreeAIComponent->SendStateTreeEvent(DroneAITags::Event_DroneDetected);
+			}
+			OnDronePerceptionChanged.Broadcast(Actor, true);
 		}
-		if (StateTreeAIComponent->IsRunning())
-		{
-			StateTreeAIComponent->SendStateTreeEvent(DroneAITags::Event_DroneDetected);
-		}
-		OnDronePerceptionChanged.Broadcast(Actor, true);
 	}
 	else if (DetectedDrone.Get() == Actor)
 	{
 		LastKnownDroneLocation = Actor->GetActorLocation();
 		bHasLastKnownDroneLocation = true;
 		StopPersonalWeaponFire();
+		StopMovement();
+		ReservationComponent->ReleaseReservation();
 		DetectedDrone.Reset();
 		++DroneLostCount;
 		if (StateTreeAIComponent->IsRunning())
