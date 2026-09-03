@@ -1,6 +1,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Misc/AutomationTest.h"
+#include "Health/DroneHealthComponent.h"
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Tutorial/DroneTrainingLapRecorderComponent.h"
 #include "UI/DroneFlightHUDWidget.h"
@@ -63,6 +64,29 @@ bool FDroneFlightHUDTelemetryBindingTest::RunTest(const FString& Parameters)
 	SecondSource->OnTelemetryUpdated.Broadcast(SecondSnapshot);
 	TestEqual(TEXT("Descending vertical speed keeps its negative sign"), Widget->GetVerticalSpeedDisplayText().ToString(), FString(TEXT("수직 속도  -0.5 m/s")));
 	TestEqual(TEXT("Rounded 360-degree heading wraps to north"), Widget->GetHeadingDisplayText().ToString(), FString(TEXT("진행 방향  000\u00B0")));
+
+	// 체력 UI도 Tick/Property Binding 없이 HealthChanged Event만으로 갱신한다.
+	UDroneHealthComponent* HealthSource = NewObject<UDroneHealthComponent>();
+	TestNotNull(TEXT("Health source can be created"), HealthSource);
+	if (HealthSource)
+	{
+		Widget->SetHealthSource(HealthSource);
+		TestEqual(TEXT("Health HUD starts at the 100-point greybox default"),
+			Widget->GetHealthDisplayText().ToString(), FString(TEXT("기체 내구도  100 / 100")));
+		HealthSource->ApplyHealthDamage(30.0f, nullptr, nullptr);
+		TestEqual(TEXT("Health HUD reflects applied damage"),
+			Widget->GetHealthDisplayText().ToString(), FString(TEXT("기체 내구도  70 / 100")));
+		HealthSource->ApplyHealthDamage(70.0f, nullptr, nullptr);
+		TestEqual(TEXT("Health HUD labels zero Health as destroyed"),
+			Widget->GetHealthDisplayText().ToString(), FString(TEXT("기체 상태  파괴됨  0 / 100")));
+		TestEqual(TEXT("Lethal damage emits death only once"), HealthSource->GetDeathEventCount(), 1);
+		TestFalse(TEXT("Damage after death is ignored"),
+			HealthSource->ApplyHealthDamage(10.0f, nullptr, nullptr));
+		Widget->ClearHealthSource();
+		TestFalse(
+			TEXT("Clearing Health source removes its event binding"),
+			HealthSource->OnHealthChanged.Contains(Widget, FName(TEXT("HandleHealthChanged"))));
+	}
 
 	// Tutorial 기록 Source는 Gate Event마다 방금 구간과 완료 구간 평균을 한국어로 갱신한다.
 	UDroneTrainingLapRecorderComponent* TrainingSource = NewObject<UDroneTrainingLapRecorderComponent>();

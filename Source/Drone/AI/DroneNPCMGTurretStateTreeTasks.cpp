@@ -152,15 +152,8 @@ EStateTreeRunStatus FDroneStateTreeHoldMGTurretTask::EnterState(
 	FStateTreeExecutionContext& Context,
 	const FStateTreeTransitionResult& Transition) const
 {
-	const ADroneNPCAIController* Controller = GetMGTurretDroneController(Context);
-	const UDroneSmartObjectReservationComponent* Reservation = Controller
-		? Controller->GetReservationComponent()
-		: nullptr;
-	return Controller
-		&& Controller->HasDetectedDrone()
-		&& Controller->GetResponseState() == EDroneNPCAIResponseState::HoldMGTurret
-		&& Reservation
-		&& Reservation->HasValidReservation()
+	ADroneNPCAIController* Controller = GetMGTurretDroneController(Context);
+	return Controller && Controller->BeginMGTurretOperation()
 		? EStateTreeRunStatus::Running
 		: EStateTreeRunStatus::Failed;
 }
@@ -169,14 +162,8 @@ EStateTreeRunStatus FDroneStateTreeHoldMGTurretTask::Tick(
 	FStateTreeExecutionContext& Context,
 	const float DeltaTime) const
 {
-	const ADroneNPCAIController* Controller = GetMGTurretDroneController(Context);
-	const UDroneSmartObjectReservationComponent* Reservation = Controller
-		? Controller->GetReservationComponent()
-		: nullptr;
-	return Controller
-		&& Controller->HasDetectedDrone()
-		&& Reservation
-		&& Reservation->HasValidReservation()
+	ADroneNPCAIController* Controller = GetMGTurretDroneController(Context);
+	return Controller && Controller->UpdateMGTurretOperation()
 		? EStateTreeRunStatus::Running
 		: EStateTreeRunStatus::Failed;
 }
@@ -187,7 +174,8 @@ void FDroneStateTreeHoldMGTurretTask::ExitState(
 {
 	if (ADroneNPCAIController* Controller = GetMGTurretDroneController(Context))
 	{
-		if (Controller->GetResponseState() == EDroneNPCAIResponseState::HoldMGTurret)
+		if (Controller->GetResponseState() == EDroneNPCAIResponseState::HoldMGTurret
+			|| Controller->GetResponseState() == EDroneNPCAIResponseState::UseMGTurret)
 		{
 			Controller->AbortMGTurretResponse();
 		}

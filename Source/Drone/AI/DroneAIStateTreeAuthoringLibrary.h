@@ -38,6 +38,14 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Authoring")
 	static bool ValidateHostileMGTurretStateTree(const FString& AssetPath);
 
+	/** 기존 MG 우선 StateTree에 Cover Claim·Move·Occupied 개인 무기 분기를 추가한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Authoring")
+	static bool UpgradeHostileMGTurretStateTreeForCover(const FString& AssetPath);
+
+	/** AI-COVER-01의 MG 실패→Cover→개인 무기 Fallback 계약을 확인한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Authoring")
+	static bool ValidateHostileCoverStateTree(const FString& AssetPath);
+
 	/** AI-FRIEND-01의 아군 기지 활동 StateTree를 새로 생성한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Authoring")
 	static bool CreateFriendlyBaseRoutineStateTree(const FString& AssetPath);

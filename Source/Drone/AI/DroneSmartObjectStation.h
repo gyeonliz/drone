@@ -13,6 +13,18 @@ class USkeletalMesh;
 class USmartObjectComponent;
 class USmartObjectDefinition;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
+	FDroneMGTurretUseChangedSignature,
+	AActor*, UserActor,
+	AActor*, TargetActor,
+	bool, bInUse);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
+	FDroneMGTurretShotSignature,
+	FVector, TraceStart,
+	FVector, TraceEnd,
+	AActor*, HitActor);
+
 /**
  * Patrol, Guard, Ambient, Cover, MG Turret를 Map에 배치하는 프로젝트 소유 Host Actor다.
  *
@@ -32,6 +44,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|SmartObject")
 	USkeletalMeshComponent* GetStationMesh() const { return StationMesh; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	USceneComponent* GetMGTurretAimPivot() const { return MGTurretAimPivot; }
 
 	/** 프로젝트 소유 Authoring Tool과 Blueprint가 Engine Component 내부를 직접 만지지 않게 한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|SmartObject")
@@ -60,9 +75,67 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|SmartObject")
 	bool HasSmartObjectDefinition() const;
 
+	/** Occupied 전환 뒤 호출한다. 같은 사용자만 현재 MG를 계속 조작할 수 있다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
+	bool BeginMGTurretUse(AActor* UserActor, AActor* TargetActor);
+
+	/** StateTree Tick에서 표적을 향해 Pivot을 갱신하고 Cooldown이 끝나면 Trace를 발사한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
+	bool UpdateMGTurretUse(AActor* UserActor, AActor* TargetActor);
+
+	/** UserActor가 nullptr이면 UnPossess·EndPlay용 강제 정리로 처리한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
+	void EndMGTurretUse(AActor* UserActor);
+
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
+	void ConfigureMGTurretGreybox(float InRange, float InCooldownSeconds);
+
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
+	void ConfigureMGTurretDamageGreybox(float InDamage);
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	float GetMGTurretDamage() const { return MGTurretDamage; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	bool IsMGTurretInUse() const { return bMGTurretInUse && MGTurretUser.IsValid(); }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	AActor* GetMGTurretUser() const { return MGTurretUser.Get(); }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	AActor* GetMGTurretTarget() const { return MGTurretTarget.Get(); }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	FVector GetMGTurretAimPoint() const { return MGTurretAimPoint; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG|Debug")
+	int32 GetMGTurretOccupationCount() const { return MGTurretOccupationCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG|Debug")
+	int32 GetMGTurretReleaseCount() const { return MGTurretReleaseCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG|Debug")
+	int32 GetMGTurretTraceAttemptCount() const { return MGTurretTraceAttemptCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG|Debug")
+	int32 GetMGTurretTargetHitCount() const { return MGTurretTargetHitCount; }
+
+	UPROPERTY(BlueprintAssignable, Category="Drone|AI|MG")
+	FDroneMGTurretUseChangedSignature OnMGTurretUseChanged;
+
+	/** Blueprint는 이 Event에서 Muzzle Flash·Sound·탄흔을 붙이고 Trace 계산은 중복하지 않는다. */
+	UPROPERTY(BlueprintAssignable, Category="Drone|AI|MG")
+	FDroneMGTurretShotSignature OnMGTurretShot;
+
 protected:
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|SmartObject|Components")
 	TObjectPtr<USceneComponent> StationRoot;
+
+	/** 최종 Turret Bone 구조와 분리된 Greybox 조준 Pivot이다. BP에서 별도 Mesh를 자식으로 추가해도 된다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Components")
+	TObjectPtr<USceneComponent> MGTurretAimPivot;
 
 	/** MG 외형이 필요할 때만 Mesh를 지정한다. Patrol/Ambient Point는 비워도 된다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|SmartObject|Components")
@@ -79,4 +152,47 @@ protected:
 	/** 문서·검증용 역할 값. 검색의 실제 기준은 Definition Activity Tag다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|SmartObject")
 	EDroneSmartObjectActivity Activity = EDroneSmartObjectActivity::EnemyPatrol;
+
+	/** AI-MG-02 Greybox 값이며 최종 난이도·실제 MG 제원이 아니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|MG", meta=(ClampMin="1.0", ForceUnits="cm"))
+	float MGTurretRange = 6000.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|MG", meta=(ClampMin="0.01", ForceUnits="s"))
+	float MGTurretCooldownSeconds = 0.15f;
+
+	/** 체력 100 기준 회색상자 MG 한 발 피해량이다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|MG", meta=(ClampMin="0.0"))
+	float MGTurretDamage = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|MG", meta=(ForceUnits="cm"))
+	FVector MGTurretMuzzleOffset = FVector(100.0f, 0.0f, 120.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Debug")
+	bool bDrawMGTurretDebugTrace = true;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG")
+	bool bMGTurretInUse = false;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG")
+	TWeakObjectPtr<AActor> MGTurretUser;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG")
+	TWeakObjectPtr<AActor> MGTurretTarget;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG")
+	FVector MGTurretAimPoint = FVector::ZeroVector;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Debug")
+	int32 MGTurretOccupationCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Debug")
+	int32 MGTurretReleaseCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Debug")
+	int32 MGTurretTraceAttemptCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Debug")
+	int32 MGTurretTargetHitCount = 0;
+
+	double LastMGTurretShotTimeSeconds = -DBL_MAX;
 };

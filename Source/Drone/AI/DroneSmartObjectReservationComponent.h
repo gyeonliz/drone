@@ -58,6 +58,14 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|SmartObject")
 	bool HasValidReservation() const;
 
+	/** 현재 Handle이 Gameplay Interaction을 실행 중인 Occupied Slot인지 확인한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|SmartObject")
+	bool IsReservationOccupied() const;
+
+	/** 현재 예약한 Smart Object를 소유한 Map Actor를 반환한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|SmartObject")
+	AActor* GetReservedSmartObjectActor() const;
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|SmartObject")
 	FSmartObjectClaimHandle GetClaimHandle() const { return ClaimHandle; }
 

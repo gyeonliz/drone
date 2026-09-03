@@ -186,6 +186,28 @@ bool UDroneSmartObjectReservationComponent::HasValidReservation() const
 	return Subsystem && Subsystem->IsClaimedSmartObjectValid(ClaimHandle);
 }
 
+bool UDroneSmartObjectReservationComponent::IsReservationOccupied() const
+{
+	const USmartObjectSubsystem* Subsystem = USmartObjectSubsystem::GetCurrent(GetWorld());
+	return Subsystem
+		&& HasValidReservation()
+		&& Subsystem->GetSlotState(ClaimHandle.SlotHandle) == ESmartObjectSlotState::Occupied;
+}
+
+AActor* UDroneSmartObjectReservationComponent::GetReservedSmartObjectActor() const
+{
+	const USmartObjectSubsystem* Subsystem = USmartObjectSubsystem::GetCurrent(GetWorld());
+	if (!Subsystem || !HasValidReservation())
+	{
+		return nullptr;
+	}
+
+	// Level에 배치된 USmartObjectComponent는 Owner Actor를 이 표준 데이터로 등록한다.
+	const FConstStructView OwnerData = Subsystem->GetOwnerData(ClaimHandle.SmartObjectHandle);
+	const FSmartObjectActorUserData* ActorData = OwnerData.GetPtr<const FSmartObjectActorUserData>();
+	return ActorData ? const_cast<AActor*>(ActorData->UserActor.Get()) : nullptr;
+}
+
 bool UDroneSmartObjectReservationComponent::GetReservedSlotTransform(FTransform& OutSlotTransform) const
 {
 	OutSlotTransform = FTransform::Identity;

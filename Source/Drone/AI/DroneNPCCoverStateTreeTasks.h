@@ -2,47 +2,45 @@
 
 #include "CoreMinimal.h"
 #include "Tasks/StateTreeAITask.h"
-#include "DroneNPCMGTurretStateTreeTasks.generated.h"
+#include "DroneNPCCoverStateTreeTasks.generated.h"
 
 USTRUCT()
-struct FDroneStateTreeClaimMGTurretTaskInstanceData
+struct FDroneStateTreeClaimCoverTaskInstanceData
 {
 	GENERATED_BODY()
 };
 
-/** MG 사용 권한이 있고 드론을 감지 중인 Hostile만 빈 MGTurret Slot을 한 번 Claim한다. */
-USTRUCT(meta=(DisplayName="Claim MG Turret Slot", Category="Drone|AI|MG"))
-struct DRONE_API FDroneStateTreeClaimMGTurretTask : public FStateTreeAITaskBase
+/** MG 사용 불가·점유 중일 때 감지 중인 Hostile이 빈 Cover Slot을 Claim한다. */
+USTRUCT(meta=(DisplayName="Claim Cover Slot", Category="Drone|AI|Cover"))
+struct DRONE_API FDroneStateTreeClaimCoverTask : public FStateTreeAITaskBase
 {
 	GENERATED_BODY()
-
-	using FInstanceDataType = FDroneStateTreeClaimMGTurretTaskInstanceData;
+	using FInstanceDataType = FDroneStateTreeClaimCoverTaskInstanceData;
 
 	virtual const UStruct* GetInstanceDataType() const override;
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 };
 
 USTRUCT()
-struct FDroneStateTreeMoveToMGTurretTaskInstanceData
+struct FDroneStateTreeMoveToCoverTaskInstanceData
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, Category="MG", meta=(ClampMin="10.0", ForceUnits="cm"))
+	UPROPERTY(EditAnywhere, Category="Cover", meta=(ClampMin="10.0", ForceUnits="cm"))
 	float AcceptanceRadius = 100.0f;
 
 	UPROPERTY(Transient)
 	FVector Destination = FVector::ZeroVector;
 };
 
-/** 감지를 유지하면서 예약된 MG Slot까지 NavMesh로 이동한다. */
-USTRUCT(meta=(DisplayName="Move To Reserved MG Turret", Category="Drone|AI|MG"))
-struct DRONE_API FDroneStateTreeMoveToMGTurretTask : public FStateTreeAITaskBase
+/** 예약된 Cover까지 이동하고 도착하면 Slot을 Occupied로 전환한다. */
+USTRUCT(meta=(DisplayName="Move To Reserved Cover", Category="Drone|AI|Cover"))
+struct DRONE_API FDroneStateTreeMoveToCoverTask : public FStateTreeAITaskBase
 {
 	GENERATED_BODY()
+	using FInstanceDataType = FDroneStateTreeMoveToCoverTaskInstanceData;
 
-	using FInstanceDataType = FDroneStateTreeMoveToMGTurretTaskInstanceData;
-
-	FDroneStateTreeMoveToMGTurretTask();
+	FDroneStateTreeMoveToCoverTask();
 	virtual const UStruct* GetInstanceDataType() const override;
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, float DeltaTime) const override;
@@ -50,20 +48,19 @@ struct DRONE_API FDroneStateTreeMoveToMGTurretTask : public FStateTreeAITaskBase
 };
 
 USTRUCT()
-struct FDroneStateTreeHoldMGTurretTaskInstanceData
+struct FDroneStateTreeUseCoverTaskInstanceData
 {
 	GENERATED_BODY()
 };
 
-/** 기존 저장 Struct 경로를 유지하면서 Claim을 Occupied로 전환하고 MG 조준·사격을 실행한다. */
-USTRUCT(meta=(DisplayName="Use Reserved MG Turret", Category="Drone|AI|MG"))
-struct DRONE_API FDroneStateTreeHoldMGTurretTask : public FStateTreeAITaskBase
+/** Cover 1-Slot을 Occupied로 유지하면서 Rifle/Shotgun 개인 무기 대응을 계속한다. */
+USTRUCT(meta=(DisplayName="Use Reserved Cover", Category="Drone|AI|Cover"))
+struct DRONE_API FDroneStateTreeUseCoverTask : public FStateTreeAITaskBase
 {
 	GENERATED_BODY()
+	using FInstanceDataType = FDroneStateTreeUseCoverTaskInstanceData;
 
-	using FInstanceDataType = FDroneStateTreeHoldMGTurretTaskInstanceData;
-
-	FDroneStateTreeHoldMGTurretTask();
+	FDroneStateTreeUseCoverTask();
 	virtual const UStruct* GetInstanceDataType() const override;
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, float DeltaTime) const override;

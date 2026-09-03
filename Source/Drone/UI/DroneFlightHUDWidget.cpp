@@ -8,6 +8,7 @@
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Drone.h"
+#include "Health/DroneHealthComponent.h"
 #include "Styling/CoreStyle.h"
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Tutorial/DroneTrainingLapRecorderComponent.h"
@@ -29,6 +30,7 @@ void UDroneFlightHUDWidget::NativeOnInitialized()
 
 	// WBP가 계약을 만족하면 Designer 위젯을 쓰고, 아니면 C++ 기본 UI를 만든다.
 	BuildDefaultLayout();
+	BuildHealthLayout();
 	BuildTrainingLayout();
 	if (UDroneTelemetryComponent* CurrentSource = TelemetrySource.Get())
 	{
@@ -46,6 +48,7 @@ void UDroneFlightHUDWidget::NativeDestruct()
 {
 	// Weak Pointer만 비우는 것으로는 Dynamic Delegate가 자동 해제된다고 가정하지 않는다.
 	ClearTrainingRecordSource();
+	ClearHealthSource();
 	ClearTelemetrySource();
 	Super::NativeDestruct();
 }
@@ -92,6 +95,36 @@ void UDroneFlightHUDWidget::ClearTelemetrySource()
 void UDroneFlightHUDWidget::HandleTelemetryUpdated(const FDroneTelemetrySnapshot Snapshot)
 {
 	ApplySnapshot(Snapshot);
+}
+
+void UDroneFlightHUDWidget::SetHealthSource(UDroneHealthComponent* InHealthSource)
+{
+	UDroneHealthComponent* CurrentSource = HealthSource.Get();
+	if (CurrentSource != InHealthSource && CurrentSource)
+	{
+		CurrentSource->OnHealthChanged.RemoveDynamic(this, &UDroneFlightHUDWidget::HandleHealthChanged);
+	}
+
+	HealthSource = InHealthSource;
+	if (InHealthSource)
+	{
+		InHealthSource->OnHealthChanged.AddUniqueDynamic(this, &UDroneFlightHUDWidget::HandleHealthChanged);
+	}
+	RefreshHealthDisplay();
+}
+
+void UDroneFlightHUDWidget::ClearHealthSource()
+{
+	SetHealthSource(nullptr);
+}
+
+void UDroneFlightHUDWidget::HandleHealthChanged(
+	float PreviousHealth,
+	float CurrentHealth,
+	float MaxHealth,
+	float AppliedDamage)
+{
+	RefreshHealthDisplay();
 }
 
 void UDroneFlightHUDWidget::SetTrainingRecordSource(
@@ -290,6 +323,66 @@ bool UDroneFlightHUDWidget::TryBindBlueprintLayout()
 	HeadingValueText->SetFont(ReadoutFont);
 	PushCachedTextToWidgets();
 	return true;
+}
+
+void UDroneFlightHUDWidget::BuildHealthLayout()
+{
+	if (!WidgetTree || HealthReadoutPanel)
+	{
+		return;
+	}
+
+	UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree->RootWidget);
+	if (!RootCanvas)
+	{
+		UE_LOG(LogDrone, Warning, TEXT("Flight HUD '%s' needs a CanvasPanel root for the Health panel."), *GetNameSafe(GetClass()));
+		return;
+	}
+
+	HealthReadoutPanel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("HealthReadoutPanel"));
+	HealthReadoutPanel->SetBrushColor(FLinearColor(0.06f, 0.015f, 0.02f, 0.84f));
+	HealthReadoutPanel->SetPadding(FMargin(14.0f, 9.0f));
+	HealthReadoutPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+	UCanvasPanelSlot* HealthSlot = RootCanvas->AddChildToCanvas(HealthReadoutPanel);
+	HealthSlot->SetAnchors(FAnchors(1.0f, 0.0f));
+	HealthSlot->SetAlignment(FVector2D(1.0f, 0.0f));
+	HealthSlot->SetPosition(FVector2D(-24.0f, 24.0f));
+	HealthSlot->SetAutoSize(true);
+
+	HealthValueText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("HealthValueText"));
+	HealthValueText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.35f, 0.3f, 1.0f)));
+	HealthValueText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18.0f));
+	HealthReadoutPanel->SetContent(HealthValueText);
+	RefreshHealthDisplay();
+}
+
+void UDroneFlightHUDWidget::RefreshHealthDisplay()
+{
+	const UDroneHealthComponent* Source = HealthSource.Get();
+	if (Source)
+	{
+		HealthDisplayText = FText::FromString(Source->IsDead()
+			? FString::Printf(TEXT("기체 상태  파괴됨  0 / %.0f"), Source->GetMaxHealth())
+			: FString::Printf(
+				TEXT("기체 내구도  %.0f / %.0f"),
+				Source->GetCurrentHealth(),
+				Source->GetMaxHealth()));
+	}
+	else
+	{
+		HealthDisplayText = FText::FromString(TEXT("기체 내구도  --- / ---"));
+	}
+	if (HealthValueText)
+	{
+		HealthValueText->SetText(HealthDisplayText);
+	}
+	if (HealthReadoutPanel)
+	{
+		HealthReadoutPanel->SetVisibility(Source
+			? ESlateVisibility::HitTestInvisible
+			: ESlateVisibility::Collapsed);
+	}
 }
 
 void UDroneFlightHUDWidget::BuildTrainingLayout()

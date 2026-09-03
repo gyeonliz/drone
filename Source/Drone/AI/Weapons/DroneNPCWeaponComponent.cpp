@@ -2,6 +2,28 @@
 
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "GameFramework/Pawn.h"
+#include "Health/DroneHealthComponent.h"
+#include "Kismet/GameplayStatics.h"
+
+namespace
+{
+bool IsLivingActor(const AActor* Actor)
+{
+	if (!IsValid(Actor))
+	{
+		return false;
+	}
+	const UDroneHealthComponent* Health = Actor->FindComponentByClass<UDroneHealthComponent>();
+	return !Health || !Health->IsDead();
+}
+
+AController* ResolveDamageInstigator(AActor* OwnerActor)
+{
+	const APawn* OwnerPawn = Cast<APawn>(OwnerActor);
+	return OwnerPawn ? OwnerPawn->GetController() : nullptr;
+}
+}
 
 UDroneNPCWeaponComponent::UDroneNPCWeaponComponent()
 {
@@ -12,6 +34,7 @@ void UDroneNPCWeaponComponent::ConfigureWeapon(const EDroneNPCWeaponType InWeapo
 {
 	StopFire();
 	WeaponType = InWeaponType;
+	CurrentMagazineAmmo = GetMagazineCapacity();
 	RifleTraceAttemptCount = 0;
 	RifleTargetHitCount = 0;
 	LastRifleHitActor.Reset();
@@ -45,11 +68,46 @@ void UDroneNPCWeaponComponent::ConfigureShotgunGreybox(
 	ShotgunSpreadHalfAngleDegrees = FMath::Clamp(InSpreadHalfAngleDegrees, 0.0f, 45.0f);
 }
 
+void UDroneNPCWeaponComponent::ConfigureDamageGreybox(
+	const float InRifleDamage,
+	const float InShotgunDamagePerPellet)
+{
+	RifleDamage = FMath::Max(0.0f, InRifleDamage);
+	ShotgunDamagePerPellet = FMath::Max(0.0f, InShotgunDamagePerPellet);
+}
+
+void UDroneNPCWeaponComponent::ConfigureMagazineGreybox(
+	const int32 InRifleCapacity,
+	const int32 InShotgunCapacity)
+{
+	StopFire();
+	RifleMagazineCapacity = FMath::Max(1, InRifleCapacity);
+	ShotgunMagazineCapacity = FMath::Max(1, InShotgunCapacity);
+	CurrentMagazineAmmo = GetMagazineCapacity();
+}
+
+int32 UDroneNPCWeaponComponent::GetMagazineCapacity() const
+{
+	if (WeaponType == EDroneNPCWeaponType::Rifle)
+	{
+		return RifleMagazineCapacity;
+	}
+	if (WeaponType == EDroneNPCWeaponType::Shotgun)
+	{
+		return ShotgunMagazineCapacity;
+	}
+	return 0;
+}
+
 bool UDroneNPCWeaponComponent::CanFire(AActor* TargetActor, const FVector AimPoint) const
 {
+	const AActor* OwnerActor = GetOwner();
 	const bool bValidRequest = WeaponType != EDroneNPCWeaponType::Unarmed
-		&& IsValid(TargetActor)
-		&& TargetActor != GetOwner()
+		&& HasMagazineAmmo()
+		&& IsLivingActor(TargetActor)
+		&& TargetActor != OwnerActor
+		// Owner 없는 객체는 AI-WPN-01의 순수 공용 계약 테스트에만 사용한다.
+		&& (!OwnerActor || IsLivingActor(OwnerActor))
 		&& !AimPoint.ContainsNaN();
 	if (!bValidRequest)
 	{
@@ -83,27 +141,33 @@ bool UDroneNPCWeaponComponent::StartFire(AActor* TargetActor, const FVector AimP
 	if (WeaponType == EDroneNPCWeaponType::Rifle)
 	{
 		TryFireRifleShot();
-		if (UWorld* World = GetWorld())
+		if (bIsFiring)
 		{
-			World->GetTimerManager().SetTimer(
-				RifleFireTimerHandle,
-				this,
-				&UDroneNPCWeaponComponent::HandleRifleFireTimer,
-				RifleCooldownSeconds,
-				true);
+			if (UWorld* World = GetWorld())
+			{
+				World->GetTimerManager().SetTimer(
+					RifleFireTimerHandle,
+					this,
+					&UDroneNPCWeaponComponent::HandleRifleFireTimer,
+					RifleCooldownSeconds,
+					true);
+			}
 		}
 	}
 	else if (WeaponType == EDroneNPCWeaponType::Shotgun)
 	{
 		TryFireShotgunVolley();
-		if (UWorld* World = GetWorld())
+		if (bIsFiring)
 		{
-			World->GetTimerManager().SetTimer(
-				ShotgunFireTimerHandle,
-				this,
-				&UDroneNPCWeaponComponent::HandleShotgunFireTimer,
-				ShotgunCooldownSeconds,
-				true);
+			if (UWorld* World = GetWorld())
+			{
+				World->GetTimerManager().SetTimer(
+					ShotgunFireTimerHandle,
+					this,
+					&UDroneNPCWeaponComponent::HandleShotgunFireTimer,
+					ShotgunCooldownSeconds,
+					true);
+			}
 		}
 	}
 	return true;
@@ -122,7 +186,23 @@ void UDroneNPCWeaponComponent::StopFire()
 bool UDroneNPCWeaponComponent::Reload()
 {
 	++ReloadRequestCount;
-	return WeaponType != EDroneNPCWeaponType::Unarmed;
+	const int32 Capacity = GetMagazineCapacity();
+	if (Capacity <= 0
+		|| CurrentMagazineAmmo >= Capacity
+		|| (GetOwner() && !IsLivingActor(GetOwner())))
+	{
+		return false;
+	}
+
+	// AI-AMMO-01은 시간·예비 탄약 없이 명시적 요청 즉시 완료하는 기능 경계만 만든다.
+	StopFire();
+	CurrentMagazineAmmo = Capacity;
+	LastRifleShotTimeSeconds = -DBL_MAX;
+	LastShotgunVolleyTimeSeconds = -DBL_MAX;
+	++AcceptedReloadRequestCount;
+	++ReloadCompletedEventCount;
+	OnReloadCompleted.Broadcast(WeaponType, CurrentMagazineAmmo, Capacity);
+	return true;
 }
 
 bool UDroneNPCWeaponComponent::TryFireRifleShot()
@@ -156,6 +236,7 @@ bool UDroneNPCWeaponComponent::TryFireRifleShot()
 	OwnerActor->GetActorEyesViewPoint(LastRifleTraceStart, ViewRotation);
 	LastRifleTraceEnd = CurrentAimPoint;
 	LastRifleShotTimeSeconds = CurrentTimeSeconds;
+	ConsumeMagazineRound();
 	++RifleTraceAttemptCount;
 
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(DroneNPCRifleTrace), true, OwnerActor);
@@ -173,6 +254,12 @@ bool UDroneNPCWeaponComponent::TryFireRifleShot()
 	if (bHitTarget)
 	{
 		++RifleTargetHitCount;
+		UGameplayStatics::ApplyDamage(
+			TargetActor,
+			RifleDamage,
+			ResolveDamageInstigator(OwnerActor),
+			OwnerActor,
+			nullptr);
 	}
 
 	if (bDrawRifleDebugTrace)
@@ -189,6 +276,14 @@ bool UDroneNPCWeaponComponent::TryFireRifleShot()
 			1.5f);
 	}
 
+	// 메시·AnimBP·Niagara·Sound는 이 이벤트를 구독한다. 마지막 탄환도 StopFire 전에 반드시 알린다.
+	++WeaponFiredEventCount;
+	OnWeaponFired.Broadcast(WeaponType, LastRifleTraceStart, CurrentAimPoint);
+	if (!HasMagazineAmmo())
+	{
+		StopFire();
+	}
+
 	return bHitTarget;
 }
 
@@ -201,7 +296,10 @@ void UDroneNPCWeaponComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void UDroneNPCWeaponComponent::HandleRifleFireTimer()
 {
-	if (!bIsFiring || !CurrentTarget.IsValid())
+	AActor* TargetActor = CurrentTarget.Get();
+	if (!bIsFiring
+		|| !TargetActor
+		|| !CanFire(TargetActor, TargetActor->GetActorLocation()))
 	{
 		StopFire();
 		return;
@@ -276,6 +374,7 @@ bool UDroneNPCWeaponComponent::TryFireShotgunVolley()
 	const int32 SafePelletCount = FMath::Clamp(ShotgunPelletCount, 1, 64);
 
 	LastShotgunVolleyTimeSeconds = CurrentTimeSeconds;
+	ConsumeMagazineRound();
 	++ShotgunVolleyAttemptCount;
 	LastShotgunPelletTraceEnds.Reset(SafePelletCount);
 	int32 TargetHitsThisVolley = 0;
@@ -313,6 +412,12 @@ bool UDroneNPCWeaponComponent::TryFireShotgunVolley()
 		{
 			++TargetHitsThisVolley;
 			++ShotgunTargetHitPelletCount;
+			UGameplayStatics::ApplyDamage(
+				TargetActor,
+				ShotgunDamagePerPellet,
+				ResolveDamageInstigator(OwnerActor),
+				OwnerActor,
+				nullptr);
 		}
 
 		if (bDrawShotgunDebugTrace)
@@ -329,12 +434,23 @@ bool UDroneNPCWeaponComponent::TryFireShotgunVolley()
 		}
 	}
 
+	// Shotgun은 Pellet마다가 아니라 방아쇠 한 번(Volley)에 표현 이벤트 하나만 보낸다.
+	++WeaponFiredEventCount;
+	OnWeaponFired.Broadcast(WeaponType, TraceStart, CurrentAimPoint);
+	if (!HasMagazineAmmo())
+	{
+		StopFire();
+	}
+
 	return TargetHitsThisVolley > 0;
 }
 
 void UDroneNPCWeaponComponent::HandleShotgunFireTimer()
 {
-	if (!bIsFiring || !CurrentTarget.IsValid())
+	AActor* TargetActor = CurrentTarget.Get();
+	if (!bIsFiring
+		|| !TargetActor
+		|| !CanFire(TargetActor, TargetActor->GetActorLocation()))
 	{
 		StopFire();
 		return;
@@ -361,4 +477,9 @@ bool UDroneNPCWeaponComponent::IsShotgunTargetInRange(
 	}
 	return IsValid(TargetActor)
 		&& FVector::DistSquared(OwnerActor->GetActorLocation(), AimPoint) <= FMath::Square(ShotgunRange);
+}
+
+void UDroneNPCWeaponComponent::ConsumeMagazineRound()
+{
+	CurrentMagazineAmmo = FMath::Max(0, CurrentMagazineAmmo - 1);
 }

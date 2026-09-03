@@ -1,15 +1,18 @@
 #include "Prototype/DronePrototypePawn.h"
 
 #include "Camera/CameraComponent.h"
+#include "AI/DroneNPCAIController.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Drone.h"
 #include "Engine/LocalPlayer.h"
+#include "EngineUtils.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "GameFramework/FloatingPawnMovement.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Health/DroneHealthComponent.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
@@ -57,6 +60,7 @@ ADronePrototypePawn::ADronePrototypePawn()
 
 	// HUD가 Pawn을 직접 계산하지 않도록 공용 데이터 공급 Component를 기본 부착한다.
 	TelemetryComponent = CreateDefaultSubobject<UDroneTelemetryComponent>(TEXT("TelemetryComponent"));
+	HealthComponent = CreateDefaultSubobject<UDroneHealthComponent>(TEXT("HealthComponent"));
 
 	// AI Perception의 전역 Pawn 자동 등록 설정에 의존하지 않고 Sight 대상으로 명시한다.
 	PerceptionStimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("PerceptionStimuliSource"));
@@ -69,6 +73,7 @@ void ADronePrototypePawn::BeginPlay()
 	// Actor가 유효한 World에 들어온 뒤 등록해야 Perception System이 실제 Source를 받을 수 있다.
 	PerceptionStimuliSource->RegisterForSense(UAISense_Sight::StaticClass());
 	PerceptionStimuliSource->RegisterWithPerceptionSystem();
+	HealthComponent->OnDeath.AddDynamic(this, &ADronePrototypePawn::HandleDeath);
 }
 
 void ADronePrototypePawn::PawnClientRestart()
@@ -152,6 +157,11 @@ void ADronePrototypePawn::SetupPlayerInputComponent(UInputComponent* PlayerInput
 
 void ADronePrototypePawn::ApplyPrototypeMappingContext()
 {
+	if (HealthComponent && HealthComponent->IsDead())
+	{
+		return;
+	}
+
 	if (!PrototypeMappingContext)
 	{
 		UE_LOG(LogDrone, Display, TEXT("Prototype pawn '%s' has no prototype Input Mapping Context assigned yet."), *GetNameSafe(this));
@@ -221,6 +231,11 @@ void ADronePrototypePawn::RemovePrototypeMappingContext()
 
 void ADronePrototypePawn::Move(const FInputActionValue& Value)
 {
+	if (HealthComponent && HealthComponent->IsDead())
+	{
+		return;
+	}
+
 	// Y=전후, X=좌우이며 Actor의 현재 Yaw를 기준으로 이동한다.
 	const FVector2D MovementValue = Value.Get<FVector2D>();
 	AddMovementInput(GetActorForwardVector(), MovementValue.Y);
@@ -229,12 +244,22 @@ void ADronePrototypePawn::Move(const FInputActionValue& Value)
 
 void ADronePrototypePawn::ChangeAltitude(const FInputActionValue& Value)
 {
+	if (HealthComponent && HealthComponent->IsDead())
+	{
+		return;
+	}
+
 	// 기체 기울기와 무관하게 World Up 방향을 사용한다.
 	AddMovementInput(FVector::UpVector, Value.Get<float>());
 }
 
 void ADronePrototypePawn::ChangeYaw(const FInputActionValue& Value)
 {
+	if (HealthComponent && HealthComponent->IsDead())
+	{
+		return;
+	}
+
 	const UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -248,6 +273,11 @@ void ADronePrototypePawn::ChangeYaw(const FInputActionValue& Value)
 
 void ADronePrototypePawn::Look(const FInputActionValue& Value)
 {
+	if (HealthComponent && HealthComponent->IsDead())
+	{
+		return;
+	}
+
 	// Mouse X는 Drone Yaw, Mouse Y는 SpringArm Pitch만 변경한다.
 	const FVector2D LookValue = Value.Get<FVector2D>();
 	AddActorLocalRotation(FRotator(0.0f, LookValue.X * PrototypeMouseYawDegreesPerInput, 0.0f));
@@ -256,6 +286,11 @@ void ADronePrototypePawn::Look(const FInputActionValue& Value)
 
 void ADronePrototypePawn::ChangeCameraPitch(const FInputActionValue& Value)
 {
+	if (HealthComponent && HealthComponent->IsDead())
+	{
+		return;
+	}
+
 	const UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -282,4 +317,34 @@ void ADronePrototypePawn::AdjustCameraPitch(const float PitchDeltaDegrees)
 	BoomRotation.Yaw = 0.0f;
 	BoomRotation.Roll = 0.0f;
 	CameraBoom->SetRelativeRotation(BoomRotation);
+}
+
+void ADronePrototypePawn::HandleDeath(
+	AActor* DeadActor,
+	AController* InstigatorController,
+	AActor* DamageCauser)
+{
+	if (DeadActor != this)
+	{
+		return;
+	}
+
+	// 회색상자 사망 규칙: 기체는 현 위치에 남기고 조종·이동·충돌만 중지한다.
+	// 이후 GameMode가 이 Event를 받아 임무 실패 화면이나 Respawn을 결정할 수 있다.
+	RemovePrototypeMappingContext();
+	PrototypeMovementComponent->StopMovementImmediately();
+	PrototypeMovementComponent->Deactivate();
+	SetActorEnableCollision(false);
+	PerceptionStimuliSource->UnregisterFromPerceptionSystem();
+	if (APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+	{
+		DisableInput(PlayerController);
+	}
+
+	for (TActorIterator<ADroneNPCAIController> It(GetWorld()); It; ++It)
+	{
+		It->HandleDetectedDroneDestroyed(this);
+	}
+	++DroneDestroyedEventCount;
+	OnDroneDestroyed.Broadcast(this);
 }

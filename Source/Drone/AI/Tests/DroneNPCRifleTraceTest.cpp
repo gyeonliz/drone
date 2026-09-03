@@ -81,11 +81,14 @@ bool FDroneNPCRifleTraceTest::RunTest(const FString& Parameters)
 
 	TestTrue(TEXT("Rifle accepts an in-range Target"), OpenWeapon->CanFire(Target, Target->GetActorLocation()));
 	TestTrue(TEXT("Rifle starts and hits an unobstructed Target"), OpenWeapon->StartFire(Target, Target->GetActorLocation()));
+	TestEqual(TEXT("One Rifle Trace consumes one round"), OpenWeapon->GetCurrentMagazineAmmo(), 29);
 	TestEqual(TEXT("One StartFire creates exactly one Rifle Trace"), OpenWeapon->GetRifleTraceAttemptCount(), 1);
+	TestEqual(TEXT("One Rifle Trace emits exactly one visual fire event"), OpenWeapon->GetWeaponFiredEventCount(), 1);
 	TestEqual(TEXT("Unobstructed Rifle Trace records one Target hit"), OpenWeapon->GetRifleTargetHitCount(), 1);
 	TestTrue(TEXT("Unobstructed Rifle Trace reports the Target Actor"), OpenWeapon->GetLastRifleHitActor() == Target);
 	TestFalse(TEXT("Immediate repeated Rifle shot is rejected by Cooldown"), OpenWeapon->TryFireRifleShot());
 	TestEqual(TEXT("Cooldown rejection does not create another Trace"), OpenWeapon->GetRifleTraceAttemptCount(), 1);
+	TestEqual(TEXT("Cooldown rejection emits no extra visual fire event"), OpenWeapon->GetWeaponFiredEventCount(), 1);
 	OpenWeapon->StopFire();
 
 	AActor* Blocker = SpawnRifleTestActor(World, FVector(500.0f, 0.0f, 100.0f), FVector(60.0f), TEXT("RifleBlocker"));
@@ -109,13 +112,30 @@ bool FDroneNPCRifleTraceTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Rifle rejects a Target beyond its configured range"), OutOfRangeWeapon->CanFire(Target, Target->GetActorLocation()));
 		TestFalse(TEXT("Out-of-range StartFire is rejected"), OutOfRangeWeapon->StartFire(Target, Target->GetActorLocation()));
 		TestEqual(TEXT("Out-of-range request performs no Trace"), OutOfRangeWeapon->GetRifleTraceAttemptCount(), 0);
+		TestEqual(TEXT("Rejected out-of-range request consumes no Rifle ammo"), OutOfRangeWeapon->GetCurrentMagazineAmmo(), 30);
+	}
+
+	Target->SetActorLocation(FVector(1000.0f, 0.0f, 100.0f));
+	UDroneNPCWeaponComponent* OneRoundWeapon = AddRifleTestWeapon(Shooter, TEXT("OneRoundRifleWeapon"));
+	if (OneRoundWeapon)
+	{
+		OneRoundWeapon->ConfigureMagazineGreybox(1, 8);
+		TestTrue(TEXT("One-round Rifle accepts its last shot"), OneRoundWeapon->StartFire(Target, Target->GetActorLocation()));
+		TestEqual(TEXT("Last Rifle shot empties the magazine"), OneRoundWeapon->GetCurrentMagazineAmmo(), 0);
+		TestFalse(TEXT("Empty Rifle stops its repeating fire state"), OneRoundWeapon->IsFiring());
+		TestFalse(TEXT("Empty Rifle rejects another firing request"), OneRoundWeapon->StartFire(Target, Target->GetActorLocation()));
+		TestTrue(TEXT("Explicit Rifle Reload refills the empty magazine"), OneRoundWeapon->Reload());
+		TestEqual(TEXT("Rifle Reload restores configured capacity"), OneRoundWeapon->GetCurrentMagazineAmmo(), 1);
+		TestEqual(TEXT("Rifle records one accepted Reload"), OneRoundWeapon->GetAcceptedReloadRequestCount(), 1);
+		TestEqual(TEXT("Accepted Rifle Reload emits one completion event"), OneRoundWeapon->GetReloadCompletedEventCount(), 1);
+		TestFalse(TEXT("Full Rifle rejects a redundant Reload"), OneRoundWeapon->Reload());
+		TestEqual(TEXT("Rejected Rifle Reload emits no completion event"), OneRoundWeapon->GetReloadCompletedEventCount(), 1);
 	}
 
 	UDroneNPCWeaponComponent* Shotgun = NewObject<UDroneNPCWeaponComponent>(Shooter, TEXT("ShotgunWeapon"));
 	Shooter->AddInstanceComponent(Shotgun);
 	Shotgun->RegisterComponent();
 	Shotgun->ConfigureWeapon(EDroneNPCWeaponType::Shotgun);
-	Target->SetActorLocation(FVector(1000.0f, 0.0f, 100.0f));
 	TestTrue(TEXT("Shotgun keeps the common StartFire contract"), Shotgun->StartFire(Target, Target->GetActorLocation()));
 	TestEqual(TEXT("Shotgun does not execute Rifle Trace code"), Shotgun->GetRifleTraceAttemptCount(), 0);
 	Shotgun->StopFire();

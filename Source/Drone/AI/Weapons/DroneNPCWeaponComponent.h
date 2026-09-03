@@ -6,11 +6,25 @@
 #include "TimerManager.h"
 #include "DroneNPCWeaponComponent.generated.h"
 
+/** 실제 한 발/한 Volley가 실행됐을 때 총구 섬광·발사음·Animation을 연결하는 BP 경계다. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
+	FDroneNPCWeaponFiredSignature,
+	EDroneNPCWeaponType, WeaponType,
+	FVector, TraceStart,
+	FVector, AimPoint);
+
+/** 즉시 Greybox Reload가 완료됐을 때 장전 표현과 UI를 연결하는 BP 경계다. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
+	FDroneNPCWeaponReloadCompletedSignature,
+	EDroneNPCWeaponType, WeaponType,
+	int32, CurrentAmmo,
+	int32, MagazineCapacity);
+
 /**
  * Rifle과 Shotgun AI가 공유하는 최소 무기 호출 계약이다.
  *
  * 공용 표적·조준점 계약 뒤에 Rifle 단일 Trace와 Shotgun 다중 Pellet Trace를 제공한다.
- * Damage, 탄약과 최종 표현 자산은 후속 Weapon 구현이 같은 계약 뒤에 붙인다.
+ * 현재 탄약은 예비 탄약 없이 탄창·즉시 Reload만 검증하는 Greybox이며 최종 표현과 분리한다.
  */
 UCLASS(ClassGroup=(DroneAI), BlueprintType, meta=(BlueprintSpawnableComponent))
 class DRONE_API UDroneNPCWeaponComponent : public UActorComponent
@@ -19,6 +33,14 @@ class DRONE_API UDroneNPCWeaponComponent : public UActorComponent
 
 public:
 	UDroneNPCWeaponComponent();
+
+	/** Rifle은 Trace 한 발마다, Shotgun은 Pellet 수와 무관하게 Volley마다 한 번 발생한다. */
+	UPROPERTY(BlueprintAssignable, Category="Drone|AI|Weapon|Visual")
+	FDroneNPCWeaponFiredSignature OnWeaponFired;
+
+	/** Reload가 실제로 탄창을 채운 경우에만 발생한다. 가득 찬 탄창의 거절 요청은 발생하지 않는다. */
+	UPROPERTY(BlueprintAssignable, Category="Drone|AI|Weapon|Visual")
+	FDroneNPCWeaponReloadCompletedSignature OnReloadCompleted;
 
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon")
 	void ConfigureWeapon(EDroneNPCWeaponType InWeaponType);
@@ -35,6 +57,20 @@ public:
 		int32 InPelletCount,
 		float InSpreadHalfAngleDegrees);
 
+	/** 현재 회색상자 피해량만 따로 조정한다. 기본값은 Rifle 10, Shotgun Pellet당 8이다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Damage")
+	void ConfigureDamageGreybox(float InRifleDamage, float InShotgunDamagePerPellet);
+
+	/** AI-AMMO-01 시험용 탄창 용량을 설정하고 현재 장비의 탄창을 가득 채운다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Ammo")
+	void ConfigureMagazineGreybox(int32 InRifleCapacity, int32 InShotgunCapacity);
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Damage")
+	float GetRifleDamage() const { return RifleDamage; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Damage")
+	float GetShotgunDamagePerPellet() const { return ShotgunDamagePerPellet; }
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon")
 	EDroneNPCWeaponType GetWeaponType() const { return WeaponType; }
 
@@ -48,9 +84,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon")
 	void StopFire();
 
-	/** 후속 탄약 구현이 연결될 공용 재장전 요청 경계다. */
+	/** 현재 탄창이 비어 있거나 일부 소모됐을 때 즉시 가득 채운다. 예비 탄약·시간은 후속 범위다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon")
 	bool Reload();
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Ammo")
+	int32 GetCurrentMagazineAmmo() const { return CurrentMagazineAmmo; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Ammo")
+	int32 GetMagazineCapacity() const;
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Ammo")
+	bool HasMagazineAmmo() const { return CurrentMagazineAmmo > 0; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon")
 	bool IsFiring() const { return bIsFiring; }
@@ -72,6 +117,15 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Debug")
 	int32 GetReloadRequestCount() const { return ReloadRequestCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Debug")
+	int32 GetAcceptedReloadRequestCount() const { return AcceptedReloadRequestCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Debug")
+	int32 GetWeaponFiredEventCount() const { return WeaponFiredEventCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Debug")
+	int32 GetReloadCompletedEventCount() const { return ReloadCompletedEventCount; }
 
 	/** 현재 Target을 향해 Cooldown이 허용한 Rifle 단일 Trace를 한 번 시도한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Rifle")
@@ -136,6 +190,7 @@ private:
 	void HandleShotgunFireTimer();
 	void ClearShotgunFireTimer();
 	bool IsShotgunTargetInRange(AActor* TargetActor, const FVector& AimPoint) const;
+	void ConsumeMagazineRound();
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon")
 	EDroneNPCWeaponType WeaponType = EDroneNPCWeaponType::Unarmed;
@@ -160,6 +215,28 @@ private:
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Debug")
 	int32 ReloadRequestCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Debug")
+	int32 AcceptedReloadRequestCount = 0;
+
+	/** BP 이벤트가 실제 발사 횟수와 1:1인지 자동화에서 확인하는 값이다. */
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Debug")
+	int32 WeaponFiredEventCount = 0;
+
+	/** 거절된 Reload가 표현 이벤트를 만들지 않는지 자동화에서 확인하는 값이다. */
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Debug")
+	int32 ReloadCompletedEventCount = 0;
+
+	/** 예비 탄약과 Reload 시간 없이 사용하는 Rifle Greybox 탄창이다. */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Ammo", meta=(ClampMin="1"))
+	int32 RifleMagazineCapacity = 30;
+
+	/** Pellet 수가 아니라 Trigger 한 번에 Shell 한 발을 소모한다. */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Ammo", meta=(ClampMin="1"))
+	int32 ShotgunMagazineCapacity = 8;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Ammo")
+	int32 CurrentMagazineAmmo = 0;
 
 	/** Rifle 기본 Sight 반경과 맞춘 Greybox 사거리다. */
 	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Rifle", meta=(ClampMin="1.0", ForceUnits="cm"))
@@ -189,6 +266,10 @@ private:
 
 	double LastRifleShotTimeSeconds = -DBL_MAX;
 	FTimerHandle RifleFireTimerHandle;
+
+	/** 체력 100 기준 10발 처치인 회색상자 기본 피해량이다. */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Damage", meta=(ClampMin="0.0"))
+	float RifleDamage = 10.0f;
 
 	/** 근거리 역할을 구분하기 위한 Greybox 사거리다. */
 	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Shotgun", meta=(ClampMin="1.0", ForceUnits="cm"))
@@ -222,4 +303,8 @@ private:
 
 	double LastShotgunVolleyTimeSeconds = -DBL_MAX;
 	FTimerHandle ShotgunFireTimerHandle;
+
+	/** 한 Volley가 아니라 Target에 실제 적중한 Pellet 하나당 적용하는 피해량이다. */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Damage", meta=(ClampMin="0.0"))
+	float ShotgunDamagePerPellet = 8.0f;
 };

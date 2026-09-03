@@ -12,6 +12,7 @@ class UDroneNPCProfileComponent;
 class UDroneNPCWeaponComponent;
 class UDroneSmartObjectReservationComponent;
 class UStateTreeAIComponent;
+class ADroneSmartObjectStation;
 
 /** Hostile NPC의 현재 Greybox 대응 상태다. StateTree 전환을 PIE에서 명확히 검증하는 데도 사용한다. */
 UENUM(BlueprintType)
@@ -21,7 +22,11 @@ enum class EDroneNPCAIResponseState : uint8
 	DroneDetected,
 	MoveToMGTurret,
 	HoldMGTurret,
-	Search
+	UseMGTurret,
+	MoveToCover,
+	UseCover,
+	Search,
+	Dead
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -111,11 +116,32 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
 	int32 GetCompletedDroneSearchCount() const { return CompletedDroneSearchCount; }
 
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	int32 GetDroneDestroyedResponseCount() const { return DroneDestroyedResponseCount; }
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
 	int32 GetMGTurretClaimCount() const { return MGTurretClaimCount; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
 	int32 GetMGTurretArrivalCount() const { return MGTurretArrivalCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	int32 GetMGTurretUseCount() const { return MGTurretUseCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Cover")
+	int32 GetCoverClaimCount() const { return CoverClaimCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Cover")
+	int32 GetCoverUseCount() const { return CoverUseCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	ADroneSmartObjectStation* GetActiveMGTurretStation() const { return ActiveMGTurretStation.Get(); }
+
+	/** 소유 NPC 체력이 0이 되었을 때 전투·이동·점유를 정리하고 StateTree를 중단한다. */
+	void HandlePossessedPawnDeath();
+
+	/** 현재 감지 중인 Drone이 파괴되면 교전 자원을 정리하고 Patrol Tree를 다시 시작한다. */
+	void HandleDetectedDroneDestroyed(AActor* DestroyedDrone);
 
 	/** StateTree의 DroneDetected Task가 호출한다. 중복 진입은 감지 횟수로 세지 않는다. */
 	void EnterDroneDetectedResponse();
@@ -138,13 +164,41 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
 	bool ClaimAvailableMGTurret(FTransform& OutSlotTransform);
 
-	/** 예약한 MG 위치에 도착한 뒤 AI-MG-02 전까지 Claim을 유지하는 상태로 전환한다. */
+	/** 예약한 MG 위치에 도착한 뒤 Occupied 전환 직전 상태로 이동한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
 	bool CompleteMGTurretMove();
+
+	/** Claim을 Occupied로 바꾸고 Station의 Greybox 조준·Trace 사격을 시작한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
+	bool BeginMGTurretOperation();
+
+	/** StateTree Tick에서 현재 드론을 향한 조준·Cooldown 사격을 갱신한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
+	bool UpdateMGTurretOperation();
+
+	/** Station 사용자 상태를 정리한다. Slot Free 전환은 Reservation Component가 담당한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
+	void StopMGTurretOperation();
 
 	/** 이동 실패·감지 실종·StateTree 중단 시 MG Claim과 이동을 함께 정리한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
 	void AbortMGTurretResponse();
+
+	/** MG를 잡지 못한 감지 중 Hostile이 가장 가까운 빈 Cover 1-Slot을 예약한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Cover")
+	bool ClaimAvailableCover(FTransform& OutSlotTransform);
+
+	/** Cover 도착 뒤 Slot을 Occupied로 바꾸고 개인 무기 사격을 시작한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Cover")
+	bool CompleteCoverMove();
+
+	/** Cover 점유·감지·개인 무기 상태가 계속 유효한지 확인한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Cover")
+	bool UpdateCoverResponse();
+
+	/** Cover 이동·점유를 정리하고 감지 중이면 제자리 개인 무기 대응으로 복귀한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Cover")
+	void AbortCoverResponse();
 
 	/** EnemyPatrol만 검색해 직전 완료 지점과 다른 다음 Slot을 예약한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Patrol")
@@ -235,11 +289,26 @@ protected:
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
 	int32 CompletedDroneSearchCount = 0;
 
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
+	int32 DroneDestroyedResponseCount = 0;
+
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG")
 	int32 MGTurretClaimCount = 0;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG")
 	int32 MGTurretArrivalCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG")
+	int32 MGTurretUseCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG")
+	TWeakObjectPtr<ADroneSmartObjectStation> ActiveMGTurretStation;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Cover")
+	int32 CoverClaimCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Cover")
+	int32 CoverUseCount = 0;
 
 	/** 직전 지점 바로 재선택을 막는 Greybox 기준값. 최종 맵 규모에 맞춰 조정한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Patrol", meta=(ClampMin="0.0", ForceUnits="cm"))

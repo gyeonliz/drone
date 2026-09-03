@@ -24,13 +24,17 @@
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "GameFramework/FloatingPawnMovement.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/GameModeBase.h"
 #include "GameFramework/WorldSettings.h"
 #include "HAL/PlatformTime.h"
+#include "Health/DroneHealthComponent.h"
+#include "Kismet/GameplayStatics.h"
 #include "NavigationSystem.h"
 #include "NavMesh/RecastNavMesh.h"
 #include "Perception/AIPerceptionComponent.h"
+#include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "PlayInEditorDataTypes.h"
 #include "Settings/LevelEditorPlaySettings.h"
@@ -502,10 +506,16 @@ public:
 			return UpdateDetected(Now, Drone, Hostiles, Friendlies);
 		case EPhase::WaitForMGTurret:
 			return UpdateMGTurret(Now, Drone, Hostiles, Friendlies);
+		case EPhase::WaitForMGTurretReassignment:
+			return UpdateMGTurretReassignment(Now, Drone, Hostiles, Friendlies);
 		case EPhase::WaitForSearch:
 			return UpdateSearch(Now, Hostiles, Friendlies);
 		case EPhase::WaitForReturn:
-			return UpdateReturn(Now, Hostiles, Friendlies);
+			return UpdateReturn(Now, Drone, Hostiles, Friendlies);
+		case EPhase::WaitForSecondEngagement:
+			return UpdateSecondEngagement(Now, Drone, Hostiles, Friendlies);
+		case EPhase::WaitForDroneDestroyed:
+			return UpdateDroneDestroyed(Now, Drone, Hostiles, Friendlies);
 		default:
 			return true;
 		}
@@ -517,8 +527,11 @@ private:
 		WaitForBaseline,
 		WaitForDetected,
 		WaitForMGTurret,
+		WaitForMGTurretReassignment,
 		WaitForSearch,
-		WaitForReturn
+		WaitForReturn,
+		WaitForSecondEngagement,
+		WaitForDroneDestroyed
 	};
 
 	bool FinishWithTimeout(const double Now, const double Timeout, const TCHAR* Message)
@@ -581,6 +594,37 @@ private:
 			return FinishWithTimeout(Now, 30.0, TEXT("NPC routines did not establish a patrol baseline before perception test"));
 		}
 
+		const UDroneHealthComponent* DroneHealth = Drone->GetHealthComponent();
+		bool bDefaultHealthReady = DroneHealth
+			&& FMath::IsNearlyEqual(DroneHealth->GetMaxHealth(), 100.0f)
+			&& FMath::IsNearlyEqual(DroneHealth->GetCurrentHealth(), 100.0f)
+			&& !DroneHealth->IsDead();
+		for (ADroneNPCAIController* Controller : Hostiles)
+		{
+			ADroneNPCCharacter* NPC = Cast<ADroneNPCCharacter>(Controller->GetPawn());
+			const UDroneHealthComponent* NPCHealth = NPC ? NPC->GetHealthComponent() : nullptr;
+			bDefaultHealthReady &= NPCHealth
+				&& FMath::IsNearlyEqual(NPCHealth->GetMaxHealth(), 100.0f)
+				&& FMath::IsNearlyEqual(NPCHealth->GetCurrentHealth(), 100.0f)
+				&& !NPCHealth->IsDead();
+
+			// 한 Slot 경합과 사망 후 재점유를 같은 Map에서 검증하기 위해 Shotgun도
+			// 이 PIE 실행에서만 MG 사용 가능 Profile로 바꾼다. 원본 Asset은 변경하지 않는다.
+			if (NPC && Controller->UsesShotgun())
+			{
+				UDroneNPCProfileComponent* ProfileComponent = NPC->GetNPCProfileComponent();
+				FDroneNPCProfile RuntimeProfile = ProfileComponent->GetProfile();
+				RuntimeProfile.bCanUseMGTurret = true;
+				ProfileComponent->SetProfile(RuntimeProfile);
+				Controller->GetReservationComponent()->SetUserTags(ProfileComponent->BuildSmartObjectUserTags());
+			}
+		}
+		if (!bDefaultHealthReady)
+		{
+			Test->AddError(TEXT("Drone and NPC default Health must start alive at 100/100"));
+			return true;
+		}
+
 		for (ADroneNPCAIController* Controller : Hostiles)
 		{
 			BaselineHostileCycles.Add(Controller, Controller->GetCompletedPatrolCycles());
@@ -606,8 +650,12 @@ private:
 		{
 			const EDroneNPCAIResponseState ResponseState = Controller->GetResponseState();
 			const bool bExpectedResponse = Controller->CanUseMGTurret()
-				? ResponseState == EDroneNPCAIResponseState::MoveToMGTurret
+				? ResponseState == EDroneNPCAIResponseState::DroneDetected
+					|| ResponseState == EDroneNPCAIResponseState::MoveToMGTurret
 					|| ResponseState == EDroneNPCAIResponseState::HoldMGTurret
+					|| ResponseState == EDroneNPCAIResponseState::UseMGTurret
+					|| ResponseState == EDroneNPCAIResponseState::MoveToCover
+					|| ResponseState == EDroneNPCAIResponseState::UseCover
 				: ResponseState == EDroneNPCAIResponseState::DroneDetected;
 			bHostilesDetected &= Controller->HasDetectedDrone()
 				&& bExpectedResponse
@@ -636,42 +684,70 @@ private:
 		const TArray<ADroneNPCAIController*>& Friendlies)
 	{
 		int32 MGTurretOperatorCount = 0;
+		int32 MGTurretEligibleCount = 0;
 		int32 MGTurretReservationCount = 0;
 		bool bMGTurretOperatorReady = true;
 		bool bPersonalWeaponFallbackReady = true;
 		for (ADroneNPCAIController* Controller : Hostiles)
 		{
 			UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
-			if (Controller->GetReservationComponent()->HasValidReservation())
+			MGTurretEligibleCount += Controller->CanUseMGTurret() ? 1 : 0;
+			const EDroneNPCAIResponseState ResponseState = Controller->GetResponseState();
+			if (Controller->GetReservationComponent()->HasValidReservation()
+				&& (ResponseState == EDroneNPCAIResponseState::MoveToMGTurret
+					|| ResponseState == EDroneNPCAIResponseState::HoldMGTurret
+					|| ResponseState == EDroneNPCAIResponseState::UseMGTurret))
 			{
 				++MGTurretReservationCount;
 			}
 
-			if (Controller->CanUseMGTurret())
+			if (Controller->GetResponseState() == EDroneNPCAIResponseState::UseMGTurret)
 			{
 				++MGTurretOperatorCount;
-				bMGTurretOperatorReady &= Controller->GetResponseState() == EDroneNPCAIResponseState::HoldMGTurret
-					&& Controller->GetMGTurretClaimCount() == 1
+				ADroneSmartObjectStation* Station = Controller->GetActiveMGTurretStation();
+				bMGTurretOperatorReady &= Controller->GetMGTurretClaimCount() == 1
 					&& Controller->GetMGTurretArrivalCount() == 1
-					&& Controller->GetReservationComponent()->HasValidReservation()
+					&& Controller->GetMGTurretUseCount() == 1
+					&& Controller->GetReservationComponent()->IsReservationOccupied()
+					&& Station
+					&& Station->IsMGTurretInUse()
+					&& Station->GetMGTurretUser() == Controller->GetPawn()
+					&& Station->GetMGTurretTarget() == Drone
+					&& Station->GetMGTurretAimPoint().Equals(Drone->GetActorLocation(), 1.0f)
+					&& Station->GetMGTurretOccupationCount() == 1
+					&& FMath::IsNearlyEqual(Station->GetMGTurretDamage(), 8.0f)
+					&& Station->GetMGTurretTraceAttemptCount() > 0
 					&& WeaponComponent
 					&& !WeaponComponent->IsFiring();
+				if (Station)
+				{
+					UsedMGTurretStation = Station;
+					InitialMGTurretController = Controller;
+				}
 				continue;
 			}
 
-			if (WeaponComponent && Controller->UsesShotgun())
+			if (WeaponComponent)
 			{
 				// 수동 Sight Broadcast는 실제 Sight 반경을 적용하지 않는다. Shotgun의
 				// 사거리 자체는 전용 테스트에 맡기고 여기서는 MG 실패 시 개인 무기
 				// Fallback과 공용 Target/Aim Point 전달만 분리 검증한다.
+				WeaponComponent->ConfigureRifleGreybox(100000.0f, 0.5f);
 				WeaponComponent->ConfigureShotgunGreybox(100000.0f, 1.0f, 8, 6.0f);
 			}
-			bPersonalWeaponFallbackReady &= Controller->GetResponseState() == EDroneNPCAIResponseState::DroneDetected
+			bPersonalWeaponFallbackReady &= Controller->GetResponseState() == EDroneNPCAIResponseState::UseCover
+				&& Controller->GetCoverClaimCount() == 1
+				&& Controller->GetCoverUseCount() == 1
+				&& Controller->GetReservationComponent()->IsReservationOccupied()
 				&& Controller->CanFirePersonalWeapon()
 				&& WeaponComponent
 				&& WeaponComponent->IsFiring()
 				&& WeaponComponent->GetCurrentTarget() == Drone
 				&& WeaponComponent->GetCurrentAimPoint().Equals(Drone->GetActorLocation());
+			if (bPersonalWeaponFallbackReady)
+			{
+				InitialCoverController = Controller;
+			}
 		}
 		for (const ADroneNPCAIController* Controller : Friendlies)
 		{
@@ -680,18 +756,91 @@ private:
 				&& WeaponComponent
 				&& !WeaponComponent->IsFiring();
 		}
-		if (MGTurretOperatorCount != 1
+		if (MGTurretEligibleCount != 2
+			|| MGTurretOperatorCount != 1
 			|| MGTurretReservationCount != 1
 			|| !bMGTurretOperatorReady
 			|| !bPersonalWeaponFallbackReady)
 		{
-			return FinishWithTimeout(Now, 12.0, TEXT("MG 1-Slot Claim/Move or personal Weapon fallback did not become stable"));
+			return FinishWithTimeout(Now, 12.0, TEXT("MG Occupy/Aim/Fire or personal Weapon fallback did not become stable"));
 		}
 
+		ADroneNPCAIController* Operator = InitialMGTurretController.Get();
+		ADroneSmartObjectStation* Station = UsedMGTurretStation.Get();
+		ADroneNPCCharacter* OperatorPawn = Operator
+			? Cast<ADroneNPCCharacter>(Operator->GetPawn())
+			: nullptr;
+		if (!OperatorPawn || !Station || !OperatorPawn->GetHealthComponent())
+		{
+			Test->AddError(TEXT("Initial MG operator does not expose the required Health/Station contract"));
+			return true;
+		}
+
+		Test->TestEqual(TEXT("Rifle greybox damage is 10"),
+			Operator->GetPossessedWeaponComponent()->GetRifleDamage(), 10.0f);
+		Test->TestEqual(TEXT("Shotgun pellet greybox damage is 8"),
+			Operator->GetPossessedWeaponComponent()->GetShotgunDamagePerPellet(), 8.0f);
+		Drone->GetHealthComponent()->ResetHealth();
+		MGTurretTraceAttemptsBeforeReassignment = Station->GetMGTurretTraceAttemptCount();
+		UGameplayStatics::ApplyDamage(OperatorPawn, 100.0f, nullptr, Drone, nullptr);
+		AdvanceTo(EPhase::WaitForMGTurretReassignment, Now);
+		return false;
+	}
+
+	bool UpdateMGTurretReassignment(
+		const double Now,
+		ADronePrototypePawn* Drone,
+		const TArray<ADroneNPCAIController*>& Hostiles,
+		const TArray<ADroneNPCAIController*>& Friendlies)
+	{
+		ADroneNPCAIController* DeadController = InitialMGTurretController.Get();
+		ADroneSmartObjectStation* Station = UsedMGTurretStation.Get();
+		ADroneNPCAIController* Survivor = nullptr;
 		for (ADroneNPCAIController* Controller : Hostiles)
 		{
-			BroadcastSight(Controller, Drone, false);
+			if (Controller && Controller != DeadController)
+			{
+				Survivor = Controller;
+				break;
+			}
 		}
+		ADroneNPCCharacter* DeadPawn = DeadController
+			? Cast<ADroneNPCCharacter>(DeadController->GetPawn())
+			: nullptr;
+		const UDroneHealthComponent* DeadHealth = DeadPawn ? DeadPawn->GetHealthComponent() : nullptr;
+
+		const bool bDeadCleanedUp = DeadController
+			&& DeadPawn
+			&& DeadHealth
+			&& DeadHealth->IsDead()
+			&& FMath::IsNearlyZero(DeadHealth->GetCurrentHealth())
+			&& DeadHealth->GetDeathEventCount() == 1
+			&& DeadController->GetResponseState() == EDroneNPCAIResponseState::Dead
+			&& !DeadController->GetReservationComponent()->HasValidReservation()
+			&& DeadController->GetActiveMGTurretStation() == nullptr
+			&& !DeadPawn->GetActorEnableCollision();
+		const bool bSurvivorReassigned = Survivor
+			&& Station
+			&& Survivor == InitialCoverController.Get()
+			&& Survivor->GetResponseState() == EDroneNPCAIResponseState::UseMGTurret
+			&& Survivor->GetReservationComponent()->IsReservationOccupied()
+			&& Survivor->GetActiveMGTurretStation() == Station
+			&& Survivor->GetMGTurretUseCount() == 1
+			&& Survivor->GetCoverClaimCount() == 1
+			&& Survivor->GetCoverUseCount() == 1
+			&& Station->IsMGTurretInUse()
+			&& Station->GetMGTurretUser() == Survivor->GetPawn()
+			&& Station->GetMGTurretTarget() == Drone
+			&& Station->GetMGTurretOccupationCount() == 2
+			&& Station->GetMGTurretReleaseCount() >= 1
+			&& Station->GetMGTurretTraceAttemptCount() > MGTurretTraceAttemptsBeforeReassignment;
+		if (!bDeadCleanedUp || !bSurvivorReassigned)
+		{
+			return FinishWithTimeout(Now, 12.0, TEXT("Dead MG operator was not cleaned up or another eligible Hostile did not reoccupy the Slot"));
+		}
+
+		SurvivingMGTurretController = Survivor;
+		BroadcastSight(Survivor, Drone, false);
 		for (ADroneNPCAIController* Controller : Friendlies)
 		{
 			BroadcastSight(Controller, Drone, false);
@@ -715,12 +864,23 @@ private:
 		bool bAllSearching = true;
 		for (const ADroneNPCAIController* Controller : Hostiles)
 		{
+			if (Controller == InitialMGTurretController.Get())
+			{
+				bAllSearching &= Controller->GetResponseState() == EDroneNPCAIResponseState::Dead
+					&& !Controller->HasDetectedDrone()
+					&& !Controller->GetReservationComponent()->HasValidReservation()
+					&& Controller->GetActiveMGTurretStation() == nullptr;
+				continue;
+			}
+
 			const UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
 			bAllSearching &= !Controller->HasDetectedDrone()
 				&& Controller->GetResponseState() == EDroneNPCAIResponseState::Search
 				&& Controller->GetDroneLostCount() == 1
 				&& Controller->GetDroneSearchStartCount() == 1
 				&& Controller->HasLastKnownDroneLocation()
+				&& !Controller->GetReservationComponent()->HasValidReservation()
+				&& Controller->GetActiveMGTurretStation() == nullptr
 				&& WeaponComponent
 				&& !WeaponComponent->IsFiring()
 				&& WeaponComponent->GetCurrentTarget() == nullptr;
@@ -731,9 +891,12 @@ private:
 			bFriendliesUnaffected &= Controller->GetResponseState() == EDroneNPCAIResponseState::Patrol
 				&& Controller->GetDroneLostCount() == 0;
 		}
-		if (!bAllSearching || !bFriendliesUnaffected)
+		const bool bMGTurretReleased = UsedMGTurretStation.IsValid()
+			&& !UsedMGTurretStation->IsMGTurretInUse()
+			&& UsedMGTurretStation->GetMGTurretReleaseCount() >= 2;
+		if (!bAllSearching || !bFriendliesUnaffected || !bMGTurretReleased)
 		{
-			return FinishWithTimeout(Now, 5.0, TEXT("DroneLost did not transition both Hostiles into Search"));
+			return FinishWithTimeout(Now, 5.0, TEXT("DroneLost did not release reassigned MG or transition the surviving Hostile into Search"));
 		}
 
 		AdvanceTo(EPhase::WaitForReturn, Now);
@@ -742,12 +905,20 @@ private:
 
 	bool UpdateReturn(
 		const double Now,
+		ADronePrototypePawn* Drone,
 		const TArray<ADroneNPCAIController*>& Hostiles,
 		const TArray<ADroneNPCAIController*>& Friendlies)
 	{
 		bool bHostilesReturned = true;
 		for (const ADroneNPCAIController* Controller : Hostiles)
 		{
+			if (Controller == InitialMGTurretController.Get())
+			{
+				bHostilesReturned &= Controller->GetResponseState() == EDroneNPCAIResponseState::Dead
+					&& Controller->GetCompletedDroneSearchCount() == 0;
+				continue;
+			}
+
 			const bool bPatrolWorkResumed = Controller->GetReservationComponent()->HasValidReservation()
 				|| Controller->GetCompletedPatrolCycles() > BaselineHostileCycles.FindRef(Controller);
 			bHostilesReturned &= Controller->GetResponseState() == EDroneNPCAIResponseState::Patrol
@@ -784,8 +955,184 @@ private:
 			}
 		}
 
-		Test->TestTrue(TEXT("Both Hostiles return to Patrol after one Search"), bHostilesReturned);
+		Test->TestTrue(TEXT("Dead Hostile stays dead and surviving Hostile returns to Patrol after Search"), bHostilesReturned);
 		Test->TestTrue(TEXT("Both Friendlies continue BaseRoutine during Hostile perception response"), bFriendliesContinued);
+		if (!bHostilesReturned || !bFriendliesContinued)
+		{
+			return true;
+		}
+
+		ADroneNPCAIController* Survivor = SurvivingMGTurretController.Get();
+		if (!Drone || !Drone->GetHealthComponent() || !Survivor || !Survivor->GetPawn())
+		{
+			Test->AddError(TEXT("Second engagement requires the surviving Hostile and Drone Health"));
+			return true;
+		}
+
+		// Search 복귀 뒤 같은 Drone을 다시 근처에 투입해 파괴 시 전투 종료까지 검증한다.
+		Drone->GetHealthComponent()->ResetHealth();
+		// 실제 Sight의 비동기 Lost 갱신이 수동 테스트 자극을 덮어쓰지 않도록 이 단계부터
+		// 자동 Source 등록을 끈다. 파괴 시 본 코드가 다시 Unregister해도 안전해야 한다.
+		Drone->GetPerceptionStimuliSource()->UnregisterFromPerceptionSystem();
+		Drone->SetActorLocation(
+			Survivor->GetPawn()->GetActorLocation() + FVector(600.0f, 0.0f, 300.0f),
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+		BroadcastSight(Survivor, Drone, true);
+		AdvanceTo(EPhase::WaitForSecondEngagement, Now);
+		return false;
+	}
+
+	bool UpdateSecondEngagement(
+		const double Now,
+		ADronePrototypePawn* Drone,
+		const TArray<ADroneNPCAIController*>& Hostiles,
+		const TArray<ADroneNPCAIController*>& Friendlies)
+	{
+		ADroneNPCAIController* Survivor = SurvivingMGTurretController.Get();
+		ADroneSmartObjectStation* Station = UsedMGTurretStation.Get();
+		const bool bReengaged = Survivor
+			&& Station
+			&& Survivor->HasDetectedDrone()
+			&& Survivor->GetDroneDetectionCount() == 2
+			&& Survivor->GetResponseState() == EDroneNPCAIResponseState::UseMGTurret
+			&& Survivor->GetActiveMGTurretStation() == Station
+			&& Survivor->GetReservationComponent()->IsReservationOccupied()
+			&& Station->IsMGTurretInUse()
+			&& Station->GetMGTurretUser() == Survivor->GetPawn()
+			&& Station->GetMGTurretTarget() == Drone;
+		if (!bReengaged)
+		{
+			if (Now - PhaseStartedAt <= 12.0)
+			{
+				return false;
+			}
+			Test->AddError(FString::Printf(
+				TEXT("Second engagement failed: state=%d detected=%d detect/lost=%d/%d reservation=%d occupied=%d activeMG=%s stationUse=%d stationUser=%s stationTarget=%s"),
+				Survivor ? static_cast<int32>(Survivor->GetResponseState()) : -1,
+				Survivor && Survivor->HasDetectedDrone() ? 1 : 0,
+				Survivor ? Survivor->GetDroneDetectionCount() : -1,
+				Survivor ? Survivor->GetDroneLostCount() : -1,
+				Survivor && Survivor->GetReservationComponent()->HasValidReservation() ? 1 : 0,
+				Survivor && Survivor->GetReservationComponent()->IsReservationOccupied() ? 1 : 0,
+				*GetNameSafe(Survivor ? Survivor->GetActiveMGTurretStation() : nullptr),
+				Station && Station->IsMGTurretInUse() ? 1 : 0,
+				*GetNameSafe(Station ? Station->GetMGTurretUser() : nullptr),
+				*GetNameSafe(Station ? Station->GetMGTurretTarget() : nullptr)));
+			return true;
+		}
+
+		bool bOthersUnchanged = true;
+		for (const ADroneNPCAIController* Controller : Hostiles)
+		{
+			if (Controller != Survivor)
+			{
+				bOthersUnchanged &= Controller->GetResponseState() == EDroneNPCAIResponseState::Dead
+					&& Controller->GetDroneDestroyedResponseCount() == 0;
+			}
+		}
+		for (const ADroneNPCAIController* Controller : Friendlies)
+		{
+			bOthersUnchanged &= !Controller->HasDetectedDrone()
+				&& Controller->GetDroneDestroyedResponseCount() == 0;
+		}
+		if (!bOthersUnchanged)
+		{
+			Test->AddError(TEXT("Dead Hostile or Friendly changed during the second engagement"));
+			return true;
+		}
+
+		UGameplayStatics::ApplyDamage(Drone, 100.0f, Survivor, Survivor->GetPawn(), nullptr);
+		AdvanceTo(EPhase::WaitForDroneDestroyed, Now);
+		return false;
+	}
+
+	bool UpdateDroneDestroyed(
+		const double Now,
+		ADronePrototypePawn* Drone,
+		const TArray<ADroneNPCAIController*>& Hostiles,
+		const TArray<ADroneNPCAIController*>& Friendlies)
+	{
+		ADroneNPCAIController* Survivor = SurvivingMGTurretController.Get();
+		ADroneSmartObjectStation* Station = UsedMGTurretStation.Get();
+		const UDroneHealthComponent* DroneHealth = Drone ? Drone->GetHealthComponent() : nullptr;
+		const UDroneNPCWeaponComponent* SurvivorWeapon = Survivor
+			? Survivor->GetPossessedWeaponComponent()
+			: nullptr;
+		const bool bDroneDestroyedOnce = Drone
+			&& DroneHealth
+			&& DroneHealth->IsDead()
+			&& FMath::IsNearlyZero(DroneHealth->GetCurrentHealth())
+			&& DroneHealth->GetDeathEventCount() == 1
+			&& Drone->GetDroneDestroyedEventCount() == 1
+			&& !Drone->GetActorEnableCollision()
+			&& Drone->GetPrototypeMovementComponent()
+			&& !Drone->GetPrototypeMovementComponent()->IsActive();
+		const bool bCombatStopped = Survivor
+			&& Survivor->GetDroneDestroyedResponseCount() == 1
+			&& !Survivor->HasDetectedDrone()
+			&& !Survivor->HasLastKnownDroneLocation()
+			&& Survivor->GetResponseState() == EDroneNPCAIResponseState::Patrol
+			&& Survivor->GetActiveMGTurretStation() == nullptr
+			&& SurvivorWeapon
+			&& !SurvivorWeapon->IsFiring()
+			&& SurvivorWeapon->GetCurrentTarget() == nullptr
+			&& Station
+			&& !Station->IsMGTurretInUse()
+			&& Station->GetMGTurretUser() == nullptr
+			&& Station->GetMGTurretTarget() == nullptr;
+
+		bool bOthersUnaffected = true;
+		for (const ADroneNPCAIController* Controller : Hostiles)
+		{
+			if (Controller != Survivor)
+			{
+				bOthersUnaffected &= Controller->GetResponseState() == EDroneNPCAIResponseState::Dead
+					&& Controller->GetDroneDestroyedResponseCount() == 0;
+			}
+		}
+		for (const ADroneNPCAIController* Controller : Friendlies)
+		{
+			bOthersUnaffected &= Controller->GetDroneDestroyedResponseCount() == 0
+				&& !Controller->HasDetectedDrone();
+		}
+
+		if ((!bDroneDestroyedOnce || !bCombatStopped || !bOthersUnaffected)
+			&& Now - PhaseStartedAt <= 5.0)
+		{
+			return false;
+		}
+		if (!bCombatStopped)
+		{
+			Test->AddError(FString::Printf(
+				TEXT("Destroyed cleanup failed: responseCount=%d state=%d detected=%d lastKnown=%d reservation=%d occupied=%d activeMG=%s weaponFiring=%d weaponTarget=%s stationUse=%d stationUser=%s stationTarget=%s"),
+				Survivor ? Survivor->GetDroneDestroyedResponseCount() : -1,
+				Survivor ? static_cast<int32>(Survivor->GetResponseState()) : -1,
+				Survivor && Survivor->HasDetectedDrone() ? 1 : 0,
+				Survivor && Survivor->HasLastKnownDroneLocation() ? 1 : 0,
+				Survivor && Survivor->GetReservationComponent()->HasValidReservation() ? 1 : 0,
+				Survivor && Survivor->GetReservationComponent()->IsReservationOccupied() ? 1 : 0,
+				*GetNameSafe(Survivor ? Survivor->GetActiveMGTurretStation() : nullptr),
+				SurvivorWeapon && SurvivorWeapon->IsFiring() ? 1 : 0,
+				*GetNameSafe(SurvivorWeapon ? SurvivorWeapon->GetCurrentTarget() : nullptr),
+				Station && Station->IsMGTurretInUse() ? 1 : 0,
+				*GetNameSafe(Station ? Station->GetMGTurretUser() : nullptr),
+				*GetNameSafe(Station ? Station->GetMGTurretTarget() : nullptr)));
+		}
+
+		Test->TestTrue(TEXT("Drone reaches zero Health and publishes its destruction Event once"), bDroneDestroyedOnce);
+		Test->TestTrue(TEXT("Drone destruction releases MG and stops every surviving Hostile combat resource"), bCombatStopped);
+		Test->TestTrue(TEXT("Dead Hostile and Friendlies ignore the Drone destruction response"), bOthersUnaffected);
+		if (!bDroneDestroyedOnce || !bCombatStopped || !bOthersUnaffected)
+		{
+			return true;
+		}
+
+		// 파괴 뒤 들어오는 중복 Damage가 사망/임무 신호를 다시 발생시키지 않아야 한다.
+		UGameplayStatics::ApplyDamage(Drone, 10.0f, Survivor, Survivor->GetPawn(), nullptr);
+		Test->TestEqual(TEXT("Repeated damage does not rebroadcast Drone Health death"), DroneHealth->GetDeathEventCount(), 1);
+		Test->TestEqual(TEXT("Repeated damage does not rebroadcast Drone destruction"), Drone->GetDroneDestroyedEventCount(), 1);
 		return true;
 	}
 
@@ -795,6 +1142,11 @@ private:
 	double PhaseStartedAt = 0.0;
 	TMap<TWeakObjectPtr<ADroneNPCAIController>, int32> BaselineHostileCycles;
 	TMap<TWeakObjectPtr<ADroneNPCAIController>, int32> BaselineFriendlyCycles;
+	TWeakObjectPtr<ADroneSmartObjectStation> UsedMGTurretStation;
+	TWeakObjectPtr<ADroneNPCAIController> InitialMGTurretController;
+	TWeakObjectPtr<ADroneNPCAIController> InitialCoverController;
+	TWeakObjectPtr<ADroneNPCAIController> SurvivingMGTurretController;
+	int32 MGTurretTraceAttemptsBeforeReassignment = 0;
 };
 } // namespace DroneNPCGreybox
 
@@ -873,6 +1225,7 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 	int32 RecastNavMeshCount = 0;
 	int32 DynamicRecastNavMeshCount = 0;
 	int32 StationCount = 0;
+	int32 CoverStationCount = 0;
 	TMap<UClass*, int32> ActualPlacedCounts;
 	FBox NavigationBounds(EForceInit::ForceInit);
 	TArray<const AActor*> NavigationUsers;
@@ -912,9 +1265,10 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 			DynamicRecastNavMeshCount +=
 				RecastNavMesh->GetRuntimeGenerationMode() == ERuntimeGenerationType::Dynamic ? 1 : 0;
 		}
-		if (Actor->IsA<ADroneSmartObjectStation>())
+		if (const ADroneSmartObjectStation* Station = Cast<ADroneSmartObjectStation>(Actor))
 		{
 			++StationCount;
+			CoverStationCount += Station->GetActivity() == EDroneSmartObjectActivity::Cover ? 1 : 0;
 			NavigationUsers.Add(Actor);
 		}
 		if (Actor->IsA<ADroneNPCCharacter>())
@@ -929,7 +1283,8 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("NPC Greybox map has one native Navigation Floor"), NavigationFloorCount, 1);
 	TestEqual(TEXT("NPC Greybox map saves one RecastNavMesh"), RecastNavMeshCount, 1);
 	TestEqual(TEXT("NPC Greybox map uses runtime Dynamic Recast generation"), DynamicRecastNavMeshCount, 1);
-	TestEqual(TEXT("NPC Greybox map has ten Smart Object Stations"), StationCount, 10);
+	TestEqual(TEXT("NPC Greybox map has twelve Smart Object Stations"), StationCount, 12);
+	TestEqual(TEXT("NPC Greybox map has two Cover Stations"), CoverStationCount, 2);
 	for (const TPair<UClass*, int32>& Expected : ExpectedPlacedCounts)
 	{
 		TestEqual(
@@ -965,8 +1320,8 @@ bool FDroneHostilePatrolStateTreeAssetTest::RunTest(const FString& Parameters)
 		TEXT("Hostile StateTree keeps DroneDetected-Search-Patrol event transitions"),
 		UDroneAIStateTreeAuthoringLibrary::ValidateHostilePerceptionStateTree(HostilePatrolStateTreePackage));
 	TestTrue(
-		TEXT("Hostile StateTree keeps MG Claim-Move-Hold and personal Weapon fallback transitions"),
-		UDroneAIStateTreeAuthoringLibrary::ValidateHostileMGTurretStateTree(HostilePatrolStateTreePackage));
+		TEXT("Hostile StateTree keeps MG priority, Cover, and personal Weapon fallback transitions"),
+		UDroneAIStateTreeAuthoringLibrary::ValidateHostileCoverStateTree(HostilePatrolStateTreePackage));
 	return !HasAnyErrors();
 }
 

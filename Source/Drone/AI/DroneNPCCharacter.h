@@ -6,6 +6,7 @@
 
 class UDroneNPCProfileComponent;
 class UDroneNPCWeaponComponent;
+class UDroneHealthComponent;
 class USmartObjectUserComponent;
 
 /**
@@ -31,7 +32,15 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|NPC")
 	UDroneNPCWeaponComponent* GetNPCWeaponComponent() const { return NPCWeaponComponent; }
 
+	UFUNCTION(BlueprintPure, Category="Drone|Health")
+	UDroneHealthComponent* GetHealthComponent() const { return HealthComponent; }
+
 protected:
+	virtual void BeginPlay() override;
+
+	UFUNCTION()
+	void HandleDeath(AActor* DeadActor, AController* InstigatorController, AActor* DamageCauser);
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone AI NPC Components")
 	TObjectPtr<UDroneNPCProfileComponent> NPCProfileComponent;
 
@@ -40,4 +49,8 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone AI NPC Components")
 	TObjectPtr<UDroneNPCWeaponComponent> NPCWeaponComponent;
+
+	/** NPC 공통 기본 체력 100과 사망 한 번 처리 규칙을 제공한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone AI NPC Components")
+	TObjectPtr<UDroneHealthComponent> HealthComponent;
 };

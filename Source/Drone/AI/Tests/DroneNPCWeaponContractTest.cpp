@@ -38,6 +38,11 @@ bool FDroneNPCWeaponContractTest::RunTest(const FString& Parameters)
 	Rifle->ConfigureWeapon(EDroneNPCWeaponType::Rifle);
 	Shotgun->ConfigureWeapon(EDroneNPCWeaponType::Shotgun);
 	Unarmed->ConfigureWeapon(EDroneNPCWeaponType::Unarmed);
+	TestEqual(TEXT("Rifle starts with a 30-round Greybox magazine"), Rifle->GetMagazineCapacity(), 30);
+	TestEqual(TEXT("Rifle magazine starts full"), Rifle->GetCurrentMagazineAmmo(), 30);
+	TestEqual(TEXT("Shotgun starts with an 8-shell Greybox magazine"), Shotgun->GetMagazineCapacity(), 8);
+	TestEqual(TEXT("Shotgun magazine starts full"), Shotgun->GetCurrentMagazineAmmo(), 8);
+	TestEqual(TEXT("Unarmed has no magazine"), Unarmed->GetMagazineCapacity(), 0);
 
 	TestTrue(TEXT("Rifle accepts the common CanFire contract"), Rifle->CanFire(TargetActor, AimPoint));
 	TestTrue(TEXT("Shotgun accepts the same CanFire contract"), Shotgun->CanFire(TargetActor, AimPoint));
@@ -63,8 +68,8 @@ bool FDroneNPCWeaponContractTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("StopFire clears Shotgun active state"), Shotgun->IsFiring());
 	TestNull(TEXT("StopFire clears the Rifle Target"), Rifle->GetCurrentTarget());
 	TestNull(TEXT("StopFire clears the Shotgun Target"), Shotgun->GetCurrentTarget());
-	TestTrue(TEXT("Rifle exposes the common Reload request"), Rifle->Reload());
-	TestTrue(TEXT("Shotgun exposes the same Reload request"), Shotgun->Reload());
+	TestFalse(TEXT("A full Rifle magazine rejects redundant Reload"), Rifle->Reload());
+	TestFalse(TEXT("A full Shotgun magazine rejects redundant Reload"), Shotgun->Reload());
 	TestFalse(TEXT("Unarmed rejects Reload"), Unarmed->Reload());
 	TestEqual(TEXT("Rifle records one Reload request"), Rifle->GetReloadRequestCount(), 1);
 	TestEqual(TEXT("Shotgun records one Reload request"), Shotgun->GetReloadRequestCount(), 1);

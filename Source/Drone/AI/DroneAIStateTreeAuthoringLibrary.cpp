@@ -2,6 +2,7 @@
 
 #if WITH_EDITOR
 #include "AI/DroneAITags.h"
+#include "AI/DroneNPCCoverStateTreeTasks.h"
 #include "AI/DroneNPCMGTurretStateTreeTasks.h"
 #include "AI/DroneNPCPerceptionStateTreeTasks.h"
 #include "AI/DroneNPCPatrolStateTreeTasks.h"
@@ -138,6 +139,40 @@ namespace
 		ReplaceEventTransition(Root, DroneAITags::Event_DroneDetected, ClaimMG);
 		ReplaceEventTransition(Search, DroneAITags::Event_DroneDetected, ClaimMG);
 	}
+
+	void AddHostileCoverStates(
+		UStateTreeState& Root,
+		UStateTreeState& Detected,
+		UStateTreeState& Search,
+		UStateTreeState& ClaimMG)
+	{
+		UStateTreeState& ClaimCover = Root.AddChildState(TEXT("ClaimCoverSlot"));
+		UStateTreeState& MoveCover = Root.AddChildState(TEXT("MoveToCover"));
+		UStateTreeState& UseCover = Root.AddChildState(TEXT("UseCover"));
+
+		ClaimCover.AddTask<FDroneStateTreeClaimCoverTask>();
+		ClaimCover.AddTransition(EStateTreeTransitionTrigger::OnStateSucceeded, EStateTreeTransitionType::GotoState, &MoveCover);
+		ClaimCover.AddTransition(EStateTreeTransitionTrigger::OnStateFailed, EStateTreeTransitionType::GotoState, &Detected);
+		ClaimCover.AddTransition(EStateTreeTransitionTrigger::OnEvent, DroneAITags::Event_DroneLost, EStateTreeTransitionType::GotoState, &Search);
+
+		MoveCover.AddTask<FDroneStateTreeMoveToCoverTask>();
+		MoveCover.AddTransition(EStateTreeTransitionTrigger::OnStateSucceeded, EStateTreeTransitionType::GotoState, &UseCover);
+		MoveCover.AddTransition(EStateTreeTransitionTrigger::OnStateFailed, EStateTreeTransitionType::GotoState, &Detected);
+		MoveCover.AddTransition(EStateTreeTransitionTrigger::OnEvent, DroneAITags::Event_DroneLost, EStateTreeTransitionType::GotoState, &Search);
+
+		UseCover.AddTask<FDroneStateTreeUseCoverTask>();
+		UseCover.AddTransition(EStateTreeTransitionTrigger::OnStateFailed, EStateTreeTransitionType::GotoState, &Detected);
+		UseCover.AddTransition(EStateTreeTransitionTrigger::OnEvent, DroneAITags::Event_DroneLost, EStateTreeTransitionType::GotoState, &Search);
+
+		// MG 권한 없음·Slot 점유·검색 실패는 Cover를 먼저 시도하고, Cover도 없을 때만
+		// 기존 DroneDetected 제자리 개인 무기 대응으로 내려간다.
+		ClaimMG.Transitions.RemoveAll(
+			[](const FStateTreeTransition& Transition)
+			{
+				return Transition.Trigger == EStateTreeTransitionTrigger::OnStateFailed;
+			});
+		ClaimMG.AddTransition(EStateTreeTransitionTrigger::OnStateFailed, EStateTreeTransitionType::GotoState, &ClaimCover);
+	}
 }
 #endif
 
@@ -199,6 +234,7 @@ bool UDroneAIStateTreeAuthoringLibrary::CreateHostilePatrolStateTree(const FStri
 	Release.AddTransition(EStateTreeTransitionTrigger::OnStateSucceeded, EStateTreeTransitionType::GotoState, &Claim);
 	AddHostilePerceptionStates(Root, Claim);
 	AddHostileMGTurretStates(Root, *Root.Children[4], *Root.Children[5]);
+	AddHostileCoverStates(Root, *Root.Children[4], *Root.Children[5], *Root.Children[6]);
 
 	FStateTreeCompilerLog CompilerLog;
 	if (!UStateTreeEditingSubsystem::CompileStateTree(StateTree, CompilerLog) || !StateTree->IsReadyToRun())
@@ -320,7 +356,7 @@ bool UDroneAIStateTreeAuthoringLibrary::ValidateHostilePerceptionStateTree(const
 	}
 
 	const UStateTreeState* Root = EditorData->SubTrees[0];
-	if (Root->Children.Num() != 6 && Root->Children.Num() != 9)
+	if (Root->Children.Num() != 6 && Root->Children.Num() != 9 && Root->Children.Num() != 12)
 	{
 		return false;
 	}
@@ -331,7 +367,7 @@ bool UDroneAIStateTreeAuthoringLibrary::ValidateHostilePerceptionStateTree(const
 	{
 		return false;
 	}
-	const FName DetectedEventTarget = Root->Children.Num() == 9 && Root->Children[6]
+	const FName DetectedEventTarget = Root->Children.Num() >= 9 && Root->Children[6]
 		? Root->Children[6]->Name
 		: Detected->Name;
 	return Detected->Name == TEXT("DroneDetected")
@@ -410,7 +446,7 @@ bool UDroneAIStateTreeAuthoringLibrary::ValidateHostileMGTurretStateTree(const F
 	}
 
 	const UStateTreeState* Root = EditorData->SubTrees[0];
-	if (Root->Children.Num() != 9)
+	if (Root->Children.Num() != 9 && Root->Children.Num() != 12)
 	{
 		return false;
 	}
@@ -432,6 +468,95 @@ bool UDroneAIStateTreeAuthoringLibrary::ValidateHostileMGTurretStateTree(const F
 		&& HasEventTransitionTo(ClaimMG, DroneAITags::Event_DroneLost, Search->Name)
 		&& HasEventTransitionTo(MoveMG, DroneAITags::Event_DroneLost, Search->Name)
 		&& HasEventTransitionTo(HoldMG, DroneAITags::Event_DroneLost, Search->Name);
+#else
+	return false;
+#endif
+}
+
+bool UDroneAIStateTreeAuthoringLibrary::UpgradeHostileMGTurretStateTreeForCover(const FString& AssetPath)
+{
+#if WITH_EDITOR
+	if (ValidateHostileCoverStateTree(AssetPath))
+	{
+		return true;
+	}
+	if (!ValidateHostileMGTurretStateTree(AssetPath))
+	{
+		return false;
+	}
+
+	UStateTree* StateTree = LoadObject<UStateTree>(nullptr, *MakeStateTreeObjectPath(AssetPath));
+	UStateTreeEditorData* EditorData = StateTree ? Cast<UStateTreeEditorData>(StateTree->EditorData) : nullptr;
+	if (!StateTree || !EditorData || EditorData->SubTrees.Num() != 1 || !EditorData->SubTrees[0])
+	{
+		return false;
+	}
+
+	UStateTreeState* Root = EditorData->SubTrees[0];
+	if (Root->Children.Num() != 9 || !Root->Children[4] || !Root->Children[5] || !Root->Children[6])
+	{
+		return false;
+	}
+
+	StateTree->Modify();
+	EditorData->Modify();
+	Root->Modify();
+	AddHostileCoverStates(*Root, *Root->Children[4], *Root->Children[5], *Root->Children[6]);
+
+	FStateTreeCompilerLog CompilerLog;
+	if (!UStateTreeEditingSubsystem::CompileStateTree(StateTree, CompilerLog) || !StateTree->IsReadyToRun())
+	{
+		return false;
+	}
+	StateTree->MarkPackageDirty();
+	return ValidateHostileCoverStateTree(AssetPath);
+#else
+	return false;
+#endif
+}
+
+bool UDroneAIStateTreeAuthoringLibrary::ValidateHostileCoverStateTree(const FString& AssetPath)
+{
+#if WITH_EDITOR
+	if (!ValidateHostileMGTurretStateTree(AssetPath))
+	{
+		return false;
+	}
+	const UStateTree* StateTree = LoadObject<UStateTree>(nullptr, *MakeStateTreeObjectPath(AssetPath));
+	const UStateTreeEditorData* EditorData = StateTree ? Cast<UStateTreeEditorData>(StateTree->EditorData) : nullptr;
+	if (!EditorData || EditorData->SubTrees.Num() != 1 || !EditorData->SubTrees[0])
+	{
+		return false;
+	}
+	const UStateTreeState* Root = EditorData->SubTrees[0];
+	if (Root->Children.Num() != 12)
+	{
+		return false;
+	}
+
+	const UStateTreeState* Detected = Root->Children[4];
+	const UStateTreeState* Search = Root->Children[5];
+	const UStateTreeState* ClaimMG = Root->Children[6];
+	const UStateTreeState* ClaimCover = Root->Children[9];
+	const UStateTreeState* MoveCover = Root->Children[10];
+	const UStateTreeState* UseCover = Root->Children[11];
+	return Detected && Search && ClaimMG
+		&& ClaimCover && ClaimCover->Name == TEXT("ClaimCoverSlot")
+		&& HasSingleTaskOfType(ClaimCover, FDroneStateTreeClaimCoverTask::StaticStruct())
+		&& MoveCover && MoveCover->Name == TEXT("MoveToCover")
+		&& HasSingleTaskOfType(MoveCover, FDroneStateTreeMoveToCoverTask::StaticStruct())
+		&& UseCover && UseCover->Name == TEXT("UseCover")
+		&& HasSingleTaskOfType(UseCover, FDroneStateTreeUseCoverTask::StaticStruct())
+		&& ClaimMG->Transitions.ContainsByPredicate(
+			[ClaimCover](const FStateTreeTransition& Transition)
+			{
+				return Transition.Trigger == EStateTreeTransitionTrigger::OnStateFailed
+					&& Transition.State.LinkType == EStateTreeTransitionType::GotoState
+					&& Transition.State.Name == ClaimCover->Name;
+			})
+		&& HasEventTransitionTo(ClaimCover, DroneAITags::Event_DroneLost, Search->Name)
+		&& HasEventTransitionTo(MoveCover, DroneAITags::Event_DroneLost, Search->Name)
+		&& HasEventTransitionTo(UseCover, DroneAITags::Event_DroneLost, Search->Name);
 #else
 	return false;
 #endif

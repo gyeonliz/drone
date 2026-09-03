@@ -4,6 +4,7 @@
 #include "Drone.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
+#include "Health/DroneHealthComponent.h"
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Tutorial/DroneTrainingCourse.h"
 #include "Tutorial/DroneTrainingLapRecorderComponent.h"
@@ -44,6 +45,7 @@ void ADronePrototypePlayerController::EndPlay(const EEndPlayReason::Type EndPlay
 	if (FlightHUDWidget)
 	{
 		FlightHUDWidget->ClearTrainingRecordSource();
+		FlightHUDWidget->ClearHealthSource();
 		FlightHUDWidget->ClearTelemetrySource();
 		FlightHUDWidget->RemoveFromParent();
 		FlightHUDWidget = nullptr;
@@ -92,7 +94,11 @@ void ADronePrototypePlayerController::SyncFlightHUDToPawn(APawn* NewPawn)
 	UDroneTelemetryComponent* Telemetry = NewPawn
 		? NewPawn->FindComponentByClass<UDroneTelemetryComponent>()
 		: nullptr;
+	UDroneHealthComponent* Health = NewPawn
+		? NewPawn->FindComponentByClass<UDroneHealthComponent>()
+		: nullptr;
 	FlightHUDWidget->SetTelemetrySource(Telemetry);
+	FlightHUDWidget->SetHealthSource(Health);
 }
 
 void ADronePrototypePlayerController::SyncTrainingHUDToWorld()

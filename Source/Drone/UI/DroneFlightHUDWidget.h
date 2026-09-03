@@ -7,6 +7,7 @@
 #include "DroneFlightHUDWidget.generated.h"
 
 class UBorder;
+class UDroneHealthComponent;
 class UDroneTelemetryComponent;
 class UDroneTrainingLapRecorderComponent;
 class UTextBlock;
@@ -57,6 +58,19 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|HUD")
 	FText GetHeadingDisplayText() const { return HeadingDisplayText; }
+
+	/** 현재 Pawn의 체력 Event를 연결해 Tick 없이 드론 내구도를 갱신한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|HUD|Health")
+	void SetHealthSource(UDroneHealthComponent* InHealthSource);
+
+	UFUNCTION(BlueprintCallable, Category="Drone|HUD|Health")
+	void ClearHealthSource();
+
+	UFUNCTION(BlueprintPure, Category="Drone|HUD|Health")
+	UDroneHealthComponent* GetHealthSource() const { return HealthSource.Get(); }
+
+	UFUNCTION(BlueprintPure, Category="Drone|HUD|Health")
+	FText GetHealthDisplayText() const { return HealthDisplayText; }
 
 	/** Tutorial Course의 구간 기록 Event를 연결해 Tick 없이 결과 패널을 갱신한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|HUD|Training")
@@ -115,6 +129,9 @@ private:
 	void HandleTelemetryUpdated(FDroneTelemetrySnapshot Snapshot);
 
 	UFUNCTION()
+	void HandleHealthChanged(float PreviousHealth, float CurrentHealth, float MaxHealth, float AppliedDamage);
+
+	UFUNCTION()
 	void HandleTrainingLapStarted();
 
 	UFUNCTION()
@@ -134,6 +151,10 @@ private:
 
 	/** Designer HUD의 왼쪽 아래에 한국어 Tutorial 구간 기록 패널을 동적으로 붙인다. */
 	void BuildTrainingLayout();
+
+	/** Designer 구조를 깨지 않고 우측 상단에 체력 표시를 동적으로 추가한다. */
+	void BuildHealthLayout();
+	void RefreshHealthDisplay();
 
 	/** Snapshot 값 자체를 다시 계산하지 않고 표시 문자열만 만든다. */
 	void ApplySnapshot(const FDroneTelemetrySnapshot& Snapshot);
@@ -155,6 +176,8 @@ private:
 	/** Pawn이 파괴돼도 강한 참조로 수명을 늘리지 않도록 Weak Pointer를 사용한다. */
 	TWeakObjectPtr<UDroneTelemetryComponent> TelemetrySource;
 
+	TWeakObjectPtr<UDroneHealthComponent> HealthSource;
+
 	TWeakObjectPtr<UDroneTrainingLapRecorderComponent> TrainingRecordSource;
 
 	/** 테스트와 Blueprint 디버깅에서 마지막으로 받은 원본 Snapshot을 확인한다. */
@@ -172,6 +195,9 @@ private:
 
 	UPROPERTY(Transient)
 	FText HeadingDisplayText;
+
+	UPROPERTY(Transient)
+	FText HealthDisplayText;
 
 	UPROPERTY(Transient)
 	TArray<FDroneTrainingSegmentRecord> DisplayedTrainingSegments;
@@ -228,6 +254,12 @@ private:
 
 	UPROPERTY(Transient, meta=(BindWidget))
 	TObjectPtr<UTextBlock> HeadingValueText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBorder> HealthReadoutPanel;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> HealthValueText;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UBorder> TrainingReadoutPanel;

@@ -85,12 +85,15 @@ bool FDroneNPCShotgunTraceTest::RunTest(const FString& Parameters)
 
 	TestTrue(TEXT("Shotgun accepts an in-range Target"), CenteredWeapon->CanFire(Target, Target->GetActorLocation()));
 	TestTrue(TEXT("Shotgun starts and hits an unobstructed Target"), CenteredWeapon->StartFire(Target, Target->GetActorLocation()));
+	TestEqual(TEXT("One Shotgun Volley consumes one shell, not one per Pellet"), CenteredWeapon->GetCurrentMagazineAmmo(), 7);
 	TestEqual(TEXT("One Trigger creates exactly one Shotgun Volley"), CenteredWeapon->GetShotgunVolleyAttemptCount(), 1);
+	TestEqual(TEXT("One Shotgun Volley emits one visual fire event, not one per Pellet"), CenteredWeapon->GetWeaponFiredEventCount(), 1);
 	TestEqual(TEXT("One Volley emits every configured Pellet"), CenteredWeapon->GetShotgunPelletTraceCount(), 7);
 	TestEqual(TEXT("Zero Spread sends every Pellet into the Target"), CenteredWeapon->GetShotgunTargetHitPelletCount(), 7);
 	TestEqual(TEXT("Last Volley records every Pellet endpoint"), CenteredWeapon->GetLastShotgunPelletTraceEnds().Num(), 7);
 	TestFalse(TEXT("Immediate repeated Shotgun Volley is rejected by Cooldown"), CenteredWeapon->TryFireShotgunVolley());
 	TestEqual(TEXT("Cooldown rejection creates no extra Volley"), CenteredWeapon->GetShotgunVolleyAttemptCount(), 1);
+	TestEqual(TEXT("Cooldown rejection emits no extra Shotgun visual event"), CenteredWeapon->GetWeaponFiredEventCount(), 1);
 	CenteredWeapon->StopFire();
 
 	AActor* Blocker = SpawnShotgunTestActor(World, FVector(500.0f, 0.0f, 100.0f), FVector(120.0f), TEXT("ShotgunBlocker"));
@@ -120,6 +123,7 @@ bool FDroneNPCShotgunTraceTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("Spread Shotgun Weapon exists"), SpreadWeapon);
 	if (SpreadWeapon)
 	{
+		SpreadWeapon->ConfigureMagazineGreybox(30, 1);
 		TestTrue(TEXT("Spread Shotgun starts through the common Trigger"), SpreadWeapon->StartFire(Target, Target->GetActorLocation()));
 		const TArray<FVector>& TraceEnds = SpreadWeapon->GetLastShotgunPelletTraceEnds();
 		bool bFoundSeparatedPellet = false;
@@ -128,7 +132,13 @@ bool FDroneNPCShotgunTraceTest::RunTest(const FString& Parameters)
 			bFoundSeparatedPellet |= !TraceEnds[Index].Equals(TraceEnds[0], 1.0f);
 		}
 		TestTrue(TEXT("Configured Spread produces separated Pellet endpoints"), bFoundSeparatedPellet);
-		SpreadWeapon->StopFire();
+		TestEqual(TEXT("Last Shotgun shell empties the magazine"), SpreadWeapon->GetCurrentMagazineAmmo(), 0);
+		TestFalse(TEXT("Empty Shotgun stops its repeating fire state"), SpreadWeapon->IsFiring());
+		TestFalse(TEXT("Empty Shotgun rejects another Trigger"), SpreadWeapon->StartFire(Target, Target->GetActorLocation()));
+		TestTrue(TEXT("Explicit Shotgun Reload refills the empty magazine"), SpreadWeapon->Reload());
+		TestEqual(TEXT("Shotgun Reload restores configured capacity"), SpreadWeapon->GetCurrentMagazineAmmo(), 1);
+		TestEqual(TEXT("Shotgun records one accepted Reload"), SpreadWeapon->GetAcceptedReloadRequestCount(), 1);
+		TestEqual(TEXT("Accepted Shotgun Reload emits one completion event"), SpreadWeapon->GetReloadCompletedEventCount(), 1);
 	}
 
 	UDroneNPCWeaponComponent* Rifle = NewObject<UDroneNPCWeaponComponent>(Shooter, TEXT("RifleWeaponForShotgunTest"));

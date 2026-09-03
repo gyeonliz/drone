@@ -7,6 +7,7 @@
 class AController;
 class UCameraComponent;
 class UDroneTelemetryComponent;
+class UDroneHealthComponent;
 class UEnhancedInputLocalPlayerSubsystem;
 class UFloatingPawnMovement;
 class UInputAction;
@@ -16,6 +17,9 @@ class USpringArmComponent;
 class UStaticMeshComponent;
 class UAIPerceptionStimuliSourceComponent;
 struct FInputActionValue;
+
+class ADronePrototypePawn;
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDroneDestroyedSignature, ADronePrototypePawn*, DestroyedDrone);
 
 /**
  * 기존 Third Person Character와 분리한 Drone 조종 Prototype Pawn.
@@ -44,7 +48,15 @@ public:
 	UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 	UFloatingPawnMovement* GetPrototypeMovementComponent() const { return PrototypeMovementComponent; }
 	UDroneTelemetryComponent* GetTelemetryComponent() const { return TelemetryComponent; }
+	UDroneHealthComponent* GetHealthComponent() const { return HealthComponent; }
 	UAIPerceptionStimuliSourceComponent* GetPerceptionStimuliSource() const { return PerceptionStimuliSource; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Health|Debug")
+	int32 GetDroneDestroyedEventCount() const { return DroneDestroyedEventCount; }
+
+	/** Mission/GameMode는 이 Event를 받아 실패 화면·재시작 규칙을 추가한다. */
+	UPROPERTY(BlueprintAssignable, Category="Drone|Health")
+	FDroneDestroyedSignature OnDroneDestroyed;
 
 protected:
 	virtual void BeginPlay() override;
@@ -70,6 +82,10 @@ protected:
 	/** HUD와 Tutorial 기록기에 기본 0.1초 주기 및 명시적 즉시 갱신 Snapshot을 공급한다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UDroneTelemetryComponent> TelemetryComponent;
+
+	/** 드론 기본 체력 100과 파괴/실패 판정용 사망 Event를 제공한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UDroneHealthComponent> HealthComponent;
 
 	/** Enemy AI Sight가 드론을 명시적인 감지 대상으로 등록하는 Component다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
@@ -132,4 +148,10 @@ private:
 	void Look(const FInputActionValue& Value);
 	void ChangeCameraPitch(const FInputActionValue& Value);
 	void AdjustCameraPitch(float PitchDeltaDegrees);
+
+	UFUNCTION()
+	void HandleDeath(AActor* DeadActor, AController* InstigatorController, AActor* DamageCauser);
+
+	UPROPERTY(Transient)
+	int32 DroneDestroyedEventCount = 0;
 };
