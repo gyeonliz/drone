@@ -4,6 +4,9 @@
 
 #include "AI/DroneNPCCharacter.h"
 #include "AI/Weapons/DroneNPCWeaponComponent.h"
+#include "Animation/AnimSequenceBase.h"
+#include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "GameFramework/Actor.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -18,6 +21,24 @@ bool FDroneNPCWeaponContractTest::RunTest(const FString& Parameters)
 	if (NPCDefaults && NPCDefaults->GetNPCWeaponComponent())
 	{
 		TestFalse(TEXT("Common Weapon Component does not tick"), NPCDefaults->GetNPCWeaponComponent()->PrimaryComponentTick.bCanEverTick);
+	}
+	TestNotNull(TEXT("NPC Character CDO owns a replaceable Weapon Visual Component"), NPCDefaults ? NPCDefaults->GetWeaponVisualComponent() : nullptr);
+	TestNotNull(TEXT("NPC Character CDO owns a separate Weapon Muzzle Component"), NPCDefaults ? NPCDefaults->GetWeaponMuzzleComponent() : nullptr);
+	if (NPCDefaults && NPCDefaults->GetWeaponVisualComponent() && NPCDefaults->GetWeaponMuzzleComponent())
+	{
+		TestTrue(TEXT("Weapon Visual is attached to the Character Mesh"), NPCDefaults->GetWeaponVisualComponent()->GetAttachParent() == NPCDefaults->GetMesh());
+		TestEqual(TEXT("Manny Greybox uses the verified right-hand bone"), NPCDefaults->GetWeaponVisualComponent()->GetAttachSocketName(), FName(TEXT("hand_r")));
+		TestEqual(TEXT("Weapon Visual never blocks gameplay collision"), NPCDefaults->GetWeaponVisualComponent()->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+		TestFalse(TEXT("Weapon Visual does not affect Navigation"), NPCDefaults->GetWeaponVisualComponent()->CanEverAffectNavigation());
+		TestTrue(TEXT("Muzzle marker is a child of the replaceable Weapon Visual"), NPCDefaults->GetWeaponMuzzleComponent()->GetAttachParent() == NPCDefaults->GetWeaponVisualComponent());
+	}
+	if (NPCDefaults)
+	{
+		TestNotNull(TEXT("Rifle has a temporary Manny fire Animation"), NPCDefaults->GetGreyboxFireAnimation(EDroneNPCWeaponType::Rifle));
+		TestNotNull(TEXT("Shotgun reuses a temporary Manny fire Animation"), NPCDefaults->GetGreyboxFireAnimation(EDroneNPCWeaponType::Shotgun));
+		TestNotNull(TEXT("Rifle has a temporary Manny reload Animation"), NPCDefaults->GetGreyboxReloadAnimation(EDroneNPCWeaponType::Rifle));
+		TestNotNull(TEXT("Shotgun reuses a temporary Manny reload Animation"), NPCDefaults->GetGreyboxReloadAnimation(EDroneNPCWeaponType::Shotgun));
+		TestNull(TEXT("Unarmed NPC has no fire Animation"), NPCDefaults->GetGreyboxFireAnimation(EDroneNPCWeaponType::Unarmed));
 	}
 
 	AActor* TargetActor = GetMutableDefault<AActor>();

@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 #include "GameplayTagContainer.h"
 #include "AI/DroneAITypes.h"
+#include "AI/Weapons/DroneNPCProjectile.h"
 #include "DroneSmartObjectStation.generated.h"
 
 class UArrowComponent;
@@ -93,8 +94,31 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG")
 	void ConfigureMGTurretDamageGreybox(float InDamage);
 
+	/** true면 회피 가능한 Projectile, false면 기존 즉시 Trace를 사용한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG|Projectile")
+	void ConfigureMGTurretProjectileGreybox(bool bInUseProjectileBallistics, float InProjectileSpeed);
+
+	/** 0도면 정확 사격, 값이 커질수록 목표 중심 주위 원뿔 내부로 무작위 사격한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|MG|Accuracy")
+	void ConfigureMGTurretAccuracyGreybox(float InSpreadHalfAngleDegrees);
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
 	float GetMGTurretDamage() const { return MGTurretDamage; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG|Projectile")
+	bool UsesMGTurretProjectileBallistics() const { return bUseMGTurretProjectileBallistics; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG|Projectile")
+	float GetMGTurretProjectileSpeed() const { return MGTurretProjectileSpeed; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG|Accuracy")
+	float GetMGTurretSpreadHalfAngleDegrees() const { return MGTurretSpreadHalfAngleDegrees; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG|Projectile|Debug")
+	int32 GetMGTurretProjectileSpawnCount() const { return MGTurretProjectileSpawnCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG|Projectile|Debug")
+	ADroneNPCProjectile* GetLastMGTurretProjectile() const { return LastMGTurretProjectile.Get(); }
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
 	bool IsMGTurretInUse() const { return bMGTurretInUse && MGTurretUser.IsValid(); }
@@ -167,6 +191,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|MG", meta=(ForceUnits="cm"))
 	FVector MGTurretMuzzleOffset = FVector(100.0f, 0.0f, 120.0f);
 
+	/** 역할 Blueprint의 Details에서 조정하는 MG 사격 원뿔 반각이다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Accuracy", meta=(ClampMin="0.0", ClampMax="45.0", ForceUnits="deg"))
+	float MGTurretSpreadHalfAngleDegrees = 3.5f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Debug")
 	bool bDrawMGTurretDebugTrace = true;
 
@@ -194,5 +222,30 @@ protected:
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Debug")
 	int32 MGTurretTargetHitCount = 0;
 
+	/** true가 Gameplay 기본값이고 false는 기존 Trace 비교·회귀 테스트용이다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Projectile")
+	bool bUseMGTurretProjectileBallistics = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Projectile")
+	TSubclassOf<ADroneNPCProjectile> MGTurretProjectileClass;
+
+	/** 60m에서 약 1.09초가 걸리는 회피 가능한 MG Greybox 탄속이다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Projectile", meta=(ClampMin="1.0", ForceUnits="cm/s"))
+	float MGTurretProjectileSpeed = 5500.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Projectile|Debug")
+	int32 MGTurretProjectileSpawnCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG|Projectile|Debug")
+	TWeakObjectPtr<ADroneNPCProjectile> LastMGTurretProjectile;
+
 	double LastMGTurretShotTimeSeconds = -DBL_MAX;
+
+private:
+	UFUNCTION()
+	void HandleMGTurretProjectileImpact(
+		ADroneNPCProjectile* Projectile,
+		EDroneNPCProjectileSource Source,
+		AActor* HitActor,
+		bool bHitIntendedTarget);
 };

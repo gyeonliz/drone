@@ -110,6 +110,14 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
 	int32 GetDroneLostCount() const { return DroneLostCount; }
 
+	/** Sight가 잠깐 끊겨 DroneLost 확정을 기다리는 중인지 확인한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	bool IsDroneSightLossPending() const { return PendingLostDrone.IsValid(); }
+
+	/** 짧은 가림·회전에 의한 Sight 깜빡임을 무시하는 기본 유예 시간이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	float GetDroneSightLossGracePeriod() const { return DroneSightLossGracePeriod; }
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
 	int32 GetDroneSearchStartCount() const { return DroneSearchStartCount; }
 
@@ -255,6 +263,15 @@ protected:
 	UFUNCTION()
 	void HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
 
+	/** 실패 Sight 자극을 즉시 상태 전환하지 않고 잠시 보류한다. */
+	void QueueDroneLostConfirmation(AActor* Actor);
+
+	/** 같은 Drone이 유예 시간 안에 다시 보이면 보류 중인 Lost를 취소한다. */
+	void CancelPendingDroneLost();
+
+	/** 유예 시간 뒤에도 보이지 않을 때만 전투 자원을 정리하고 DroneLost Event를 보낸다. */
+	void ConfirmPendingDroneLost();
+
 	UDroneNPCProfileComponent* GetPossessedProfile() const;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Components")
@@ -286,6 +303,18 @@ protected:
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
 	int32 DroneLostCount = 0;
+
+	/**
+	 * AI가 MG·Cover로 이동하며 잠깐 등을 돌리거나 장애물에 가려져도 상태가 왕복하지 않게 한다.
+	 * 0이면 기존처럼 Sight 실패를 즉시 확정한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Perception", meta=(ClampMin="0.0", ForceUnits="s"))
+	float DroneSightLossGracePeriod = 1.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
+	TWeakObjectPtr<AActor> PendingLostDrone;
+
+	FTimerHandle DroneLostGraceTimerHandle;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
 	int32 DroneSearchStartCount = 0;

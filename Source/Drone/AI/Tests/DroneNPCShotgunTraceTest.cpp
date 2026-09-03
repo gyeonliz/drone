@@ -49,6 +49,8 @@ namespace
 		Weapon->RegisterComponent();
 		Weapon->ConfigureWeapon(EDroneNPCWeaponType::Shotgun);
 		Weapon->ConfigureShotgunGreybox(2000.0f, 1.0f, PelletCount, SpreadHalfAngleDegrees);
+		// 이 테스트는 새 Projectile 기본값과 별개로 남겨 둔 즉시 Pellet Trace 회귀 경계다.
+		Weapon->ConfigureProjectileBallisticsGreybox(false, 4500.0f, 3500.0f);
 		return Weapon;
 	}
 }
@@ -127,11 +129,23 @@ bool FDroneNPCShotgunTraceTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Spread Shotgun starts through the common Trigger"), SpreadWeapon->StartFire(Target, Target->GetActorLocation()));
 		const TArray<FVector>& TraceEnds = SpreadWeapon->GetLastShotgunPelletTraceEnds();
 		bool bFoundSeparatedPellet = false;
-		for (int32 Index = 1; Index < TraceEnds.Num(); ++Index)
+		bool bEveryPelletInsideCone = true;
+		const FVector CenterDirection = (Target->GetActorLocation() - Shooter->GetActorLocation()).GetSafeNormal();
+		for (int32 Index = 0; Index < TraceEnds.Num(); ++Index)
 		{
-			bFoundSeparatedPellet |= !TraceEnds[Index].Equals(TraceEnds[0], 1.0f);
+			if (Index > 0)
+			{
+				bFoundSeparatedPellet |= !TraceEnds[Index].Equals(TraceEnds[0], 1.0f);
+			}
+			const FVector PelletDirection = (TraceEnds[Index] - Shooter->GetActorLocation()).GetSafeNormal();
+			const float PelletAngleDegrees = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(
+				FVector::DotProduct(CenterDirection, PelletDirection),
+				-1.0f,
+				1.0f)));
+			bEveryPelletInsideCone &= PelletAngleDegrees <= 8.01f;
 		}
-		TestTrue(TEXT("Configured Spread produces separated Pellet endpoints"), bFoundSeparatedPellet);
+		TestTrue(TEXT("Configured Spread produces independently randomized Pellet endpoints"), bFoundSeparatedPellet);
+		TestTrue(TEXT("Every randomized Pellet remains inside the configured cone"), bEveryPelletInsideCone);
 		TestEqual(TEXT("Last Shotgun shell empties the magazine"), SpreadWeapon->GetCurrentMagazineAmmo(), 0);
 		TestFalse(TEXT("Empty Shotgun stops its repeating fire state"), SpreadWeapon->IsFiring());
 		TestFalse(TEXT("Empty Shotgun rejects another Trigger"), SpreadWeapon->StartFire(Target, Target->GetActorLocation()));
@@ -146,6 +160,7 @@ bool FDroneNPCShotgunTraceTest::RunTest(const FString& Parameters)
 	Rifle->RegisterComponent();
 	Rifle->ConfigureWeapon(EDroneNPCWeaponType::Rifle);
 	Rifle->ConfigureRifleGreybox(2000.0f, 1.0f);
+	Rifle->ConfigureProjectileBallisticsGreybox(false, 4500.0f, 3500.0f);
 	TestTrue(TEXT("Rifle keeps the common StartFire contract"), Rifle->StartFire(Target, Target->GetActorLocation()));
 	TestEqual(TEXT("Rifle does not execute Shotgun Volley code"), Rifle->GetShotgunVolleyAttemptCount(), 0);
 	Rifle->StopFire();

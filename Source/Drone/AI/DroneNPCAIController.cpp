@@ -14,6 +14,7 @@
 #include "Perception/AISense_Sight.h"
 #include "Prototype/DronePrototypePawn.h"
 #include "StateTree.h"
+#include "TimerManager.h"
 
 namespace
 {
@@ -66,6 +67,7 @@ void ADroneNPCAIController::BeginPlay()
 void ADroneNPCAIController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
+	CancelPendingDroneLost();
 	DetectedDrone.Reset();
 	ResponseState = EDroneNPCAIResponseState::Patrol;
 	bHasLastKnownDroneLocation = false;
@@ -136,6 +138,7 @@ void ADroneNPCAIController::TryStartAssignedStateTree()
 
 void ADroneNPCAIController::OnUnPossess()
 {
+	CancelPendingDroneLost();
 	StopPersonalWeaponFire();
 	StopMovement();
 	StopMGTurretOperation();
@@ -296,6 +299,7 @@ void ADroneNPCAIController::HandlePossessedPawnDeath()
 	}
 
 	// Slot을 먼저 Free로 돌려놓은 뒤 대기 중인 다른 MG 가능 NPC에게 재시도 Event를 보낸다.
+	CancelPendingDroneLost();
 	StopPersonalWeaponFire();
 	StopMovement();
 	StopMGTurretOperation();
@@ -351,6 +355,7 @@ void ADroneNPCAIController::HandleDetectedDroneDestroyed(AActor* DestroyedDrone)
 
 	// DroneLost와 달리 파괴된 표적의 마지막 위치를 Search하지 않는다. 전투 자원을
 	// 즉시 정리한 뒤 기존 DroneLost 전환을 사용해 Search 실패 -> Patrol로 복귀시킨다.
+	CancelPendingDroneLost();
 	StopPersonalWeaponFire();
 	StopMovement();
 	StopMGTurretOperation();
@@ -774,6 +779,8 @@ void ADroneNPCAIController::HandleTargetPerceptionUpdated(AActor* Actor, const F
 
 	if (Stimulus.WasSuccessfullySensed())
 	{
+		// 순간 가림 뒤 같은 Drone을 다시 본 경우 Lost Event를 만들지 않는다.
+		CancelPendingDroneLost();
 		const bool bWasAlreadyDetected = DetectedDrone.Get() == Actor;
 		DetectedDrone = Actor;
 		LastKnownDroneLocation = Actor->GetActorLocation();
@@ -793,20 +800,76 @@ void ADroneNPCAIController::HandleTargetPerceptionUpdated(AActor* Actor, const F
 	}
 	else if (DetectedDrone.Get() == Actor)
 	{
-		LastKnownDroneLocation = Actor->GetActorLocation();
-		bHasLastKnownDroneLocation = true;
-		StopPersonalWeaponFire();
-		StopMovement();
-		StopMGTurretOperation();
-		ReservationComponent->ReleaseReservation();
-		DetectedDrone.Reset();
-		++DroneLostCount;
-		if (StateTreeAIComponent->IsRunning())
-		{
-			StateTreeAIComponent->SendStateTreeEvent(DroneAITags::Event_DroneLost);
-		}
-		OnDronePerceptionChanged.Broadcast(Actor, false);
+		QueueDroneLostConfirmation(Actor);
 	}
+}
+
+void ADroneNPCAIController::QueueDroneLostConfirmation(AActor* Actor)
+{
+	if (!Actor || DetectedDrone.Get() != Actor || ResponseState == EDroneNPCAIResponseState::Dead)
+	{
+		return;
+	}
+
+	LastKnownDroneLocation = Actor->GetActorLocation();
+	bHasLastKnownDroneLocation = true;
+
+	// 같은 실패 자극이 여러 번 와도 Timer 하나만 유지한다.
+	if (PendingLostDrone.Get() == Actor && GetWorldTimerManager().IsTimerActive(DroneLostGraceTimerHandle))
+	{
+		return;
+	}
+
+	CancelPendingDroneLost();
+	PendingLostDrone = Actor;
+	if (DroneSightLossGracePeriod <= 0.0f)
+	{
+		ConfirmPendingDroneLost();
+		return;
+	}
+
+	GetWorldTimerManager().SetTimer(
+		DroneLostGraceTimerHandle,
+		this,
+		&ADroneNPCAIController::ConfirmPendingDroneLost,
+		DroneSightLossGracePeriod,
+		false);
+}
+
+void ADroneNPCAIController::CancelPendingDroneLost()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(DroneLostGraceTimerHandle);
+	}
+	PendingLostDrone.Reset();
+}
+
+void ADroneNPCAIController::ConfirmPendingDroneLost()
+{
+	AActor* LostActor = PendingLostDrone.Get();
+	if (!LostActor || DetectedDrone.Get() != LostActor || ResponseState == EDroneNPCAIResponseState::Dead)
+	{
+		CancelPendingDroneLost();
+		return;
+	}
+
+	// 성공 Sight Callback은 이 Timer보다 먼저/나중 어느 순서로 오더라도
+	// HandleTargetPerceptionUpdated에서 Timer를 취소하므로 여기서는 보류된 대상만 확정한다.
+	CancelPendingDroneLost();
+	LastKnownDroneLocation = LostActor->GetActorLocation();
+	bHasLastKnownDroneLocation = true;
+	StopPersonalWeaponFire();
+	StopMovement();
+	StopMGTurretOperation();
+	ReservationComponent->ReleaseReservation();
+	DetectedDrone.Reset();
+	++DroneLostCount;
+	if (StateTreeAIComponent->IsRunning())
+	{
+		StateTreeAIComponent->SendStateTreeEvent(DroneAITags::Event_DroneLost);
+	}
+	OnDronePerceptionChanged.Broadcast(LostActor, false);
 }
 
 UDroneNPCProfileComponent* ADroneNPCAIController::GetPossessedProfile() const

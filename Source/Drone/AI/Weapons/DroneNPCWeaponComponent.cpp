@@ -23,11 +23,28 @@ AController* ResolveDamageInstigator(AActor* OwnerActor)
 	const APawn* OwnerPawn = Cast<APawn>(OwnerActor);
 	return OwnerPawn ? OwnerPawn->GetController() : nullptr;
 }
+
+/**
+ * 조준 중심을 축으로 하는 원뿔 내부에서 이번 탄환의 방향을 하나 고른다.
+ * 반각 0도는 자동화와 정확 사격 설정을 위해 중심 방향을 그대로 반환한다.
+ */
+FVector MakeRandomShotDirection(const FVector& CenterDirection, const float SpreadHalfAngleDegrees)
+{
+	const FVector SafeCenterDirection = CenterDirection.GetSafeNormal();
+	const float SafeSpreadDegrees = FMath::Clamp(SpreadHalfAngleDegrees, 0.0f, 45.0f);
+	if (SafeCenterDirection.IsNearlyZero() || SafeSpreadDegrees <= UE_SMALL_NUMBER)
+	{
+		return SafeCenterDirection;
+	}
+
+	return FMath::VRandCone(SafeCenterDirection, FMath::DegreesToRadians(SafeSpreadDegrees));
+}
 }
 
 UDroneNPCWeaponComponent::UDroneNPCWeaponComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
+	ProjectileClass = ADroneNPCProjectile::StaticClass();
 }
 
 void UDroneNPCWeaponComponent::ConfigureWeapon(const EDroneNPCWeaponType InWeaponType)
@@ -40,10 +57,13 @@ void UDroneNPCWeaponComponent::ConfigureWeapon(const EDroneNPCWeaponType InWeapo
 	LastRifleHitActor.Reset();
 	LastRifleTraceStart = FVector::ZeroVector;
 	LastRifleTraceEnd = FVector::ZeroVector;
+	RifleProjectileSpawnCount = 0;
 	LastRifleShotTimeSeconds = -DBL_MAX;
 	ShotgunVolleyAttemptCount = 0;
 	ShotgunPelletTraceCount = 0;
 	ShotgunTargetHitPelletCount = 0;
+	ShotgunProjectileSpawnCount = 0;
+	LastSpawnedProjectile.Reset();
 	LastShotgunPelletTraceEnds.Reset();
 	LastShotgunVolleyTimeSeconds = -DBL_MAX;
 }
@@ -66,6 +86,24 @@ void UDroneNPCWeaponComponent::ConfigureShotgunGreybox(
 	ShotgunCooldownSeconds = FMath::Max(0.01f, InCooldownSeconds);
 	ShotgunPelletCount = FMath::Clamp(InPelletCount, 1, 64);
 	ShotgunSpreadHalfAngleDegrees = FMath::Clamp(InSpreadHalfAngleDegrees, 0.0f, 45.0f);
+}
+
+void UDroneNPCWeaponComponent::ConfigureAccuracyGreybox(
+	const float InRifleSpreadHalfAngleDegrees,
+	const float InShotgunSpreadHalfAngleDegrees)
+{
+	RifleSpreadHalfAngleDegrees = FMath::Clamp(InRifleSpreadHalfAngleDegrees, 0.0f, 45.0f);
+	ShotgunSpreadHalfAngleDegrees = FMath::Clamp(InShotgunSpreadHalfAngleDegrees, 0.0f, 45.0f);
+}
+
+void UDroneNPCWeaponComponent::ConfigureProjectileBallisticsGreybox(
+	const bool bInUseProjectileBallistics,
+	const float InRifleProjectileSpeed,
+	const float InShotgunProjectileSpeed)
+{
+	bUseProjectileBallistics = bInUseProjectileBallistics;
+	RifleProjectileSpeed = FMath::Max(1.0f, InRifleProjectileSpeed);
+	ShotgunProjectileSpeed = FMath::Max(1.0f, InShotgunProjectileSpeed);
 }
 
 void UDroneNPCWeaponComponent::ConfigureDamageGreybox(
@@ -140,7 +178,7 @@ bool UDroneNPCWeaponComponent::StartFire(AActor* TargetActor, const FVector AimP
 
 	if (WeaponType == EDroneNPCWeaponType::Rifle)
 	{
-		TryFireRifleShot();
+		TryFireRifleRound();
 		if (bIsFiring)
 		{
 			if (UWorld* World = GetWorld())
@@ -156,7 +194,7 @@ bool UDroneNPCWeaponComponent::StartFire(AActor* TargetActor, const FVector AimP
 	}
 	else if (WeaponType == EDroneNPCWeaponType::Shotgun)
 	{
-		TryFireShotgunVolley();
+		TryFireShotgunRound();
 		if (bIsFiring)
 		{
 			if (UWorld* World = GetWorld())
@@ -205,6 +243,76 @@ bool UDroneNPCWeaponComponent::Reload()
 	return true;
 }
 
+bool UDroneNPCWeaponComponent::TryFireRifleRound()
+{
+	return bUseProjectileBallistics
+		? TryFireRifleProjectile()
+		: TryFireRifleShot();
+}
+
+bool UDroneNPCWeaponComponent::TryFireRifleProjectile()
+{
+	if (WeaponType != EDroneNPCWeaponType::Rifle || !bIsFiring)
+	{
+		return false;
+	}
+
+	AActor* TargetActor = CurrentTarget.Get();
+	AActor* OwnerActor = GetOwner();
+	UWorld* World = GetWorld();
+	if (!IsValid(TargetActor) || !IsValid(OwnerActor) || !World)
+	{
+		return false;
+	}
+
+	CurrentAimPoint = TargetActor->GetActorLocation();
+	if (!CanFire(TargetActor, CurrentAimPoint))
+	{
+		return false;
+	}
+
+	const double CurrentTimeSeconds = World->GetTimeSeconds();
+	if (CurrentTimeSeconds - LastRifleShotTimeSeconds + UE_DOUBLE_SMALL_NUMBER < RifleCooldownSeconds)
+	{
+		return false;
+	}
+
+	FVector SpawnLocation = FVector::ZeroVector;
+	FRotator ViewRotation = FRotator::ZeroRotator;
+	OwnerActor->GetActorEyesViewPoint(SpawnLocation, ViewRotation);
+	const FVector CenterDirection = (CurrentAimPoint - SpawnLocation).GetSafeNormal();
+	if (CenterDirection.IsNearlyZero())
+	{
+		return false;
+	}
+	const FVector ShotDirection = MakeRandomShotDirection(CenterDirection, RifleSpreadHalfAngleDegrees);
+
+	ADroneNPCProjectile* Projectile = SpawnProjectile(
+		ProjectileClass,
+		EDroneNPCProjectileSource::Rifle,
+		TargetActor,
+		SpawnLocation,
+		ShotDirection,
+		RifleDamage,
+		RifleProjectileSpeed,
+		RifleRange);
+	if (!Projectile)
+	{
+		return false;
+	}
+
+	LastRifleShotTimeSeconds = CurrentTimeSeconds;
+	ConsumeMagazineRound();
+	++RifleProjectileSpawnCount;
+	++WeaponFiredEventCount;
+	OnWeaponFired.Broadcast(WeaponType, SpawnLocation, CurrentAimPoint);
+	if (!HasMagazineAmmo())
+	{
+		StopFire();
+	}
+	return true;
+}
+
 bool UDroneNPCWeaponComponent::TryFireRifleShot()
 {
 	if (WeaponType != EDroneNPCWeaponType::Rifle || !bIsFiring)
@@ -234,7 +342,13 @@ bool UDroneNPCWeaponComponent::TryFireRifleShot()
 
 	FRotator ViewRotation = FRotator::ZeroRotator;
 	OwnerActor->GetActorEyesViewPoint(LastRifleTraceStart, ViewRotation);
-	LastRifleTraceEnd = CurrentAimPoint;
+	const FVector CenterDirection = (CurrentAimPoint - LastRifleTraceStart).GetSafeNormal();
+	if (CenterDirection.IsNearlyZero())
+	{
+		return false;
+	}
+	const FVector ShotDirection = MakeRandomShotDirection(CenterDirection, RifleSpreadHalfAngleDegrees);
+	LastRifleTraceEnd = LastRifleTraceStart + ShotDirection * RifleRange;
 	LastRifleShotTimeSeconds = CurrentTimeSeconds;
 	ConsumeMagazineRound();
 	++RifleTraceAttemptCount;
@@ -304,7 +418,7 @@ void UDroneNPCWeaponComponent::HandleRifleFireTimer()
 		StopFire();
 		return;
 	}
-	TryFireRifleShot();
+	TryFireRifleRound();
 }
 
 void UDroneNPCWeaponComponent::ClearRifleFireTimer()
@@ -327,6 +441,93 @@ bool UDroneNPCWeaponComponent::IsRifleTargetInRange(
 	}
 	return IsValid(TargetActor)
 		&& FVector::DistSquared(OwnerActor->GetActorLocation(), AimPoint) <= FMath::Square(RifleRange);
+}
+
+bool UDroneNPCWeaponComponent::TryFireShotgunRound()
+{
+	return bUseProjectileBallistics
+		? TryFireShotgunProjectileVolley()
+		: TryFireShotgunVolley();
+}
+
+bool UDroneNPCWeaponComponent::TryFireShotgunProjectileVolley()
+{
+	if (WeaponType != EDroneNPCWeaponType::Shotgun || !bIsFiring)
+	{
+		return false;
+	}
+
+	AActor* TargetActor = CurrentTarget.Get();
+	AActor* OwnerActor = GetOwner();
+	UWorld* World = GetWorld();
+	if (!IsValid(TargetActor) || !IsValid(OwnerActor) || !World)
+	{
+		return false;
+	}
+
+	CurrentAimPoint = TargetActor->GetActorLocation();
+	if (!CanFire(TargetActor, CurrentAimPoint))
+	{
+		return false;
+	}
+
+	const double CurrentTimeSeconds = World->GetTimeSeconds();
+	if (CurrentTimeSeconds - LastShotgunVolleyTimeSeconds + UE_DOUBLE_SMALL_NUMBER < ShotgunCooldownSeconds)
+	{
+		return false;
+	}
+
+	FVector SpawnLocation = FVector::ZeroVector;
+	FRotator ViewRotation = FRotator::ZeroRotator;
+	OwnerActor->GetActorEyesViewPoint(SpawnLocation, ViewRotation);
+	const FVector CenterDirection = (CurrentAimPoint - SpawnLocation).GetSafeNormal();
+	if (CenterDirection.IsNearlyZero())
+	{
+		return false;
+	}
+
+	const int32 SafePelletCount = FMath::Clamp(ShotgunPelletCount, 1, 64);
+
+	int32 SpawnedProjectileCount = 0;
+	LastShotgunPelletTraceEnds.Reset(SafePelletCount);
+	for (int32 PelletIndex = 0; PelletIndex < SafePelletCount; ++PelletIndex)
+	{
+		// 중앙 명중을 보장하지 않는다. 모든 Pellet이 같은 원뿔 내부에서 독립적으로 방향을 고른다.
+		const FVector PelletDirection = MakeRandomShotDirection(
+			CenterDirection,
+			ShotgunSpreadHalfAngleDegrees);
+
+		LastShotgunPelletTraceEnds.Add(SpawnLocation + PelletDirection * ShotgunRange);
+		if (SpawnProjectile(
+			ProjectileClass,
+			EDroneNPCProjectileSource::Shotgun,
+			TargetActor,
+			SpawnLocation,
+			PelletDirection,
+			ShotgunDamagePerPellet,
+			ShotgunProjectileSpeed,
+			ShotgunRange))
+		{
+			++SpawnedProjectileCount;
+		}
+	}
+
+	if (SpawnedProjectileCount == 0)
+	{
+		return false;
+	}
+
+	LastShotgunVolleyTimeSeconds = CurrentTimeSeconds;
+	ConsumeMagazineRound();
+	++ShotgunVolleyAttemptCount;
+	ShotgunProjectileSpawnCount += SpawnedProjectileCount;
+	++WeaponFiredEventCount;
+	OnWeaponFired.Broadcast(WeaponType, SpawnLocation, CurrentAimPoint);
+	if (!HasMagazineAmmo())
+	{
+		StopFire();
+	}
+	return true;
 }
 
 bool UDroneNPCWeaponComponent::TryFireShotgunVolley()
@@ -365,12 +566,6 @@ bool UDroneNPCWeaponComponent::TryFireShotgunVolley()
 		return false;
 	}
 
-	FVector SpreadRight = FVector::RightVector;
-	FVector SpreadUp = FVector::UpVector;
-	AimDirection.FindBestAxisVectors(SpreadRight, SpreadUp);
-	const float SpreadRadians = FMath::DegreesToRadians(ShotgunSpreadHalfAngleDegrees);
-	const float SpreadCos = FMath::Cos(SpreadRadians);
-	const float SpreadSin = FMath::Sin(SpreadRadians);
 	const int32 SafePelletCount = FMath::Clamp(ShotgunPelletCount, 1, 64);
 
 	LastShotgunVolleyTimeSeconds = CurrentTimeSeconds;
@@ -383,18 +578,9 @@ bool UDroneNPCWeaponComponent::TryFireShotgunVolley()
 	QueryParams.AddIgnoredActor(OwnerActor);
 	for (int32 PelletIndex = 0; PelletIndex < SafePelletCount; ++PelletIndex)
 	{
-		FVector PelletDirection = AimDirection;
-		if (PelletIndex > 0 && SpreadRadians > UE_SMALL_NUMBER)
-		{
-			// 첫 Pellet은 정확히 중앙, 나머지는 원뿔 가장자리에 균등 배치해
-			// 자동화와 실제 Greybox 결과가 실행마다 동일하게 재현되도록 한다.
-			const int32 SpreadPelletCount = FMath::Max(1, SafePelletCount - 1);
-			const float Azimuth = 2.0f * UE_PI * static_cast<float>(PelletIndex - 1)
-				/ static_cast<float>(SpreadPelletCount);
-			const FVector RadialDirection = SpreadRight * FMath::Cos(Azimuth)
-				+ SpreadUp * FMath::Sin(Azimuth);
-			PelletDirection = (AimDirection * SpreadCos + RadialDirection * SpreadSin).GetSafeNormal();
-		}
+		const FVector PelletDirection = MakeRandomShotDirection(
+			AimDirection,
+			ShotgunSpreadHalfAngleDegrees);
 
 		const FVector TraceEnd = TraceStart + PelletDirection * ShotgunRange;
 		LastShotgunPelletTraceEnds.Add(TraceEnd);
@@ -455,7 +641,72 @@ void UDroneNPCWeaponComponent::HandleShotgunFireTimer()
 		StopFire();
 		return;
 	}
-	TryFireShotgunVolley();
+	TryFireShotgunRound();
+}
+
+ADroneNPCProjectile* UDroneNPCWeaponComponent::SpawnProjectile(
+	const TSubclassOf<ADroneNPCProjectile> InProjectileClass,
+	const EDroneNPCProjectileSource ProjectileSource,
+	AActor* TargetActor,
+	const FVector& SpawnLocation,
+	const FVector& Direction,
+	const float Damage,
+	const float Speed,
+	const float MaxTravelDistance)
+{
+	AActor* OwnerActor = GetOwner();
+	UWorld* World = GetWorld();
+	if (!OwnerActor || !World || !IsValid(TargetActor) || Direction.IsNearlyZero())
+	{
+		return nullptr;
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = OwnerActor;
+	SpawnParameters.Instigator = Cast<APawn>(OwnerActor);
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	UClass* ResolvedProjectileClass = InProjectileClass
+		? InProjectileClass.Get()
+		: ADroneNPCProjectile::StaticClass();
+	ADroneNPCProjectile* Projectile = World->SpawnActor<ADroneNPCProjectile>(
+		ResolvedProjectileClass,
+		SpawnLocation,
+		Direction.Rotation(),
+		SpawnParameters);
+	if (!Projectile)
+	{
+		return nullptr;
+	}
+
+	Projectile->InitializeProjectile(
+		ProjectileSource,
+		TargetActor,
+		Damage,
+		Speed,
+		MaxTravelDistance);
+	Projectile->OnProjectileImpact.AddDynamic(this, &UDroneNPCWeaponComponent::HandleProjectileImpact);
+	LastSpawnedProjectile = Projectile;
+	return Projectile;
+}
+
+void UDroneNPCWeaponComponent::HandleProjectileImpact(
+	ADroneNPCProjectile* Projectile,
+	const EDroneNPCProjectileSource Source,
+	AActor* HitActor,
+	const bool bHitIntendedTarget)
+{
+	if (Source == EDroneNPCProjectileSource::Rifle)
+	{
+		LastRifleHitActor = HitActor;
+		if (bHitIntendedTarget)
+		{
+			++RifleTargetHitCount;
+		}
+	}
+	else if (Source == EDroneNPCProjectileSource::Shotgun && bHitIntendedTarget)
+	{
+		++ShotgunTargetHitPelletCount;
+	}
 }
 
 void UDroneNPCWeaponComponent::ClearShotgunFireTimer()

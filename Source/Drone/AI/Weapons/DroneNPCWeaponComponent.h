@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "AI/DroneAITypes.h"
+#include "AI/Weapons/DroneNPCProjectile.h"
 #include "TimerManager.h"
 #include "DroneNPCWeaponComponent.generated.h"
 
@@ -23,7 +24,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
 /**
  * Rifle과 Shotgun AI가 공유하는 최소 무기 호출 계약이다.
  *
- * 공용 표적·조준점 계약 뒤에 Rifle 단일 Trace와 Shotgun 다중 Pellet Trace를 제공한다.
+ * 공용 표적·조준점 계약 뒤에 회피 가능한 Projectile 발사를 기본으로 제공한다.
+ * 기존 Rifle 단일 Trace와 Shotgun 다중 Pellet Trace는 비교·자동화용 선택 경계로 유지한다.
  * 현재 탄약은 예비 탄약 없이 탄창·즉시 Reload만 검증하는 Greybox이며 최종 표현과 분리한다.
  */
 UCLASS(ClassGroup=(DroneAI), BlueprintType, meta=(BlueprintSpawnableComponent))
@@ -56,6 +58,25 @@ public:
 		float InCooldownSeconds,
 		int32 InPelletCount,
 		float InSpreadHalfAngleDegrees);
+
+	/**
+	 * 개인 무기 명중률을 결정하는 원뿔 반각을 설정한다.
+	 * 0도면 조준점으로 정확히 발사하고 값이 커질수록 원뿔 내부의 무작위 방향으로 더 넓게 퍼진다.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Accuracy")
+	void ConfigureAccuracyGreybox(
+		float InRifleSpreadHalfAngleDegrees,
+		float InShotgunSpreadHalfAngleDegrees);
+
+	/**
+	 * true면 실제 이동 Projectile, false면 기존 즉시 Trace를 사용한다.
+	 * 기본 탄속은 Rifle 4500, Shotgun 3500, MG 5500 cm/s이며 여기서는 개인 무기 두 종류만 설정한다.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Projectile")
+	void ConfigureProjectileBallisticsGreybox(
+		bool bInUseProjectileBallistics,
+		float InRifleProjectileSpeed,
+		float InShotgunProjectileSpeed);
 
 	/** 현재 회색상자 피해량만 따로 조정한다. 기본값은 Rifle 10, Shotgun Pellet당 8이다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Damage")
@@ -106,6 +127,24 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon")
 	FVector GetCurrentAimPoint() const { return CurrentAimPoint; }
 
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Projectile")
+	bool UsesProjectileBallistics() const { return bUseProjectileBallistics; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Projectile")
+	float GetRifleProjectileSpeed() const { return RifleProjectileSpeed; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Projectile")
+	float GetShotgunProjectileSpeed() const { return ShotgunProjectileSpeed; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Projectile|Debug")
+	int32 GetRifleProjectileSpawnCount() const { return RifleProjectileSpawnCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Projectile|Debug")
+	int32 GetShotgunProjectileSpawnCount() const { return ShotgunProjectileSpawnCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Projectile|Debug")
+	ADroneNPCProjectile* GetLastSpawnedProjectile() const { return LastSpawnedProjectile.Get(); }
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Debug")
 	int32 GetFireRequestCount() const { return FireRequestCount; }
 
@@ -127,7 +166,7 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Debug")
 	int32 GetReloadCompletedEventCount() const { return ReloadCompletedEventCount; }
 
-	/** 현재 Target을 향해 Cooldown이 허용한 Rifle 단일 Trace를 한 번 시도한다. */
+	/** 비교·테스트용 즉시 Rifle Trace다. 일반 StartFire는 현재 Ballistics 설정에 따라 분기한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Rifle")
 	bool TryFireRifleShot();
 
@@ -136,6 +175,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Rifle")
 	float GetRifleCooldownSeconds() const { return RifleCooldownSeconds; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Rifle")
+	float GetRifleSpreadHalfAngleDegrees() const { return RifleSpreadHalfAngleDegrees; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Rifle|Debug")
 	int32 GetRifleTraceAttemptCount() const { return RifleTraceAttemptCount; }
@@ -152,7 +194,7 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Rifle|Debug")
 	FVector GetLastRifleTraceEnd() const { return LastRifleTraceEnd; }
 
-	/** 현재 Target을 향해 Cooldown이 허용한 Shotgun Pellet 묶음을 한 번 발사한다. */
+	/** 비교·테스트용 즉시 Shotgun Trace 묶음이다. 일반 StartFire는 현재 Ballistics 설정에 따라 분기한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Shotgun")
 	bool TryFireShotgunVolley();
 
@@ -184,12 +226,33 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	bool TryFireRifleRound();
+	bool TryFireRifleProjectile();
 	void HandleRifleFireTimer();
 	void ClearRifleFireTimer();
 	bool IsRifleTargetInRange(AActor* TargetActor, const FVector& AimPoint) const;
+	bool TryFireShotgunRound();
+	bool TryFireShotgunProjectileVolley();
 	void HandleShotgunFireTimer();
 	void ClearShotgunFireTimer();
 	bool IsShotgunTargetInRange(AActor* TargetActor, const FVector& AimPoint) const;
+	ADroneNPCProjectile* SpawnProjectile(
+		TSubclassOf<ADroneNPCProjectile> InProjectileClass,
+		EDroneNPCProjectileSource ProjectileSource,
+		AActor* TargetActor,
+		const FVector& SpawnLocation,
+		const FVector& Direction,
+		float Damage,
+		float Speed,
+		float MaxTravelDistance);
+
+	UFUNCTION()
+	void HandleProjectileImpact(
+		ADroneNPCProjectile* Projectile,
+		EDroneNPCProjectileSource Source,
+		AActor* HitActor,
+		bool bHitIntendedTarget);
+
 	void ConsumeMagazineRound();
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon")
@@ -203,6 +266,31 @@ private:
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon")
 	bool bIsFiring = false;
+
+	/** true가 실제 Gameplay 기본값이다. false는 기존 Trace 회귀 테스트와 비교 플레이용이다. */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Projectile")
+	bool bUseProjectileBallistics = true;
+
+	/** Asset을 지정하지 않아도 Native Greybox Projectile이 Spawn된다. */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Projectile")
+	TSubclassOf<ADroneNPCProjectile> ProjectileClass;
+
+	/** 40m에서 약 0.89초가 걸리는 회피 가능한 Rifle Greybox 탄속이다. */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Projectile", meta=(ClampMin="1.0", ForceUnits="cm/s"))
+	float RifleProjectileSpeed = 4500.0f;
+
+	/** Shotgun은 근거리 위협을 유지하면서도 이동 중인 Drone이 피할 수 있게 Rifle보다 느리다. */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Projectile", meta=(ClampMin="1.0", ForceUnits="cm/s"))
+	float ShotgunProjectileSpeed = 3500.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Projectile Debug")
+	int32 RifleProjectileSpawnCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Projectile Debug")
+	int32 ShotgunProjectileSpawnCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Projectile Debug")
+	TWeakObjectPtr<ADroneNPCProjectile> LastSpawnedProjectile;
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Debug")
 	int32 FireRequestCount = 0;
@@ -246,6 +334,13 @@ private:
 	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Rifle", meta=(ClampMin="0.01", ForceUnits="s"))
 	float RifleCooldownSeconds = 0.25f;
 
+	/**
+	 * 소총 한 발이 목표 중심 주위에서 벗어날 수 있는 원뿔 반각이다.
+	 * 역할 Blueprint의 NPCWeaponComponent에서 조정하며 0이면 정확히 조준점으로 발사한다.
+	 */
+	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Rifle", meta=(ClampMin="0.0", ClampMax="45.0", ForceUnits="deg"))
+	float RifleSpreadHalfAngleDegrees = 2.5f;
+
 	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Rifle Debug")
 	bool bDrawRifleDebugTrace = true;
 
@@ -282,7 +377,7 @@ private:
 	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Shotgun", meta=(ClampMin="1", ClampMax="64"))
 	int32 ShotgunPelletCount = 8;
 
-	/** 중심 Pellet을 제외한 Pellet이 퍼지는 원뿔 반각이다. */
+	/** 모든 Pellet이 무작위로 퍼지는 원뿔 반각이다. 0이면 모든 Pellet이 조준점으로 향한다. */
 	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Shotgun", meta=(ClampMin="0.0", ClampMax="45.0", ForceUnits="deg"))
 	float ShotgunSpreadHalfAngleDegrees = 6.0f;
 

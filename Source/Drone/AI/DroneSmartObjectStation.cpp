@@ -4,6 +4,7 @@
 #include "Components/ArrowComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/SphereComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
@@ -23,11 +24,26 @@ bool IsLivingStationActor(const AActor* Actor)
 	const UDroneHealthComponent* Health = Actor->FindComponentByClass<UDroneHealthComponent>();
 	return !Health || !Health->IsDead();
 }
+
+FVector MakeRandomMGTurretShotDirection(
+	const FVector& CenterDirection,
+	const float SpreadHalfAngleDegrees)
+{
+	const FVector SafeCenterDirection = CenterDirection.GetSafeNormal();
+	const float SafeSpreadDegrees = FMath::Clamp(SpreadHalfAngleDegrees, 0.0f, 45.0f);
+	if (SafeCenterDirection.IsNearlyZero() || SafeSpreadDegrees <= UE_SMALL_NUMBER)
+	{
+		return SafeCenterDirection;
+	}
+
+	return FMath::VRandCone(SafeCenterDirection, FMath::DegreesToRadians(SafeSpreadDegrees));
+}
 }
 
 ADroneSmartObjectStation::ADroneSmartObjectStation()
 {
 	PrimaryActorTick.bCanEverTick = false;
+	MGTurretProjectileClass = ADroneNPCProjectile::StaticClass();
 
 	StationRoot = CreateDefaultSubobject<USceneComponent>(TEXT("StationRoot"));
 	SetRootComponent(StationRoot);
@@ -149,6 +165,10 @@ bool ADroneSmartObjectStation::UpdateMGTurretUse(AActor* UserActor, AActor* Targ
 	{
 		return false;
 	}
+	// Pivot은 목표 중심을 계속 바라보되 실제 탄환만 설정된 원뿔 안에서 흔들리게 한다.
+	const FVector ShotDirection = MakeRandomMGTurretShotDirection(
+		AimDirection,
+		MGTurretSpreadHalfAngleDegrees);
 
 	const double CurrentTimeSeconds = World->GetTimeSeconds();
 	if (CurrentTimeSeconds - LastMGTurretShotTimeSeconds + UE_DOUBLE_SMALL_NUMBER < MGTurretCooldownSeconds)
@@ -156,9 +176,45 @@ bool ADroneSmartObjectStation::UpdateMGTurretUse(AActor* UserActor, AActor* Targ
 		return true;
 	}
 
+	const FVector TraceEnd = TraceStart + ShotDirection * MGTurretRange;
+	if (bUseMGTurretProjectileBallistics)
+	{
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.Owner = this;
+		SpawnParameters.Instigator = Cast<APawn>(UserActor);
+		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		UClass* ResolvedProjectileClass = MGTurretProjectileClass
+			? MGTurretProjectileClass.Get()
+			: ADroneNPCProjectile::StaticClass();
+		ADroneNPCProjectile* Projectile = World->SpawnActor<ADroneNPCProjectile>(
+			ResolvedProjectileClass,
+			TraceStart,
+			ShotDirection.Rotation(),
+			SpawnParameters);
+		if (!Projectile)
+		{
+			return true;
+		}
+
+		Projectile->InitializeProjectile(
+			EDroneNPCProjectileSource::MGTurret,
+			TargetActor,
+			MGTurretDamage,
+			MGTurretProjectileSpeed,
+			MGTurretRange);
+		Projectile->GetCollisionComponent()->IgnoreActorWhenMoving(UserActor, true);
+		Projectile->OnProjectileImpact.AddDynamic(
+			this,
+			&ADroneSmartObjectStation::HandleMGTurretProjectileImpact);
+		LastMGTurretProjectile = Projectile;
+		LastMGTurretShotTimeSeconds = CurrentTimeSeconds;
+		++MGTurretProjectileSpawnCount;
+		OnMGTurretShot.Broadcast(TraceStart, TraceEnd, nullptr);
+		return true;
+	}
+
 	LastMGTurretShotTimeSeconds = CurrentTimeSeconds;
 	++MGTurretTraceAttemptCount;
-	const FVector TraceEnd = TraceStart + AimDirection * MGTurretRange;
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(DroneMGTurretTrace), true, this);
 	QueryParams.AddIgnoredActor(this);
 	QueryParams.AddIgnoredActor(UserActor);
@@ -228,6 +284,32 @@ void ADroneSmartObjectStation::ConfigureMGTurretGreybox(
 void ADroneSmartObjectStation::ConfigureMGTurretDamageGreybox(const float InDamage)
 {
 	MGTurretDamage = FMath::Max(0.0f, InDamage);
+}
+
+void ADroneSmartObjectStation::ConfigureMGTurretProjectileGreybox(
+	const bool bInUseProjectileBallistics,
+	const float InProjectileSpeed)
+{
+	bUseMGTurretProjectileBallistics = bInUseProjectileBallistics;
+	MGTurretProjectileSpeed = FMath::Max(1.0f, InProjectileSpeed);
+}
+
+void ADroneSmartObjectStation::ConfigureMGTurretAccuracyGreybox(
+	const float InSpreadHalfAngleDegrees)
+{
+	MGTurretSpreadHalfAngleDegrees = FMath::Clamp(InSpreadHalfAngleDegrees, 0.0f, 45.0f);
+}
+
+void ADroneSmartObjectStation::HandleMGTurretProjectileImpact(
+	ADroneNPCProjectile* Projectile,
+	const EDroneNPCProjectileSource Source,
+	AActor* HitActor,
+	const bool bHitIntendedTarget)
+{
+	if (Source == EDroneNPCProjectileSource::MGTurret && bHitIntendedTarget)
+	{
+		++MGTurretTargetHitCount;
+	}
 }
 
 void ADroneSmartObjectStation::EndPlay(const EEndPlayReason::Type EndPlayReason)

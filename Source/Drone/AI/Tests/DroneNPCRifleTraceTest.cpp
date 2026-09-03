@@ -45,6 +45,10 @@ namespace
 		Weapon->RegisterComponent();
 		Weapon->ConfigureWeapon(EDroneNPCWeaponType::Rifle);
 		Weapon->ConfigureRifleGreybox(2000.0f, 1.0f);
+		// 명중·차폐 계약 자체를 보는 테스트이므로 이 구간은 의도적으로 정확 사격을 사용한다.
+		Weapon->ConfigureAccuracyGreybox(0.0f, 0.0f);
+		// 이 테스트는 새 Projectile 기본값과 별개로 남겨 둔 즉시 Trace 회귀 경계를 검증한다.
+		Weapon->ConfigureProjectileBallisticsGreybox(false, 4500.0f, 3500.0f);
 		return Weapon;
 	}
 }
@@ -116,6 +120,28 @@ bool FDroneNPCRifleTraceTest::RunTest(const FString& Parameters)
 	}
 
 	Target->SetActorLocation(FVector(1000.0f, 0.0f, 100.0f));
+	UDroneNPCWeaponComponent* SpreadWeapon = AddRifleTestWeapon(Shooter, TEXT("SpreadRifleWeapon"));
+	TestNotNull(TEXT("Spread Rifle Weapon exists"), SpreadWeapon);
+	if (SpreadWeapon)
+	{
+		constexpr float RequestedSpreadDegrees = 12.0f;
+		SpreadWeapon->ConfigureAccuracyGreybox(RequestedSpreadDegrees, 6.0f);
+		SpreadWeapon->ConfigureMagazineGreybox(1, 8);
+		TestTrue(TEXT("Spread Rifle accepts a firing request"), SpreadWeapon->StartFire(Target, Target->GetActorLocation()));
+		TestEqual(TEXT("Spread Rifle performs one Trace"), SpreadWeapon->GetRifleTraceAttemptCount(), 1);
+		TestEqual(TEXT("Rifle Spread is exposed through its getter"), SpreadWeapon->GetRifleSpreadHalfAngleDegrees(), RequestedSpreadDegrees);
+
+		const FVector CenterDirection = (Target->GetActorLocation() - SpreadWeapon->GetLastRifleTraceStart()).GetSafeNormal();
+		const FVector ShotDirection = (SpreadWeapon->GetLastRifleTraceEnd() - SpreadWeapon->GetLastRifleTraceStart()).GetSafeNormal();
+		const float ShotAngleDegrees = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(
+			FVector::DotProduct(CenterDirection, ShotDirection),
+			-1.0f,
+			1.0f)));
+		TestTrue(TEXT("Random Rifle shot remains inside its configured cone"), ShotAngleDegrees <= RequestedSpreadDegrees + 0.01f);
+		TestTrue(TEXT("Non-zero Rifle Spread moves this shot away from the exact center"), ShotAngleDegrees > 0.001f);
+		SpreadWeapon->StopFire();
+	}
+
 	UDroneNPCWeaponComponent* OneRoundWeapon = AddRifleTestWeapon(Shooter, TEXT("OneRoundRifleWeapon"));
 	if (OneRoundWeapon)
 	{
@@ -136,6 +162,7 @@ bool FDroneNPCRifleTraceTest::RunTest(const FString& Parameters)
 	Shooter->AddInstanceComponent(Shotgun);
 	Shotgun->RegisterComponent();
 	Shotgun->ConfigureWeapon(EDroneNPCWeaponType::Shotgun);
+	Shotgun->ConfigureProjectileBallisticsGreybox(false, 4500.0f, 3500.0f);
 	TestTrue(TEXT("Shotgun keeps the common StartFire contract"), Shotgun->StartFire(Target, Target->GetActorLocation()));
 	TestEqual(TEXT("Shotgun does not execute Rifle Trace code"), Shotgun->GetRifleTraceAttemptCount(), 0);
 	Shotgun->StopFire();

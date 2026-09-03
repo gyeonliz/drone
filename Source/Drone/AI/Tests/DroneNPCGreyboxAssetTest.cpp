@@ -14,6 +14,7 @@
 #include "AI/Weapons/DroneNPCWeaponComponent.h"
 #include "Prototype/DronePrototypePawn.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/BlendSpace.h"
 #include "Components/BoxComponent.h"
 #include "Components/StateTreeAIComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -53,6 +54,10 @@ constexpr const TCHAR* MannyMeshPath =
 	TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple");
 constexpr const TCHAR* UnarmedAnimClassPath =
 	TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed.ABP_Unarmed_C");
+constexpr const TCHAR* ArmedAnimClassPath =
+	TEXT("/Game/Drone/AI/Animation/ABP_NPC_Rifle_Greybox.ABP_NPC_Rifle_Greybox_C");
+constexpr const TCHAR* ArmedLocomotionBlendSpacePath =
+	TEXT("/Game/Drone/AI/Animation/BS_NPC_Rifle_Locomotion.BS_NPC_Rifle_Locomotion");
 constexpr const TCHAR* HostilePatrolStateTreePackage =
 	TEXT("/Game/Drone/AI/StateTrees/ST_NPC_HostilePatrol");
 constexpr const TCHAR* HostilePatrolStateTreeObjectPath =
@@ -257,6 +262,10 @@ public:
 		int32 HostileRifleCount = 0;
 		int32 HostileShotgunCount = 0;
 		int32 FriendlyCount = 0;
+		UClass* ArmedAnimClass = LoadClass<UAnimInstance>(nullptr, ArmedAnimClassPath);
+		UClass* UnarmedAnimClass = LoadClass<UAnimInstance>(nullptr, UnarmedAnimClassPath);
+		Test->TestNotNull(TEXT("PIE loads the project-owned armed Anim BP"), ArmedAnimClass);
+		Test->TestNotNull(TEXT("PIE loads the shared Unarmed Anim BP"), UnarmedAnimClass);
 		for (ADroneNPCCharacter* NPC : NPCs)
 		{
 			Test->TestNotNull(TEXT("Placed NPC exists in PIE"), NPC);
@@ -277,6 +286,12 @@ public:
 			}
 
 			const FDroneNPCProfile& Profile = ProfileComponent->GetProfile();
+			const UClass* ExpectedAnimClass = Profile.WeaponType == EDroneNPCWeaponType::Unarmed
+				? UnarmedAnimClass
+				: ArmedAnimClass;
+			Test->TestTrue(
+				TEXT("Placed PIE NPC uses the role-appropriate Anim BP"),
+				NPC->GetMesh() && NPC->GetMesh()->GetAnimClass() == ExpectedAnimClass);
 			Test->TestTrue(TEXT("Controller exposes the possessed common Weapon Component"), Controller->GetPossessedWeaponComponent() == WeaponComponent);
 			Test->TestTrue(TEXT("Possession configures Weapon Component from NPC Profile"), WeaponComponent->GetWeaponType() == Profile.WeaponType);
 			Test->TestTrue(TEXT("Controller configures role-specific Activity Tags"), HasExpectedActivityTags(Controller, Profile));
@@ -725,7 +740,9 @@ private:
 					&& Station->GetMGTurretAimPoint().Equals(Drone->GetActorLocation(), 1.0f)
 					&& Station->GetMGTurretOccupationCount() == 1
 					&& FMath::IsNearlyEqual(Station->GetMGTurretDamage(), 8.0f)
-					&& Station->GetMGTurretTraceAttemptCount() > 0
+					&& Station->UsesMGTurretProjectileBallistics()
+					&& FMath::IsNearlyEqual(Station->GetMGTurretProjectileSpeed(), 5500.0f)
+					&& Station->GetMGTurretProjectileSpawnCount() > 0
 					&& WeaponComponent
 					&& !WeaponComponent->IsFiring();
 				if (Station)
@@ -791,7 +808,7 @@ private:
 		Test->TestEqual(TEXT("Shotgun pellet greybox damage is 8"),
 			Operator->GetPossessedWeaponComponent()->GetShotgunDamagePerPellet(), 8.0f);
 		Drone->GetHealthComponent()->ResetHealth();
-		MGTurretTraceAttemptsBeforeReassignment = Station->GetMGTurretTraceAttemptCount();
+		MGTurretShotsBeforeReassignment = Station->GetMGTurretProjectileSpawnCount();
 		UGameplayStatics::ApplyDamage(OperatorPawn, 100.0f, nullptr, Drone, nullptr);
 		AdvanceTo(EPhase::WaitForMGTurretReassignment, Now);
 		return false;
@@ -843,13 +860,31 @@ private:
 			&& Station->GetMGTurretTarget() == Drone
 			&& Station->GetMGTurretOccupationCount() == 2
 			&& Station->GetMGTurretReleaseCount() >= 1
-			&& Station->GetMGTurretTraceAttemptCount() > MGTurretTraceAttemptsBeforeReassignment;
+			&& Station->GetMGTurretProjectileSpawnCount() > MGTurretShotsBeforeReassignment;
 		if (!bDeadCleanedUp || !bSurvivorReassigned)
 		{
 			return FinishWithTimeout(Now, 12.0, TEXT("Dead MG operator was not cleaned up or another eligible Hostile did not reoccupy the Slot"));
 		}
 
 		SurvivingMGTurretController = Survivor;
+		// 순간적인 Sight 실패 뒤 같은 프레임에 재감지되면 DroneLost가 확정되지 않아야 한다.
+		// MG 이동/점유 상태가 시야 깜빡임 때문에 Search와 왕복하는 회귀를 막는다.
+		const int32 LostCountBeforeTransientSightFailure = Survivor->GetDroneLostCount();
+		BroadcastSight(Survivor, Drone, false);
+		if (!Survivor->IsDroneSightLossPending() || !Survivor->HasDetectedDrone())
+		{
+			Test->AddError(TEXT("Transient Sight failure was not held during the DroneLost grace period"));
+			return true;
+		}
+		BroadcastSight(Survivor, Drone, true);
+		if (Survivor->IsDroneSightLossPending()
+			|| Survivor->GetDroneLostCount() != LostCountBeforeTransientSightFailure
+			|| !Survivor->HasDetectedDrone())
+		{
+			Test->AddError(TEXT("Drone reacquisition did not cancel the pending DroneLost transition"));
+			return true;
+		}
+
 		BroadcastSight(Survivor, Drone, false);
 		for (ADroneNPCAIController* Controller : Friendlies)
 		{
@@ -1156,7 +1191,7 @@ private:
 	TWeakObjectPtr<ADroneNPCAIController> InitialMGTurretController;
 	TWeakObjectPtr<ADroneNPCAIController> InitialCoverController;
 	TWeakObjectPtr<ADroneNPCAIController> SurvivingMGTurretController;
-	int32 MGTurretTraceAttemptsBeforeReassignment = 0;
+	int32 MGTurretShotsBeforeReassignment = 0;
 };
 } // namespace DroneNPCGreybox
 
@@ -1171,9 +1206,13 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 
 	USkeletalMesh* MannyMesh = LoadObject<USkeletalMesh>(nullptr, MannyMeshPath);
 	UClass* UnarmedAnimClass = LoadClass<UAnimInstance>(nullptr, UnarmedAnimClassPath);
+	UClass* ArmedAnimClass = LoadClass<UAnimInstance>(nullptr, ArmedAnimClassPath);
+	UBlendSpace* ArmedLocomotionBlendSpace = LoadObject<UBlendSpace>(nullptr, ArmedLocomotionBlendSpacePath);
 	UClass* GameModeClass = LoadClass<AGameModeBase>(nullptr, GameModeClassPath);
 	TestNotNull(TEXT("Manny Greybox Mesh loads"), MannyMesh);
 	TestNotNull(TEXT("Unarmed Anim Blueprint Class loads"), UnarmedAnimClass);
+	TestNotNull(TEXT("Project-owned armed Anim Blueprint Class loads"), ArmedAnimClass);
+	TestNotNull(TEXT("Project-owned Rifle locomotion BlendSpace loads"), ArmedLocomotionBlendSpace);
 	TestNotNull(TEXT("Prototype GameMode Class loads"), GameModeClass);
 
 	TMap<UClass*, int32> ExpectedPlacedCounts;
@@ -1207,7 +1246,12 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 		TestTrue(*FString::Printf(TEXT("BP_NPC_%s uses project AI Controller"), Expectation.Name), CDO->AIControllerClass == ADroneNPCAIController::StaticClass());
 		TestTrue(*FString::Printf(TEXT("BP_NPC_%s auto-possesses AI"), Expectation.Name), CDO->AutoPossessAI == EAutoPossessAI::PlacedInWorldOrSpawned);
 		TestTrue(*FString::Printf(TEXT("BP_NPC_%s uses shared Manny Greybox Mesh"), Expectation.Name), CDO->GetMesh()->GetSkeletalMeshAsset() == MannyMesh);
-		TestTrue(*FString::Printf(TEXT("BP_NPC_%s uses shared Unarmed Anim BP"), Expectation.Name), CDO->GetMesh()->GetAnimClass() == UnarmedAnimClass);
+		const UClass* ExpectedAnimClass = Expectation.Weapon == EDroneNPCWeaponType::Unarmed
+			? UnarmedAnimClass
+			: ArmedAnimClass;
+		TestTrue(
+			*FString::Printf(TEXT("BP_NPC_%s uses the role-appropriate Anim BP"), Expectation.Name),
+			CDO->GetMesh()->GetAnimClass() == ExpectedAnimClass);
 		TestEqual(*FString::Printf(TEXT("BP_NPC_%s Greybox Mesh has no collision"), Expectation.Name), CDO->GetMesh()->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
 		ExpectedPlacedCounts.Add(NPCClass, Expectation.PlacedCount);
 	}
