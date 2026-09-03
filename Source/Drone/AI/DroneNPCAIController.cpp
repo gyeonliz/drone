@@ -402,6 +402,26 @@ void ADroneNPCAIController::ConfigureDefaultPatrolActivities()
 	ReservationComponent->SetRequiredActivityTags(Activities);
 }
 
+bool ADroneNPCAIController::AlignPawnToReservedSlot()
+{
+	APawn* ControlledPawn = GetPawn();
+	FTransform SlotTransform;
+	if (!ControlledPawn
+		|| !ReservationComponent
+		|| !ReservationComponent->GetReservedSlotTransform(SlotTransform))
+	{
+		return false;
+	}
+
+	// 지면 NPC의 Slot 방향은 Yaw만 사용한다. Definition 또는 Station에 Pitch/Roll이
+	// 들어가도 Character가 기울어지지 않게 하고, ControlRotation도 함께 맞춰 다음
+	// 프레임에 Controller가 도착 방향을 즉시 덮어쓰지 않도록 한다.
+	const FRotator SlotFacing(0.0f, SlotTransform.Rotator().Yaw, 0.0f);
+	SetControlRotation(SlotFacing);
+	ControlledPawn->SetActorRotation(SlotFacing);
+	return true;
+}
+
 bool ADroneNPCAIController::PrepareMGTurretSearch()
 {
 	if (ResponseState == EDroneNPCAIResponseState::Dead)
@@ -449,7 +469,8 @@ bool ADroneNPCAIController::CompleteMGTurretMove()
 {
 	if (ResponseState != EDroneNPCAIResponseState::MoveToMGTurret
 		|| !HasDetectedDrone()
-		|| !ReservationComponent->HasValidReservation())
+		|| !ReservationComponent->HasValidReservation()
+		|| !AlignPawnToReservedSlot())
 	{
 		return false;
 	}
@@ -559,6 +580,7 @@ bool ADroneNPCAIController::CompleteCoverMove()
 	if (ResponseState != EDroneNPCAIResponseState::MoveToCover
 		|| !HasDetectedDrone()
 		|| !ReservationComponent->HasValidReservation()
+		|| !AlignPawnToReservedSlot()
 		|| !ReservationComponent->MarkReservationOccupied())
 	{
 		return false;

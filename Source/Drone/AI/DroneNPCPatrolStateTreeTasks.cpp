@@ -161,7 +161,12 @@ EStateTreeRunStatus FDroneStateTreeMoveToPatrolSlotTask::EnterState(
 
 	if (MoveResult == EPathFollowingRequestResult::AlreadyAtGoal)
 	{
-		return EStateTreeRunStatus::Succeeded;
+		if (Controller->AlignPawnToReservedSlot())
+		{
+			return EStateTreeRunStatus::Succeeded;
+		}
+		Controller->GetReservationComponent()->ReleaseReservation();
+		return EStateTreeRunStatus::Failed;
 	}
 	if (MoveResult == EPathFollowingRequestResult::RequestSuccessful)
 	{
@@ -197,7 +202,10 @@ EStateTreeRunStatus FDroneStateTreeMoveToPatrolSlotTask::Tick(
 	const float ReachRadius = FMath::Max(10.0f, InstanceData.AcceptanceRadius) + 100.0f;
 	if (Pawn && FVector::DistSquared2D(Pawn->GetActorLocation(), InstanceData.Destination) <= FMath::Square(ReachRadius))
 	{
-		return EStateTreeRunStatus::Succeeded;
+		if (Controller->AlignPawnToReservedSlot())
+		{
+			return EStateTreeRunStatus::Succeeded;
+		}
 	}
 	Controller->GetReservationComponent()->ReleaseReservation();
 	return EStateTreeRunStatus::Failed;

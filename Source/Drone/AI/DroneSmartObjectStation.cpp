@@ -45,7 +45,9 @@ ADroneSmartObjectStation::ADroneSmartObjectStation()
 
 	// Definition Slot Transform을 배치할 때 Actor +X 방향을 확인하는 Editor 표식이다.
 	SlotFacingPreview = CreateDefaultSubobject<UArrowComponent>(TEXT("SlotFacingPreview"));
-	SlotFacingPreview->SetupAttachment(StationRoot);
+	// SmartObjectComponent의 상대 위치·회전을 Blueprint에서 조정하면 실제 Slot과
+	// Preview가 항상 함께 움직이도록 같은 Component 아래에 둔다.
+	SlotFacingPreview->SetupAttachment(SmartObjectComponent);
 	SlotFacingPreview->ArrowColor = FColor::Cyan;
 	SlotFacingPreview->ArrowSize = 1.5f;
 	SlotFacingPreview->SetCollisionEnabled(ECollisionEnabled::NoCollision);

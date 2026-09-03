@@ -156,6 +156,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|SmartObject")
 	void ConfigureDefaultPatrolActivities();
 
+	/** 현재 예약 Slot의 Yaw에 Pawn과 Controller를 맞춘다. Station 화살표 방향이 실제 도착 방향이 된다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|SmartObject")
+	bool AlignPawnToReservedSlot();
+
 	/** Hostile이며 MG 사용 허용 Profile일 때만 MG Turret Activity 검색으로 전환한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|SmartObject")
 	bool PrepareMGTurretSearch();

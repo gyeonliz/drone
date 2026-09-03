@@ -145,7 +145,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|SmartObject|Components")
 	TObjectPtr<USmartObjectComponent> SmartObjectComponent;
 
-	/** Editor에서 Slot의 위치와 +X 방향을 맞추기 위한 표시용 Component다. */
+	/** Editor에서 실제 Slot의 위치와 +X 방향을 맞추기 위한 표시용 Component다. SmartObjectComponent를 따라간다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|SmartObject|Components")
 	TObjectPtr<UArrowComponent> SlotFacingPreview;
 

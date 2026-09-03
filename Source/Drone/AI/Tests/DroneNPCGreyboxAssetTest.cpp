@@ -693,6 +693,14 @@ private:
 			UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
 			MGTurretEligibleCount += Controller->CanUseMGTurret() ? 1 : 0;
 			const EDroneNPCAIResponseState ResponseState = Controller->GetResponseState();
+			FTransform ReservedSlotTransform;
+			const bool bFacesReservedSlot = Controller->GetPawn()
+				&& Controller->GetReservationComponent()->GetReservedSlotTransform(ReservedSlotTransform)
+				&& FMath::IsNearlyZero(
+					FMath::FindDeltaAngleDegrees(
+						Controller->GetPawn()->GetActorRotation().Yaw,
+						ReservedSlotTransform.Rotator().Yaw),
+					1.0f);
 			if (Controller->GetReservationComponent()->HasValidReservation()
 				&& (ResponseState == EDroneNPCAIResponseState::MoveToMGTurret
 					|| ResponseState == EDroneNPCAIResponseState::HoldMGTurret
@@ -709,6 +717,7 @@ private:
 					&& Controller->GetMGTurretArrivalCount() == 1
 					&& Controller->GetMGTurretUseCount() == 1
 					&& Controller->GetReservationComponent()->IsReservationOccupied()
+					&& bFacesReservedSlot
 					&& Station
 					&& Station->IsMGTurretInUse()
 					&& Station->GetMGTurretUser() == Controller->GetPawn()
@@ -739,6 +748,7 @@ private:
 				&& Controller->GetCoverClaimCount() == 1
 				&& Controller->GetCoverUseCount() == 1
 				&& Controller->GetReservationComponent()->IsReservationOccupied()
+				&& bFacesReservedSlot
 				&& Controller->CanFirePersonalWeapon()
 				&& WeaponComponent
 				&& WeaponComponent->IsFiring()

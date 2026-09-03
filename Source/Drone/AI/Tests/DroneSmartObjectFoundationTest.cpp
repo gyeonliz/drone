@@ -10,6 +10,7 @@
 #include "AI/DroneSmartObjectReservationComponent.h"
 #include "AI/DroneSmartObjectStation.h"
 #include "AI/Weapons/DroneNPCWeaponComponent.h"
+#include "Components/ArrowComponent.h"
 #include "Components/StateTreeAIComponent.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SkeletalMesh.h"
@@ -62,6 +63,12 @@ bool FDroneSmartObjectFoundationTest::RunTest(const FString& Parameters)
 		TestNotNull(TEXT("Station owns Smart Object Component"), StationDefaults->GetSmartObjectComponent());
 		TestNotNull(TEXT("Station owns optional Skeletal Mesh Component"), StationDefaults->GetStationMesh());
 		TestNotNull(TEXT("Station owns slot facing preview"), StationDefaults->GetSlotFacingPreview());
+		if (StationDefaults->GetSlotFacingPreview())
+		{
+			TestTrue(
+				TEXT("Slot facing preview follows the Smart Object Component transform"),
+				StationDefaults->GetSlotFacingPreview()->GetAttachParent() == StationDefaults->GetSmartObjectComponent());
+		}
 		TestTrue(TEXT("Default station activity tag is valid"), StationDefaults->GetExpectedActivityTag().IsValid());
 		TestFalse(TEXT("Native station does not hide a missing Definition"), StationDefaults->HasSmartObjectDefinition());
 	}
