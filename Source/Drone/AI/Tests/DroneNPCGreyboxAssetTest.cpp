@@ -3,6 +3,8 @@
 #include "Misc/AutomationTest.h"
 
 #include "AI/DroneAITags.h"
+#include "AI/Animation/DroneNPCAnimInstance.h"
+#include "AI/DroneMGTurretStation.h"
 #include "AI/DroneNPCAIController.h"
 #include "AI/DroneNPCCharacter.h"
 #include "AI/DroneNPCNavigationFloor.h"
@@ -674,14 +676,28 @@ private:
 				: ResponseState == EDroneNPCAIResponseState::DroneDetected;
 			bHostilesDetected &= Controller->HasDetectedDrone()
 				&& bExpectedResponse
-				&& Controller->GetDroneDetectionCount() == 1;
+				&& Controller->GetDroneDetectionCount() == 1
+				// AI Focus는 몸/Smart Object Slot 회전과 경쟁하므로 사용하지 않는다.
+				// 시각 표현용 Drone gaze는 Controller의 별도 상태만 검증한다.
+				&& Controller->GetFocusActor() == nullptr
+				&& Controller->HasActiveDroneLookTarget()
+				&& Controller->GetDroneLookAlpha() > 0.0f
+				&& FMath::Abs(Controller->GetSmoothedDroneLookRotation().Yaw)
+					<= Controller->GetMaxDroneLookYawDegrees() + KINDA_SMALL_NUMBER
+				&& Controller->GetSmoothedDroneLookRotation().Pitch
+					<= Controller->GetMaxDroneLookPitchUpDegrees() + KINDA_SMALL_NUMBER
+				&& Controller->GetSmoothedDroneLookRotation().Pitch
+					>= -Controller->GetMaxDroneLookPitchDownDegrees() - KINDA_SMALL_NUMBER;
 		}
 		bool bFriendliesUnaffected = true;
 		for (const ADroneNPCAIController* Controller : Friendlies)
 		{
 			bFriendliesUnaffected &= !Controller->HasDetectedDrone()
 				&& Controller->GetResponseState() == EDroneNPCAIResponseState::Patrol
-				&& Controller->GetDroneDetectionCount() == 0;
+				&& Controller->GetDroneDetectionCount() == 0
+				&& Controller->GetFocusActor() == nullptr
+				&& !Controller->HasActiveDroneLookTarget()
+				&& FMath::IsNearlyZero(Controller->GetDroneLookAlpha());
 		}
 		if (!bHostilesDetected || !bFriendliesUnaffected)
 		{
@@ -708,14 +724,18 @@ private:
 			UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
 			MGTurretEligibleCount += Controller->CanUseMGTurret() ? 1 : 0;
 			const EDroneNPCAIResponseState ResponseState = Controller->GetResponseState();
-			FTransform ReservedSlotTransform;
-			const bool bFacesReservedSlot = Controller->GetPawn()
-				&& Controller->GetReservationComponent()->GetReservedSlotTransform(ReservedSlotTransform)
+			const APawn* ControlledPawn = Controller->GetPawn();
+			FVector ToDrone = ControlledPawn
+				? Drone->GetActorLocation() - ControlledPawn->GetActorLocation()
+				: FVector::ZeroVector;
+			ToDrone.Z = 0.0f;
+			const bool bFacesDrone = ControlledPawn
+				&& !ToDrone.IsNearlyZero()
 				&& FMath::IsNearlyZero(
 					FMath::FindDeltaAngleDegrees(
-						Controller->GetPawn()->GetActorRotation().Yaw,
-						ReservedSlotTransform.Rotator().Yaw),
-					1.0f);
+						ControlledPawn->GetActorRotation().Yaw,
+						ToDrone.Rotation().Yaw),
+					5.0f);
 			if (Controller->GetReservationComponent()->HasValidReservation()
 				&& (ResponseState == EDroneNPCAIResponseState::MoveToMGTurret
 					|| ResponseState == EDroneNPCAIResponseState::HoldMGTurret
@@ -728,11 +748,28 @@ private:
 			{
 				++MGTurretOperatorCount;
 				ADroneSmartObjectStation* Station = Controller->GetActiveMGTurretStation();
+				const ADroneMGTurretStation* Turret = Cast<ADroneMGTurretStation>(Station);
+				FTransform OperatorTransform;
+				const bool bHasOperatorTransform = Controller->GetReservedMGTurretOperatorTransform(OperatorTransform);
+				const bool bAtOperatorAnchor = ControlledPawn
+					&& bHasOperatorTransform
+					&& FVector::DistSquared2D(ControlledPawn->GetActorLocation(), OperatorTransform.GetLocation())
+						<= FMath::Square(2.0f);
+				const bool bFacesOperatorDirection = ControlledPawn
+					&& bHasOperatorTransform
+					&& FMath::IsNearlyZero(
+						FMath::FindDeltaAngleDegrees(
+							ControlledPawn->GetActorRotation().Yaw,
+							OperatorTransform.Rotator().Yaw),
+						1.0f);
 				bMGTurretOperatorReady &= Controller->GetMGTurretClaimCount() == 1
 					&& Controller->GetMGTurretArrivalCount() == 1
 					&& Controller->GetMGTurretUseCount() == 1
 					&& Controller->GetReservationComponent()->IsReservationOccupied()
-					&& bFacesReservedSlot
+					&& Turret
+					&& Turret->GetMGTurretOperatorAnchor()
+					&& bAtOperatorAnchor
+					&& bFacesOperatorDirection
 					&& Station
 					&& Station->IsMGTurretInUse()
 					&& Station->GetMGTurretUser() == Controller->GetPawn()
@@ -765,7 +802,7 @@ private:
 				&& Controller->GetCoverClaimCount() == 1
 				&& Controller->GetCoverUseCount() == 1
 				&& Controller->GetReservationComponent()->IsReservationOccupied()
-				&& bFacesReservedSlot
+				&& bFacesDrone
 				&& Controller->CanFirePersonalWeapon()
 				&& WeaponComponent
 				&& WeaponComponent->IsFiring()
@@ -789,6 +826,23 @@ private:
 			|| !bMGTurretOperatorReady
 			|| !bPersonalWeaponFallbackReady)
 		{
+			if (Now - PhaseStartedAt > 12.0)
+			{
+				const ADroneSmartObjectStation* DebugStation = UsedMGTurretStation.Get();
+				Test->AddInfo(FString::Printf(
+					TEXT("MG debug: eligible=%d operators=%d reservations=%d operatorReady=%d fallbackReady=%d station=%s shots=%d yaw=%.2f pitch=%.2f error=%.2f target=%s"),
+					MGTurretEligibleCount,
+					MGTurretOperatorCount,
+					MGTurretReservationCount,
+					bMGTurretOperatorReady ? 1 : 0,
+					bPersonalWeaponFallbackReady ? 1 : 0,
+					*GetNameSafe(DebugStation),
+					DebugStation ? DebugStation->GetMGTurretProjectileSpawnCount() : -1,
+					DebugStation ? DebugStation->GetMGTurretCurrentYawDegrees() : 0.0f,
+					DebugStation ? DebugStation->GetMGTurretCurrentPitchDegrees() : 0.0f,
+					DebugStation ? DebugStation->GetMGTurretAlignmentErrorDegrees() : 0.0f,
+					*GetNameSafe(DebugStation ? DebugStation->GetMGTurretTarget() : nullptr)));
+			}
 			return FinishWithTimeout(Now, 12.0, TEXT("MG Occupy/Aim/Fire or personal Weapon fallback did not become stable"));
 		}
 
@@ -871,7 +925,10 @@ private:
 		// MG 이동/점유 상태가 시야 깜빡임 때문에 Search와 왕복하는 회귀를 막는다.
 		const int32 LostCountBeforeTransientSightFailure = Survivor->GetDroneLostCount();
 		BroadcastSight(Survivor, Drone, false);
-		if (!Survivor->IsDroneSightLossPending() || !Survivor->HasDetectedDrone())
+		if (!Survivor->IsDroneSightLossPending()
+			|| !Survivor->HasDetectedDrone()
+			|| Survivor->GetFocusActor() != nullptr
+			|| !Survivor->HasActiveDroneLookTarget())
 		{
 			Test->AddError(TEXT("Transient Sight failure was not held during the DroneLost grace period"));
 			return true;
@@ -879,7 +936,8 @@ private:
 		BroadcastSight(Survivor, Drone, true);
 		if (Survivor->IsDroneSightLossPending()
 			|| Survivor->GetDroneLostCount() != LostCountBeforeTransientSightFailure
-			|| !Survivor->HasDetectedDrone())
+			|| !Survivor->HasDetectedDrone()
+			|| Survivor->GetFocusActor() != nullptr)
 		{
 			Test->AddError(TEXT("Drone reacquisition did not cancel the pending DroneLost transition"));
 			return true;
@@ -926,6 +984,8 @@ private:
 				&& Controller->HasLastKnownDroneLocation()
 				&& !Controller->GetReservationComponent()->HasValidReservation()
 				&& Controller->GetActiveMGTurretStation() == nullptr
+				&& Controller->GetFocusActor() == nullptr
+				&& Controller->HasActiveDroneLookTarget()
 				&& WeaponComponent
 				&& !WeaponComponent->IsFiring()
 				&& WeaponComponent->GetCurrentTarget() == nullptr;
@@ -934,7 +994,9 @@ private:
 		for (const ADroneNPCAIController* Controller : Friendlies)
 		{
 			bFriendliesUnaffected &= Controller->GetResponseState() == EDroneNPCAIResponseState::Patrol
-				&& Controller->GetDroneLostCount() == 0;
+				&& Controller->GetDroneLostCount() == 0
+				&& Controller->GetFocusActor() == nullptr
+				&& !Controller->HasActiveDroneLookTarget();
 		}
 		const bool bMGTurretReleased = UsedMGTurretStation.IsValid()
 			&& !UsedMGTurretStation->IsMGTurretInUse()
@@ -968,6 +1030,8 @@ private:
 				|| Controller->GetCompletedPatrolCycles() > BaselineHostileCycles.FindRef(Controller);
 			bHostilesReturned &= Controller->GetResponseState() == EDroneNPCAIResponseState::Patrol
 				&& Controller->GetCompletedDroneSearchCount() == 1
+				&& Controller->GetFocusActor() == nullptr
+				&& !Controller->HasActiveDroneLookTarget()
 				&& bPatrolWorkResumed;
 		}
 		bool bFriendliesContinued = true;
@@ -1118,6 +1182,8 @@ private:
 			&& Survivor->GetDroneDestroyedResponseCount() == 1
 			&& !Survivor->HasDetectedDrone()
 			&& !Survivor->HasLastKnownDroneLocation()
+			&& Survivor->GetFocusActor() == nullptr
+			&& !Survivor->HasActiveDroneLookTarget()
 			&& Survivor->GetResponseState() == EDroneNPCAIResponseState::Patrol
 			&& Survivor->GetActiveMGTurretStation() == nullptr
 			&& SurvivorWeapon
@@ -1212,6 +1278,9 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("Manny Greybox Mesh loads"), MannyMesh);
 	TestNotNull(TEXT("Unarmed Anim Blueprint Class loads"), UnarmedAnimClass);
 	TestNotNull(TEXT("Project-owned armed Anim Blueprint Class loads"), ArmedAnimClass);
+	TestTrue(
+		TEXT("Project-owned armed Anim Blueprint uses the Drone NPC AnimInstance parent"),
+		ArmedAnimClass && ArmedAnimClass->IsChildOf(UDroneNPCAnimInstance::StaticClass()));
 	TestNotNull(TEXT("Project-owned Rifle locomotion BlendSpace loads"), ArmedLocomotionBlendSpace);
 	TestNotNull(TEXT("Prototype GameMode Class loads"), GameModeClass);
 

@@ -35,6 +35,10 @@ public class Drone : ModuleRules
 			PrivateDependencyModuleNames.AddRange(new string[] {
 				"UnrealEd",
 				"AssetRegistry",
+				"AnimGraph",
+				"BlueprintEditorLibrary",
+				"BlueprintGraph",
+				"Kismet",
 				"PropertyBindingUtils",
 				"StateTreeEditorModule"
 			});

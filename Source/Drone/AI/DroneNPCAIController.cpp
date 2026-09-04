@@ -1,12 +1,15 @@
 #include "AI/DroneNPCAIController.h"
 
 #include "AI/DroneAITags.h"
+#include "AI/DroneMGTurretStation.h"
 #include "AI/DroneNPCProfileComponent.h"
 #include "AI/DroneSmartObjectReservationComponent.h"
 #include "AI/DroneSmartObjectStation.h"
 #include "AI/Weapons/DroneNPCWeaponComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/StateTreeAIComponent.h"
 #include "EngineUtils.h"
+#include "GameFramework/Character.h"
 #include "Health/DroneHealthComponent.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "Perception/AIPerceptionComponent.h"
@@ -64,9 +67,27 @@ void ADroneNPCAIController::BeginPlay()
 	TryStartAssignedStateTree();
 }
 
+void ADroneNPCAIController::Tick(const float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	// StateTree의 MG 진입 Task는 한 번만 호출될 수 있다. 이미 시선 보간을 위해
+	// 동작하는 Controller Tick에서 실제 점유자 한 명의 포탑 조준만 계속 갱신한다.
+	if (ResponseState == EDroneNPCAIResponseState::UseMGTurret)
+	{
+		UpdateMGTurretOperation();
+	}
+	else
+	{
+		UpdatePersonalWeaponFacing(DeltaSeconds);
+	}
+	// 몸 정렬을 먼저 적용한 뒤 Pawn 로컬 기준 시선각을 계산한다.
+	UpdateDroneGaze(DeltaSeconds);
+}
+
 void ADroneNPCAIController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
+	ClearDroneGameplayFocus();
 	CancelPendingDroneLost();
 	DetectedDrone.Reset();
 	ResponseState = EDroneNPCAIResponseState::Patrol;
@@ -83,6 +104,8 @@ void ADroneNPCAIController::OnPossess(APawn* InPawn)
 	ActiveMGTurretStation.Reset();
 	CoverClaimCount = 0;
 	CoverUseCount = 0;
+	SmoothedDroneLookRotation = FRotator::ZeroRotator;
+	DroneLookAlpha = 0.0f;
 
 	if (const UDroneNPCProfileComponent* Profile = GetPossessedProfile())
 	{
@@ -138,6 +161,7 @@ void ADroneNPCAIController::TryStartAssignedStateTree()
 
 void ADroneNPCAIController::OnUnPossess()
 {
+	ClearDroneGameplayFocus();
 	CancelPendingDroneLost();
 	StopPersonalWeaponFire();
 	StopMovement();
@@ -264,7 +288,6 @@ bool ADroneNPCAIController::BeginDroneSearch(const float AcceptanceRadius)
 	++DroneSearchStartCount;
 	StopMGTurretOperation();
 	ReservationComponent->ReleaseReservation();
-
 	MoveToLocation(
 		LastKnownDroneLocation,
 		FMath::Max(10.0f, AcceptanceRadius),
@@ -286,6 +309,7 @@ void ADroneNPCAIController::CompleteDroneSearch()
 	}
 
 	StopMovement();
+	ClearDroneGameplayFocus();
 	++CompletedDroneSearchCount;
 	ResponseState = EDroneNPCAIResponseState::Patrol;
 	ConfigureDefaultPatrolActivities();
@@ -300,6 +324,7 @@ void ADroneNPCAIController::HandlePossessedPawnDeath()
 
 	// Slot을 먼저 Free로 돌려놓은 뒤 대기 중인 다른 MG 가능 NPC에게 재시도 Event를 보낸다.
 	CancelPendingDroneLost();
+	ClearDroneGameplayFocus();
 	StopPersonalWeaponFire();
 	StopMovement();
 	StopMGTurretOperation();
@@ -356,6 +381,7 @@ void ADroneNPCAIController::HandleDetectedDroneDestroyed(AActor* DestroyedDrone)
 	// DroneLost와 달리 파괴된 표적의 마지막 위치를 Search하지 않는다. 전투 자원을
 	// 즉시 정리한 뒤 기존 DroneLost 전환을 사용해 Search 실패 -> Patrol로 복귀시킨다.
 	CancelPendingDroneLost();
+	ClearDroneGameplayFocus();
 	StopPersonalWeaponFire();
 	StopMovement();
 	StopMGTurretOperation();
@@ -464,6 +490,12 @@ bool ADroneNPCAIController::ClaimAvailableMGTurret(FTransform& OutSlotTransform)
 		ConfigureDefaultPatrolActivities();
 		return false;
 	}
+	if (!GetReservedMGTurretOperatorTransform(OutSlotTransform))
+	{
+		ReservationComponent->ReleaseReservation();
+		ConfigureDefaultPatrolActivities();
+		return false;
+	}
 
 	ResponseState = EDroneNPCAIResponseState::MoveToMGTurret;
 	++MGTurretClaimCount;
@@ -475,7 +507,7 @@ bool ADroneNPCAIController::CompleteMGTurretMove()
 	if (ResponseState != EDroneNPCAIResponseState::MoveToMGTurret
 		|| !HasDetectedDrone()
 		|| !ReservationComponent->HasValidReservation()
-		|| !AlignPawnToReservedSlot())
+		|| !AlignPawnToMGTurretOperator())
 	{
 		return false;
 	}
@@ -492,6 +524,10 @@ bool ADroneNPCAIController::BeginMGTurretOperation()
 		|| !HasDetectedDrone()
 		|| !GetPawn()
 		|| !ReservationComponent->HasValidReservation())
+	{
+		return false;
+	}
+	if (!AlignPawnToMGTurretOperator())
 	{
 		return false;
 	}
@@ -518,12 +554,19 @@ bool ADroneNPCAIController::BeginMGTurretOperation()
 bool ADroneNPCAIController::UpdateMGTurretOperation()
 {
 	ADroneSmartObjectStation* Station = ActiveMGTurretStation.Get();
-	return ResponseState == EDroneNPCAIResponseState::UseMGTurret
-		&& HasDetectedDrone()
-		&& GetPawn()
-		&& ReservationComponent->IsReservationOccupied()
-		&& Station
-		&& Station->UpdateMGTurretUse(GetPawn(), GetDetectedDrone());
+	if (ResponseState != EDroneNPCAIResponseState::UseMGTurret
+		|| !HasDetectedDrone()
+		|| !GetPawn()
+		|| !ReservationComponent->IsReservationOccupied()
+		|| !Station)
+	{
+		return false;
+	}
+
+	// 포탑 몸체를 먼저 갱신해야 그 자식 Operator Anchor의 위치·방향도 같은
+	// 프레임의 Yaw를 가진다. 그 뒤 사수를 Anchor에 붙여 한 프레임 지연을 없앤다.
+	return Station->UpdateMGTurretUse(GetPawn(), GetDetectedDrone())
+		&& AlignPawnToMGTurretOperator();
 }
 
 void ADroneNPCAIController::StopMGTurretOperation()
@@ -870,6 +913,173 @@ void ADroneNPCAIController::ConfirmPendingDroneLost()
 		StateTreeAIComponent->SendStateTreeEvent(DroneAITags::Event_DroneLost);
 	}
 	OnDronePerceptionChanged.Broadcast(LostActor, false);
+}
+
+bool ADroneNPCAIController::HasActiveDroneLookTarget() const
+{
+	return ResponseState != EDroneNPCAIResponseState::Dead
+		&& IsHostileNPC()
+		&& (DetectedDrone.IsValid()
+			|| (ResponseState == EDroneNPCAIResponseState::Search && bHasLastKnownDroneLocation));
+}
+
+bool ADroneNPCAIController::GetReservedMGTurretOperatorTransform(FTransform& OutOperatorTransform) const
+{
+	OutOperatorTransform = FTransform::Identity;
+	if (!ReservationComponent || !ReservationComponent->HasValidReservation())
+	{
+		return false;
+	}
+
+	const ADroneMGTurretStation* Turret = Cast<ADroneMGTurretStation>(
+		ReservationComponent->GetReservedSmartObjectActor());
+	return Turret
+		? (OutOperatorTransform = Turret->GetMGTurretOperatorTransform(), true)
+		: false;
+}
+
+bool ADroneNPCAIController::AlignPawnToMGTurretOperator()
+{
+	APawn* ControlledPawn = GetPawn();
+	FTransform OperatorTransform;
+	if (!ControlledPawn || !GetReservedMGTurretOperatorTransform(OperatorTransform))
+	{
+		return false;
+	}
+
+	// OperatorAnchor는 발이 놓일 지점이다. Character Actor 원점은 Capsule 중앙이므로
+	// 절반 높이만큼 올려 정확히 포탑 뒤 바닥에 선다.
+	FVector PawnLocation = OperatorTransform.GetLocation();
+	if (const ACharacter* CharacterPawn = Cast<ACharacter>(ControlledPawn))
+	{
+		if (const UCapsuleComponent* Capsule = CharacterPawn->GetCapsuleComponent())
+		{
+			PawnLocation += FVector::UpVector * Capsule->GetScaledCapsuleHalfHeight();
+		}
+	}
+	else
+	{
+		PawnLocation.Z = ControlledPawn->GetActorLocation().Z;
+	}
+
+	const FRotator OperatorFacing(0.0f, OperatorTransform.Rotator().Yaw, 0.0f);
+	ControlledPawn->SetActorLocationAndRotation(
+		PawnLocation,
+		OperatorFacing,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+	SetControlRotation(OperatorFacing);
+	return true;
+}
+
+void ADroneNPCAIController::UpdatePersonalWeaponFacing(const float DeltaSeconds)
+{
+	const bool bUsesPersonalWeaponResponse = ResponseState == EDroneNPCAIResponseState::DroneDetected
+		|| ResponseState == EDroneNPCAIResponseState::UseCover;
+	APawn* ControlledPawn = GetPawn();
+	AActor* CurrentDrone = DetectedDrone.Get();
+	if (!bFaceDroneDuringPersonalWeaponResponse
+		|| !bUsesPersonalWeaponResponse
+		|| !ControlledPawn
+		|| !CurrentDrone)
+	{
+		return;
+	}
+
+	FVector ToDrone = CurrentDrone->GetActorLocation() - ControlledPawn->GetActorLocation();
+	ToDrone.Z = 0.0f;
+	if (ToDrone.IsNearlyZero())
+	{
+		return;
+	}
+
+	const FRotator CurrentFacing = ControlledPawn->GetActorRotation();
+	const float DesiredYaw = ToDrone.Rotation().Yaw;
+	const float NewYaw = FMath::FixedTurn(
+		CurrentFacing.Yaw,
+		DesiredYaw,
+		FMath::Max(0.0f, PersonalWeaponFacingTurnSpeedDegreesPerSecond) * DeltaSeconds);
+	const FRotator NewFacing(0.0f, NewYaw, 0.0f);
+	SetControlRotation(NewFacing);
+	ControlledPawn->SetActorRotation(NewFacing, ETeleportType::None);
+}
+
+void ADroneNPCAIController::UpdateDroneGaze(const float DeltaSeconds)
+{
+	APawn* ControlledPawn = GetPawn();
+	FVector LookTargetLocation = FVector::ZeroVector;
+	bool bHasTarget = false;
+
+	if (ResponseState != EDroneNPCAIResponseState::Dead && IsHostileNPC() && ControlledPawn)
+	{
+		if (AActor* CurrentDrone = DetectedDrone.Get())
+		{
+			LookTargetLocation = CurrentDrone->GetActorLocation();
+			LastKnownDroneLocation = LookTargetLocation;
+			bHasLastKnownDroneLocation = true;
+			bHasTarget = true;
+		}
+		else if (ResponseState == EDroneNPCAIResponseState::Search && bHasLastKnownDroneLocation)
+		{
+			LookTargetLocation = LastKnownDroneLocation;
+			bHasTarget = true;
+		}
+	}
+
+	FRotator DesiredLookRotation = FRotator::ZeroRotator;
+	if (bHasTarget)
+	{
+		const FVector LookDirection = LookTargetLocation - ControlledPawn->GetPawnViewLocation();
+		if (!LookDirection.IsNearlyZero())
+		{
+			DesiredLookRotation = LookDirection.Rotation() - ControlledPawn->GetActorRotation();
+			DesiredLookRotation.Normalize();
+			DesiredLookRotation.Yaw = FMath::Clamp(
+				DesiredLookRotation.Yaw,
+				-MaxDroneLookYawDegrees,
+				MaxDroneLookYawDegrees);
+			DesiredLookRotation.Pitch = FMath::Clamp(
+				DesiredLookRotation.Pitch,
+				-MaxDroneLookPitchDownDegrees,
+				MaxDroneLookPitchUpDegrees);
+			DesiredLookRotation.Roll = 0.0f;
+		}
+	}
+
+	const float InterpolationSpeed = bHasTarget
+		? DroneLookTrackingInterpolationSpeed
+		: DroneLookReturnInterpolationSpeed;
+	SmoothedDroneLookRotation.Pitch = FMath::FInterpTo(
+		SmoothedDroneLookRotation.Pitch,
+		DesiredLookRotation.Pitch,
+		DeltaSeconds,
+		InterpolationSpeed);
+	SmoothedDroneLookRotation.Yaw = FMath::FInterpTo(
+		SmoothedDroneLookRotation.Yaw,
+		DesiredLookRotation.Yaw,
+		DeltaSeconds,
+		InterpolationSpeed);
+	SmoothedDroneLookRotation.Roll = 0.0f;
+	DroneLookAlpha = FMath::FInterpTo(
+		DroneLookAlpha,
+		bHasTarget ? 1.0f : 0.0f,
+		DeltaSeconds,
+		InterpolationSpeed);
+
+	if (!bHasTarget && DroneLookAlpha <= KINDA_SMALL_NUMBER)
+	{
+		DroneLookAlpha = 0.0f;
+		if (SmoothedDroneLookRotation.IsNearlyZero(0.01f))
+		{
+			SmoothedDroneLookRotation = FRotator::ZeroRotator;
+		}
+	}
+}
+
+void ADroneNPCAIController::ClearDroneGameplayFocus()
+{
+	ClearFocus(EAIFocusPriority::Gameplay);
 }
 
 UDroneNPCProfileComponent* ADroneNPCAIController::GetPossessedProfile() const

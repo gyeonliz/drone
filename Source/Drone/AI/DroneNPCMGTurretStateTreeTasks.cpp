@@ -52,9 +52,8 @@ EStateTreeRunStatus FDroneStateTreeMoveToMGTurretTask::EnterState(
 		return EStateTreeRunStatus::Failed;
 	}
 
-	UDroneSmartObjectReservationComponent* Reservation = Controller->GetReservationComponent();
 	FTransform SlotTransform;
-	if (!Reservation || !Reservation->GetReservedSlotTransform(SlotTransform))
+	if (!Controller->GetReservedMGTurretOperatorTransform(SlotTransform))
 	{
 		Controller->AbortMGTurretResponse();
 		return EStateTreeRunStatus::Failed;

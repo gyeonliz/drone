@@ -32,6 +32,10 @@ if any(
     raise RuntimeError("Saved Rifle BlendSpace still contains an Unarmed locomotion sample")
 
 anim_blueprint = load_required(TARGET_ANIM_BLUEPRINT)
+if not unreal.DroneNPCAnimationAuthoringLibrary.validate_rifle_anim_blueprint_drone_gaze(
+    TARGET_ANIM_BLUEPRINT
+):
+    raise RuntimeError("Project-owned armed AnimBP Drone gaze graph is missing or invalid")
 if anim_blueprint.status == unreal.BlueprintStatus.BS_ERROR:
     raise RuntimeError("Saved armed AnimBP has a compile error")
 
@@ -67,5 +71,5 @@ if friendly_cdo.get_editor_property("mesh").get_editor_property("anim_class") !=
     raise RuntimeError("Friendly NPC no longer uses the Unarmed AnimBP")
 
 unreal.log(
-    "NPC_GREYBOX_ANIM_VERIFY success: saved Rifle idle + 27 Rifle locomotion samples + hostile/friendly role split"
+        "NPC_GREYBOX_ANIM_VERIFY success: saved Rifle idle + 27 Rifle locomotion samples + Drone gaze graph + hostile/friendly role split"
 )

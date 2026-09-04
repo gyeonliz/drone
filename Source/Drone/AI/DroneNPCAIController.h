@@ -48,6 +48,7 @@ class DRONE_API ADroneNPCAIController : public AAIController
 
 public:
 	ADroneNPCAIController();
+	virtual void Tick(float DeltaSeconds) override;
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI")
 	UStateTreeAIComponent* GetStateTreeAIComponent() const { return StateTreeAIComponent; }
@@ -118,6 +119,26 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
 	float GetDroneSightLossGracePeriod() const { return DroneSightLossGracePeriod; }
 
+	/** AnimBP가 사용하는, Pawn 로컬 기준의 제한·보간된 Drone 시선 회전이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Gaze")
+	FRotator GetSmoothedDroneLookRotation() const { return SmoothedDroneLookRotation; }
+
+	/** 0은 정면 기본 자세, 1은 Drone/마지막 감지 위치 추적 자세다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Gaze")
+	float GetDroneLookAlpha() const { return DroneLookAlpha; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Gaze")
+	bool HasActiveDroneLookTarget() const;
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Gaze")
+	float GetMaxDroneLookYawDegrees() const { return MaxDroneLookYawDegrees; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Gaze")
+	float GetMaxDroneLookPitchUpDegrees() const { return MaxDroneLookPitchUpDegrees; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Gaze")
+	float GetMaxDroneLookPitchDownDegrees() const { return MaxDroneLookPitchDownDegrees; }
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
 	int32 GetDroneSearchStartCount() const { return DroneSearchStartCount; }
 
@@ -144,6 +165,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
 	ADroneSmartObjectStation* GetActiveMGTurretStation() const { return ActiveMGTurretStation.Get(); }
+
+	/** 예약된 MG의 Blueprint 조정 가능 조작점 Transform을 반환한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|MG")
+	bool GetReservedMGTurretOperatorTransform(FTransform& OutOperatorTransform) const;
 
 	/** 소유 NPC 체력이 0이 되었을 때 전투·이동·점유를 정리하고 StateTree를 중단한다. */
 	void HandlePossessedPawnDeath();
@@ -272,6 +297,18 @@ protected:
 	/** 유예 시간 뒤에도 보이지 않을 때만 전투 자원을 정리하고 DroneLost Event를 보낸다. */
 	void ConfirmPendingDroneLost();
 
+	/** 현재 감지 Actor 또는 Search 마지막 위치를 향한 AnimBP용 시선 값을 갱신한다. */
+	void UpdateDroneGaze(float DeltaSeconds);
+
+	/** 개인화기 교전 중 몸 Yaw를 Drone 쪽으로 돌려 상체 시선 제한 밖 표적도 바라보게 한다. */
+	void UpdatePersonalWeaponFacing(float DeltaSeconds);
+
+	/** MG 점유자는 포탑 뒤 조작점에 고정하고 포탑 중심을 바라보게 한다. */
+	bool AlignPawnToMGTurretOperator();
+
+	/** 남아 있을 수 있는 Gameplay Focus를 정리한다. 머리 시선은 감지/Search 상태에서 별도로 계산한다. */
+	void ClearDroneGameplayFocus();
+
 	UDroneNPCProfileComponent* GetPossessedProfile() const;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Components")
@@ -315,6 +352,36 @@ protected:
 	TWeakObjectPtr<AActor> PendingLostDrone;
 
 	FTimerHandle DroneLostGraceTimerHandle;
+
+	/** 고개만 비틀 수 있는 Greybox 좌우 제한각. 제한 밖 느린 몸 회전은 후속 카드다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze", meta=(ClampMin="0.0", ClampMax="180.0", ForceUnits="deg"))
+	float MaxDroneLookYawDegrees = 65.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze", meta=(ClampMin="0.0", ClampMax="90.0", ForceUnits="deg"))
+	float MaxDroneLookPitchUpDegrees = 40.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze", meta=(ClampMin="0.0", ClampMax="90.0", ForceUnits="deg"))
+	float MaxDroneLookPitchDownDegrees = 25.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze", meta=(ClampMin="0.0"))
+	float DroneLookTrackingInterpolationSpeed = 6.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze", meta=(ClampMin="0.0"))
+	float DroneLookReturnInterpolationSpeed = 3.5f;
+
+	/** MG가 아닌 개인화기 교전 상태에서 병사 몸을 Drone 방향으로 돌린다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze")
+	bool bFaceDroneDuringPersonalWeaponResponse = true;
+
+	/** 개인화기 교전 중 몸 Yaw 회전 속도다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze", meta=(ClampMin="0.0", ForceUnits="deg/s"))
+	float PersonalWeaponFacingTurnSpeedDegreesPerSecond = 180.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Gaze")
+	FRotator SmoothedDroneLookRotation = FRotator::ZeroRotator;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Gaze")
+	float DroneLookAlpha = 0.0f;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
 	int32 DroneSearchStartCount = 0;

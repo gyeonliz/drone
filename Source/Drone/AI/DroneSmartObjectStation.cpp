@@ -3,7 +3,6 @@
 #include "AI/DroneAITags.h"
 #include "Components/ArrowComponent.h"
 #include "Components/SceneComponent.h"
-#include "Components/SkeletalMeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -48,14 +47,6 @@ ADroneSmartObjectStation::ADroneSmartObjectStation()
 	StationRoot = CreateDefaultSubobject<USceneComponent>(TEXT("StationRoot"));
 	SetRootComponent(StationRoot);
 
-	MGTurretAimPivot = CreateDefaultSubobject<USceneComponent>(TEXT("MGTurretAimPivot"));
-	MGTurretAimPivot->SetupAttachment(StationRoot);
-
-	// 외형 Asset은 프로젝트 소유 BP에서 지정한다. C++는 ThirdParty 경로를 하드코딩하지 않는다.
-	StationMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("StationMesh"));
-	StationMesh->SetupAttachment(MGTurretAimPivot);
-	StationMesh->SetSimulatePhysics(false);
-
 	SmartObjectComponent = CreateDefaultSubobject<USmartObjectComponent>(TEXT("SmartObjectComponent"));
 	SmartObjectComponent->SetupAttachment(StationRoot);
 
@@ -70,6 +61,16 @@ ADroneSmartObjectStation::ADroneSmartObjectStation()
 	SlotFacingPreview->SetCanEverAffectNavigation(false);
 }
 
+float ADroneSmartObjectStation::GetMGTurretCurrentYawDegrees() const
+{
+	return MGTurretYawPivot ? MGTurretYawPivot->GetRelativeRotation().Yaw : 0.0f;
+}
+
+float ADroneSmartObjectStation::GetMGTurretCurrentPitchDegrees() const
+{
+	return MGTurretAimPivot ? MGTurretAimPivot->GetRelativeRotation().Pitch : 0.0f;
+}
+
 void ADroneSmartObjectStation::SetSmartObjectDefinition(USmartObjectDefinition* Definition)
 {
 	SmartObjectComponent->SetDefinition(Definition);
@@ -78,16 +79,6 @@ void ADroneSmartObjectStation::SetSmartObjectDefinition(USmartObjectDefinition* 
 USmartObjectDefinition* ADroneSmartObjectStation::GetSmartObjectDefinition() const
 {
 	return const_cast<USmartObjectDefinition*>(SmartObjectComponent->GetBaseDefinition());
-}
-
-void ADroneSmartObjectStation::SetStationSkeletalMesh(USkeletalMesh* SkeletalMesh)
-{
-	StationMesh->SetSkeletalMeshAsset(SkeletalMesh);
-}
-
-USkeletalMesh* ADroneSmartObjectStation::GetStationSkeletalMesh() const
-{
-	return StationMesh->GetSkeletalMeshAsset();
 }
 
 FGameplayTag ADroneSmartObjectStation::GetExpectedActivityTag() const
@@ -142,11 +133,13 @@ bool ADroneSmartObjectStation::UpdateMGTurretUse(AActor* UserActor, AActor* Targ
 		|| MGTurretUser.Get() != UserActor
 		|| !IsLivingStationActor(UserActor)
 		|| !IsLivingStationActor(TargetActor)
-		|| !MGTurretAimPivot)
+		|| !MGTurretBaseMount
+		|| !MGTurretYawPivot
+		|| !MGTurretAimPivot
+		|| !MGTurretMuzzle)
 	{
 		return false;
 	}
-
 	MGTurretTarget = TargetActor;
 	MGTurretAimPoint = TargetActor->GetActorLocation();
 	const FVector PivotLocation = MGTurretAimPivot->GetComponentLocation();
@@ -157,13 +150,49 @@ bool ADroneSmartObjectStation::UpdateMGTurretUse(AActor* UserActor, AActor* Targ
 		return false;
 	}
 
-	// 최종 Skeletal Mesh의 Bone 이름에 의존하지 않는 Greybox 회전이다.
-	MGTurretAimPivot->SetWorldRotation(InitialAimDirection.Rotation());
-	const FVector TraceStart = MGTurretAimPivot->GetComponentTransform().TransformPosition(MGTurretMuzzleOffset);
-	const FVector AimDirection = (MGTurretAimPoint - TraceStart).GetSafeNormal();
+	// 고정 하단부는 유지하고, 몸체는 Yaw만, 포신은 Pitch만 담당한다.
+	// BaseMount의 +X가 포탑 정면이므로 공급 에셋 축 보정은 BP에서 BaseMount 또는 각 Mesh에 적용한다.
+	FRotator DesiredLocalAimRotation = MGTurretBaseMount->GetComponentTransform()
+		.InverseTransformVectorNoScale(InitialAimDirection)
+		.Rotation();
+	DesiredLocalAimRotation.Normalize();
+	const float DesiredYaw = FMath::Clamp(
+		FMath::UnwindDegrees(DesiredLocalAimRotation.Yaw),
+		-MGTurretMaxYawDegrees,
+		MGTurretMaxYawDegrees);
+	const float DesiredPitch = FMath::Clamp(
+		FMath::UnwindDegrees(DesiredLocalAimRotation.Pitch),
+		-MGTurretMaxPitchDownDegrees,
+		MGTurretMaxPitchUpDegrees);
+	const float DeltaSeconds = FMath::Max(0.0f, World->GetDeltaSeconds());
+	const float CurrentYaw = MGTurretYawPivot->GetRelativeRotation().Yaw;
+	const float CurrentPitch = MGTurretAimPivot->GetRelativeRotation().Pitch;
+	const float InterpolatedYaw = FMath::RInterpTo(
+		FRotator(0.0f, CurrentYaw, 0.0f),
+		FRotator(0.0f, DesiredYaw, 0.0f),
+		DeltaSeconds,
+		MGTurretAimInterpolationSpeed).Yaw;
+	MGTurretYawPivot->SetRelativeRotation(FRotator(
+		0.0f,
+		InterpolatedYaw,
+		0.0f));
+	MGTurretAimPivot->SetRelativeRotation(FRotator(
+		FMath::FInterpTo(CurrentPitch, DesiredPitch, DeltaSeconds, MGTurretAimInterpolationSpeed),
+		0.0f,
+		0.0f));
+
+	const FVector TraceStart = MGTurretMuzzle->GetComponentLocation();
+	const FVector AimDirection = MGTurretAimPivot->GetForwardVector().GetSafeNormal();
 	if (AimDirection.IsNearlyZero())
 	{
 		return false;
+	}
+	const float AimDot = FMath::Clamp(FVector::DotProduct(AimDirection, InitialAimDirection), -1.0f, 1.0f);
+	const float AlignmentErrorDegrees = FMath::RadiansToDegrees(FMath::Acos(AimDot));
+	MGTurretAlignmentErrorDegrees = AlignmentErrorDegrees;
+	if (AlignmentErrorDegrees > MGTurretFireAlignmentToleranceDegrees)
+	{
+		return true;
 	}
 	// Pivot은 목표 중심을 계속 바라보되 실제 탄환만 설정된 원뿔 안에서 흔들리게 한다.
 	const FVector ShotDirection = MakeRandomMGTurretShotDirection(
@@ -269,6 +298,7 @@ void ADroneSmartObjectStation::EndMGTurretUse(AActor* UserActor)
 	MGTurretUser.Reset();
 	MGTurretTarget.Reset();
 	MGTurretAimPoint = FVector::ZeroVector;
+	MGTurretAlignmentErrorDegrees = 180.0f;
 	++MGTurretReleaseCount;
 	OnMGTurretUseChanged.Broadcast(PreviousUser, PreviousTarget, false);
 }

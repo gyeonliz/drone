@@ -112,6 +112,11 @@ def update_rifle_anim_blueprint(blend_space):
             sequence_node.modify()
             sequence_node.set_editor_property("node", node_struct)
 
+    if not unreal.DroneNPCAnimationAuthoringLibrary.upgrade_rifle_anim_blueprint_for_drone_gaze(
+        TARGET_ANIM_BLUEPRINT
+    ):
+        raise RuntimeError("Could not add the project-owned Drone gaze graph")
+
     unreal.BlueprintEditorLibrary.compile_blueprint(anim_blueprint)
     if anim_blueprint.status == unreal.BlueprintStatus.BS_ERROR:
         raise RuntimeError(f"Compile failed for {TARGET_ANIM_BLUEPRINT}")
@@ -153,6 +158,11 @@ def verify_assets(blend_space, anim_blueprint):
     if active_blend_space != blend_space:
         raise RuntimeError("Armed AnimBP does not reference the project Rifle BlendSpace")
 
+    if not unreal.DroneNPCAnimationAuthoringLibrary.validate_rifle_anim_blueprint_drone_gaze(
+        TARGET_ANIM_BLUEPRINT
+    ):
+        raise RuntimeError("Armed AnimBP Drone gaze graph is missing or invalid")
+
     armed_anim_class = anim_blueprint.generated_class()
     for character_blueprint_path in ARMED_NPC_BLUEPRINTS:
         character_blueprint = load_required(character_blueprint_path)
@@ -176,7 +186,7 @@ def main():
     verify_assets(blend_space, anim_blueprint)
 
     unreal.log(
-        "NPC_GREYBOX_ANIM success: rifle idle/walk/jog/jump base assigned to hostile rifle and shotgun NPCs"
+        "NPC_GREYBOX_ANIM success: rifle locomotion and smoothed spine/neck/head Drone gaze assigned"
     )
 
 
