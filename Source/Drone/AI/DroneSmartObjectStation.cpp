@@ -226,12 +226,20 @@ bool ADroneSmartObjectStation::UpdateMGTurretUse(AActor* UserActor, AActor* Targ
 		}
 
 		Projectile->InitializeProjectile(
-			EDroneNPCProjectileSource::MGTurret,
+			GetMGTurretProjectileSource(),
 			TargetActor,
 			MGTurretDamage,
 			MGTurretProjectileSpeed,
 			MGTurretRange);
 		Projectile->GetCollisionComponent()->IgnoreActorWhenMoving(UserActor, true);
+		if (AActor* AttachParent = GetAttachParentActor())
+		{
+			Projectile->GetCollisionComponent()->IgnoreActorWhenMoving(AttachParent, true);
+		}
+		if (AActor* OwnerActor = GetOwner())
+		{
+			Projectile->GetCollisionComponent()->IgnoreActorWhenMoving(OwnerActor, true);
+		}
 		Projectile->OnProjectileImpact.AddDynamic(
 			this,
 			&ADroneSmartObjectStation::HandleMGTurretProjectileImpact);
@@ -247,6 +255,14 @@ bool ADroneSmartObjectStation::UpdateMGTurretUse(AActor* UserActor, AActor* Targ
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(DroneMGTurretTrace), true, this);
 	QueryParams.AddIgnoredActor(this);
 	QueryParams.AddIgnoredActor(UserActor);
+	if (AActor* AttachParent = GetAttachParentActor())
+	{
+		QueryParams.AddIgnoredActor(AttachParent);
+	}
+	if (AActor* OwnerActor = GetOwner())
+	{
+		QueryParams.AddIgnoredActor(OwnerActor);
+	}
 	FHitResult Hit;
 	const bool bBlockingHit = World->LineTraceSingleByChannel(
 		Hit,
@@ -336,7 +352,7 @@ void ADroneSmartObjectStation::HandleMGTurretProjectileImpact(
 	AActor* HitActor,
 	const bool bHitIntendedTarget)
 {
-	if (Source == EDroneNPCProjectileSource::MGTurret && bHitIntendedTarget)
+	if (Source == GetMGTurretProjectileSource() && bHitIntendedTarget)
 	{
 		++MGTurretTargetHitCount;
 	}

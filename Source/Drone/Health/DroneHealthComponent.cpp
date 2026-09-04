@@ -54,6 +54,7 @@ bool UDroneHealthComponent::ApplyHealthDamage(
 		// HealthChanged 수신 UI도 같은 프레임에 사망 상태를 읽을 수 있게 먼저 확정한다.
 		bDead = true;
 	}
+	OnHealthChangedNative.Broadcast(PreviousHealth, CurrentHealth, MaxHealth, AppliedDamage);
 	OnHealthChanged.Broadcast(PreviousHealth, CurrentHealth, MaxHealth, AppliedDamage);
 
 	if (bReachedZero)

@@ -14,6 +14,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(
 	float, MaxHealth,
 	float, AppliedDamage);
 
+/** Native C++ 표현 수신용 경로. BlueprintAssignable 계약은 OnHealthChanged에 그대로 유지한다. */
+DECLARE_MULTICAST_DELEGATE_FourParams(
+	FDroneHealthChangedNativeSignature,
+	float,
+	float,
+	float,
+	float);
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
 	FDroneDeathSignature,
 	AActor*, DeadActor,
@@ -59,6 +67,8 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category="Drone|Health")
 	FDroneHealthChangedSignature OnHealthChanged;
+
+	FDroneHealthChangedNativeSignature OnHealthChangedNative;
 
 	UPROPERTY(BlueprintAssignable, Category="Drone|Health")
 	FDroneDeathSignature OnDeath;

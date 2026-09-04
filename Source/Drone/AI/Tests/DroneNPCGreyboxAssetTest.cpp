@@ -4,6 +4,7 @@
 
 #include "AI/DroneAITags.h"
 #include "AI/Animation/DroneNPCAnimInstance.h"
+#include "AI/DroneAutomaticTurret.h"
 #include "AI/DroneMGTurretStation.h"
 #include "AI/DroneNPCAIController.h"
 #include "AI/DroneNPCCharacter.h"
@@ -15,6 +16,7 @@
 #include "AI/DroneSmartObjectStation.h"
 #include "AI/Weapons/DroneNPCWeaponComponent.h"
 #include "Prototype/DronePrototypePawn.h"
+#include "Vehicles/DroneGroundConformingVehicle.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/BlendSpace.h"
 #include "Components/BoxComponent.h"
@@ -1152,6 +1154,7 @@ private:
 			return true;
 		}
 
+		DamageShakeEventsBeforeForcedDestruction = Drone->GetDamageShakeEventCount();
 		UGameplayStatics::ApplyDamage(Drone, 100.0f, Survivor, Survivor->GetPawn(), nullptr);
 		AdvanceTo(EPhase::WaitForDroneDestroyed, Now);
 		return false;
@@ -1174,6 +1177,7 @@ private:
 			&& DroneHealth->IsDead()
 			&& FMath::IsNearlyZero(DroneHealth->GetCurrentHealth())
 			&& DroneHealth->GetDeathEventCount() == 1
+			&& Drone->GetDamageShakeEventCount() == DamageShakeEventsBeforeForcedDestruction + 1
 			&& Drone->GetDroneDestroyedEventCount() == 1
 			&& !Drone->GetActorEnableCollision()
 			&& Drone->GetPrototypeMovementComponent()
@@ -1244,6 +1248,10 @@ private:
 		UGameplayStatics::ApplyDamage(Drone, 10.0f, Survivor, Survivor->GetPawn(), nullptr);
 		Test->TestEqual(TEXT("Repeated damage does not rebroadcast Drone Health death"), DroneHealth->GetDeathEventCount(), 1);
 		Test->TestEqual(TEXT("Repeated damage does not rebroadcast Drone destruction"), Drone->GetDroneDestroyedEventCount(), 1);
+		Test->TestEqual(
+			TEXT("Repeated damage after destruction does not restart Drone damage shake"),
+			Drone->GetDamageShakeEventCount(),
+			DamageShakeEventsBeforeForcedDestruction + 1);
 		return true;
 	}
 
@@ -1258,6 +1266,7 @@ private:
 	TWeakObjectPtr<ADroneNPCAIController> InitialCoverController;
 	TWeakObjectPtr<ADroneNPCAIController> SurvivingMGTurretController;
 	int32 MGTurretShotsBeforeReassignment = 0;
+	int32 DamageShakeEventsBeforeForcedDestruction = 0;
 };
 } // namespace DroneNPCGreybox
 
@@ -1334,6 +1343,25 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("BP_NPCSpawnPoint uses project Spawn Point parent"), SpawnPointClass->IsChildOf(ADroneNPCSpawnPoint::StaticClass()));
 	}
 
+	UClass* EmplacedTurretClass = LoadClass<ADroneEmplacedAutomaticTurret>(
+		nullptr,
+		TEXT("/Game/Drone/AI/AutomaticTurrets/Blueprints/BP_AutoTurret_Emplaced.BP_AutoTurret_Emplaced_C"));
+	UClass* VehicleTurretClass = LoadClass<ADroneVehicleAutomaticTurret>(
+		nullptr,
+		TEXT("/Game/Drone/AI/AutomaticTurrets/Blueprints/BP_AutoTurret_Vehicle.BP_AutoTurret_Vehicle_C"));
+	UClass* GroundVehicleClass = LoadClass<ADroneGroundConformingVehicle>(
+		nullptr,
+		TEXT("/Game/Drone/Vehicles/Blueprints/BP_GroundConformingVehicle_Greybox.BP_GroundConformingVehicle_Greybox_C"));
+	TestNotNull(TEXT("Emplaced automatic turret Blueprint Class loads"), EmplacedTurretClass);
+	TestNotNull(TEXT("Vehicle automatic turret Blueprint Class loads"), VehicleTurretClass);
+	TestNotNull(TEXT("Ground-conforming vehicle Blueprint Class loads"), GroundVehicleClass);
+	TestTrue(TEXT("Emplaced automatic turret Blueprint uses exact native parent"),
+		EmplacedTurretClass && EmplacedTurretClass->GetSuperClass() == ADroneEmplacedAutomaticTurret::StaticClass());
+	TestTrue(TEXT("Vehicle automatic turret Blueprint uses exact native parent"),
+		VehicleTurretClass && VehicleTurretClass->GetSuperClass() == ADroneVehicleAutomaticTurret::StaticClass());
+	TestTrue(TEXT("Ground-conforming vehicle Blueprint uses exact native parent"),
+		GroundVehicleClass && GroundVehicleClass->GetSuperClass() == ADroneGroundConformingVehicle::StaticClass());
+
 	UWorld* World = LoadObject<UWorld>(nullptr, MapObjectPath);
 	TestNotNull(TEXT("NPC Smart Object Greybox map loads from central Maps folder"), World);
 	if (!World)
@@ -1349,6 +1377,10 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 	int32 DynamicRecastNavMeshCount = 0;
 	int32 StationCount = 0;
 	int32 CoverStationCount = 0;
+	int32 EmplacedAutomaticTurretCount = 0;
+	int32 VehicleAutomaticTurretCount = 0;
+	int32 GroundConformingVehicleCount = 0;
+	int32 VehicleRoughRoadSegmentCount = 0;
 	TMap<UClass*, int32> ActualPlacedCounts;
 	FBox NavigationBounds(EForceInit::ForceInit);
 	TArray<const AActor*> NavigationUsers;
@@ -1361,6 +1393,14 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 		}
 
 		PlayerStartCount += Actor->IsA<APlayerStart>() ? 1 : 0;
+		VehicleRoughRoadSegmentCount += Actor->ActorHasTag(TEXT("DroneVehicleRoughRoad")) ? 1 : 0;
+		if (const ADroneGroundConformingVehicle* GroundVehicle = Cast<ADroneGroundConformingVehicle>(Actor))
+		{
+			++GroundConformingVehicleCount;
+			TestTrue(TEXT("Placed ground vehicle enables its Greybox auto drive"), GroundVehicle->IsGreyboxAutoDriveEnabled());
+			TestEqual(TEXT("Placed ground vehicle exposes four wheel visuals"), GroundVehicle->GetWheelMeshes().Num(), 4);
+			TestNotNull(TEXT("Placed ground vehicle exposes its automatic-turret mount"), GroundVehicle->GetTurretMount());
+		}
 		if (Actor->GetClass()->GetPathName() == TEXT("/Script/NavigationSystem.NavMeshBoundsVolume"))
 		{
 			++NavBoundsCount;
@@ -1388,7 +1428,24 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 			DynamicRecastNavMeshCount +=
 				RecastNavMesh->GetRuntimeGenerationMode() == ERuntimeGenerationType::Dynamic ? 1 : 0;
 		}
-		if (const ADroneSmartObjectStation* Station = Cast<ADroneSmartObjectStation>(Actor))
+		if (const ADroneAutomaticTurret* AutomaticTurret = Cast<ADroneAutomaticTurret>(Actor))
+		{
+			EmplacedAutomaticTurretCount +=
+				AutomaticTurret->GetMountType() == EDroneAutomaticTurretMountType::Emplaced ? 1 : 0;
+			VehicleAutomaticTurretCount +=
+				AutomaticTurret->GetMountType() == EDroneAutomaticTurretMountType::VehicleMounted ? 1 : 0;
+			TestFalse(TEXT("Placed automatic turret has no Smart Object Definition"), AutomaticTurret->HasSmartObjectDefinition());
+			if (AutomaticTurret->GetMountType() == EDroneAutomaticTurretMountType::VehicleMounted)
+			{
+				TestNotNull(TEXT("Placed vehicle automatic turret is attached to a carrier Actor"),
+					AutomaticTurret->GetAttachParentActor());
+				TestTrue(TEXT("Placed vehicle automatic turret follows the ground-conforming carrier"),
+					AutomaticTurret->GetAttachParentActor()
+						&& AutomaticTurret->GetAttachParentActor()->IsA<ADroneGroundConformingVehicle>());
+			}
+			NavigationUsers.Add(Actor);
+		}
+		else if (const ADroneSmartObjectStation* Station = Cast<ADroneSmartObjectStation>(Actor))
 		{
 			++StationCount;
 			CoverStationCount += Station->GetActivity() == EDroneSmartObjectActivity::Cover ? 1 : 0;
@@ -1408,6 +1465,10 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("NPC Greybox map uses runtime Dynamic Recast generation"), DynamicRecastNavMeshCount, 1);
 	TestEqual(TEXT("NPC Greybox map has twelve Smart Object Stations"), StationCount, 12);
 	TestEqual(TEXT("NPC Greybox map has two Cover Stations"), CoverStationCount, 2);
+	TestEqual(TEXT("NPC Greybox map has one emplaced automatic turret"), EmplacedAutomaticTurretCount, 1);
+	TestEqual(TEXT("NPC Greybox map has one vehicle automatic turret"), VehicleAutomaticTurretCount, 1);
+	TestEqual(TEXT("NPC Greybox map has one ground-conforming vehicle carrier"), GroundConformingVehicleCount, 1);
+	TestEqual(TEXT("NPC Greybox map has five rough-road segments"), VehicleRoughRoadSegmentCount, 5);
 	for (const TPair<UClass*, int32>& Expected : ExpectedPlacedCounts)
 	{
 		TestEqual(

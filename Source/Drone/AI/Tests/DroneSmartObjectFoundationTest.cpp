@@ -3,6 +3,7 @@
 #include "Misc/AutomationTest.h"
 
 #include "AI/DroneAITags.h"
+#include "AI/DroneAutomaticTurret.h"
 #include "AI/DroneNPCAIController.h"
 #include "AI/DroneNPCCharacter.h"
 #include "AI/DroneNPCProfileComponent.h"
@@ -118,6 +119,31 @@ bool FDroneSmartObjectFoundationTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("MG body uses temporary Cylinder"), TurretDefaults->GetMGTurretBodyMesh()->GetStaticMesh() == CylinderMesh);
 			TestTrue(TEXT("MG barrel uses temporary Cylinder"), TurretDefaults->GetMGTurretBarrelMesh()->GetStaticMesh() == CylinderMesh);
 		}
+	}
+
+	const ADroneEmplacedAutomaticTurret* EmplacedDefaults = GetDefault<ADroneEmplacedAutomaticTurret>();
+	const ADroneVehicleAutomaticTurret* VehicleDefaults = GetDefault<ADroneVehicleAutomaticTurret>();
+	TestNotNull(TEXT("Emplaced automatic turret CDO exists"), EmplacedDefaults);
+	TestNotNull(TEXT("Vehicle automatic turret CDO exists"), VehicleDefaults);
+	if (EmplacedDefaults)
+	{
+		TestTrue(TEXT("Emplaced automatic turret ticks for autonomous tracking"), EmplacedDefaults->PrimaryActorTick.bCanEverTick);
+		TestTrue(TEXT("Emplaced automatic turret exposes its mount type"),
+			EmplacedDefaults->GetMountType() == EDroneAutomaticTurretMountType::Emplaced);
+		TestTrue(TEXT("Emplaced automatic turret is enabled by default"), EmplacedDefaults->IsAutomaticTurretEnabled());
+		TestTrue(TEXT("Emplaced automatic turret detection uses hysteresis"),
+			EmplacedDefaults->GetLoseTargetRange() >= EmplacedDefaults->GetDetectionRange());
+		TestTrue(TEXT("Emplaced automatic turret requires line of sight"), EmplacedDefaults->RequiresTargetLineOfSight());
+		TestFalse(TEXT("Emplaced automatic turret is not a claimable Smart Object"), EmplacedDefaults->HasSmartObjectDefinition());
+	}
+	if (VehicleDefaults)
+	{
+		TestTrue(TEXT("Vehicle automatic turret exposes its mount type"),
+			VehicleDefaults->GetMountType() == EDroneAutomaticTurretMountType::VehicleMounted);
+		TestTrue(TEXT("Vehicle automatic turret is enabled by default"), VehicleDefaults->IsAutomaticTurretEnabled());
+		TestTrue(TEXT("Vehicle automatic turret has a longer detection range than emplaced default"),
+			!EmplacedDefaults || VehicleDefaults->GetDetectionRange() > EmplacedDefaults->GetDetectionRange());
+		TestFalse(TEXT("Vehicle automatic turret is not a claimable Smart Object"), VehicleDefaults->HasSmartObjectDefinition());
 	}
 
 	const ADroneNPCSpawnPoint* SpawnDefaults = GetDefault<ADroneNPCSpawnPoint>();

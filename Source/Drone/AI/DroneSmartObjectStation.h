@@ -163,6 +163,12 @@ public:
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	/** 파생 무인 포탑은 같은 발사 파이프라인을 쓰되 탄환 출처만 분리한다. */
+	virtual EDroneNPCProjectileSource GetMGTurretProjectileSource() const
+	{
+		return EDroneNPCProjectileSource::MGTurret;
+	}
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|SmartObject|Components")
 	TObjectPtr<USceneComponent> StationRoot;
 

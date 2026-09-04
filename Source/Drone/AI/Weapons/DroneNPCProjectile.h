@@ -10,13 +10,14 @@ class UProjectileMovementComponent;
 class UStaticMeshComponent;
 class ADroneNPCProjectile;
 
-/** Rifle/Shotgun/MG가 같은 투사체를 사용하면서 충돌 결과를 원래 무기로 돌려주기 위한 구분값이다. */
+/** Rifle/Shotgun/유인 MG/무인 포탑이 같은 투사체를 사용하면서 결과를 원래 무기로 돌려주기 위한 구분값이다. */
 UENUM(BlueprintType)
 enum class EDroneNPCProjectileSource : uint8
 {
 	Rifle,
 	Shotgun,
-	MGTurret
+	MGTurret,
+	AutomaticTurret
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(

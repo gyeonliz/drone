@@ -2,6 +2,7 @@
 
 #include "Camera/CameraComponent.h"
 #include "AI/DroneNPCAIController.h"
+#include "Components/SceneComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Drone.h"
@@ -22,8 +23,9 @@
 
 ADronePrototypePawn::ADronePrototypePawn()
 {
-	// 이동은 UFloatingPawnMovement가 처리하므로 Pawn 자체 Tick은 필요하지 않다.
-	PrimaryActorTick.bCanEverTick = false;
+	// 이동은 UFloatingPawnMovement가 처리하고 Pawn Tick은 외형 Roll 보간에만 사용한다.
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = true;
 
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationYaw = false;
@@ -37,8 +39,11 @@ ADronePrototypePawn::ADronePrototypePawn()
 	CollisionComponent->SetCanEverAffectNavigation(false);
 	SetRootComponent(CollisionComponent);
 
+	VisualTiltPivot = CreateDefaultSubobject<USceneComponent>(TEXT("VisualTiltPivot"));
+	VisualTiltPivot->SetupAttachment(CollisionComponent);
+
 	VisualMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("VisualMeshComponent"));
-	VisualMeshComponent->SetupAttachment(CollisionComponent);
+	VisualMeshComponent->SetupAttachment(VisualTiltPivot);
 	VisualMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	VisualMeshComponent->SetSimulatePhysics(false);
 
@@ -66,14 +71,47 @@ ADronePrototypePawn::ADronePrototypePawn()
 	PerceptionStimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("PerceptionStimuliSource"));
 }
 
+void ADronePrototypePawn::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	RefreshVisualTiltAttachments();
+	EnsureHealthFeedbackBindings();
+}
+
 void ADronePrototypePawn::BeginPlay()
 {
 	Super::BeginPlay();
+	RefreshVisualTiltAttachments();
+	EnsureHealthFeedbackBindings();
+	bFirstPersonViewEnabled = bStartInFirstPersonView;
+	ApplyCameraViewMode();
 
 	// Actor가 유효한 World에 들어온 뒤 등록해야 Perception System이 실제 Source를 받을 수 있다.
 	PerceptionStimuliSource->RegisterForSense(UAISense_Sight::StaticClass());
 	PerceptionStimuliSource->RegisterWithPerceptionSystem();
-	HealthComponent->OnDeath.AddDynamic(this, &ADronePrototypePawn::HandleDeath);
+}
+
+void ADronePrototypePawn::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+	EnsureHealthFeedbackBindings();
+}
+
+void ADronePrototypePawn::EnsureHealthFeedbackBindings()
+{
+	if (HealthComponent)
+	{
+		HealthComponent->OnHealthChangedNative.RemoveAll(this);
+		HealthComponent->OnHealthChangedNative.AddUObject(this, &ADronePrototypePawn::HandleHealthChanged);
+		HealthComponent->OnDeath.AddUniqueDynamic(this, &ADronePrototypePawn::HandleDeath);
+	}
+}
+
+void ADronePrototypePawn::Tick(const float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	UpdateDamageShake(DeltaSeconds);
+	UpdateVisualBank(DeltaSeconds);
 }
 
 void ADronePrototypePawn::PawnClientRestart()
@@ -105,6 +143,12 @@ UPawnMovementComponent* ADronePrototypePawn::GetMovementComponent() const
 void ADronePrototypePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	RemovePrototypeMappingContext();
+	ResetDamageShakePresentation();
+	if (HealthComponent)
+	{
+		HealthComponent->OnHealthChangedNative.RemoveAll(this);
+		HealthComponent->OnDeath.RemoveDynamic(this, &ADronePrototypePawn::HandleDeath);
+	}
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -123,6 +167,8 @@ void ADronePrototypePawn::SetupPlayerInputComponent(UInputComponent* PlayerInput
 	if (MoveAction)
 	{
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ADronePrototypePawn::Move);
+		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Completed, this, &ADronePrototypePawn::ResetMoveVisualInput);
+		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Canceled, this, &ADronePrototypePawn::ResetMoveVisualInput);
 	}
 
 	if (AltitudeAction)
@@ -149,7 +195,16 @@ void ADronePrototypePawn::SetupPlayerInputComponent(UInputComponent* PlayerInput
 			&ADronePrototypePawn::ChangeCameraPitch);
 	}
 
-	if (!MoveAction || !AltitudeAction || !YawAction || !LookAction || !CameraPitchRateAction)
+	if (ToggleViewAction)
+	{
+		EnhancedInputComponent->BindAction(
+			ToggleViewAction,
+			ETriggerEvent::Started,
+			this,
+			&ADronePrototypePawn::ToggleViewFromInput);
+	}
+
+	if (!MoveAction || !AltitudeAction || !YawAction || !LookAction || !CameraPitchRateAction || !ToggleViewAction)
 	{
 		UE_LOG(LogDrone, Display, TEXT("Prototype pawn '%s' does not have all prototype Input Actions assigned yet."), *GetNameSafe(this));
 	}
@@ -238,8 +293,234 @@ void ADronePrototypePawn::Move(const FInputActionValue& Value)
 
 	// Y=전후, X=좌우이며 Actor의 현재 Yaw를 기준으로 이동한다.
 	const FVector2D MovementValue = Value.Get<FVector2D>();
+	SetVisualTiltInputGreybox(MovementValue.Y, MovementValue.X);
 	AddMovementInput(GetActorForwardVector(), MovementValue.Y);
 	AddMovementInput(GetActorRightVector(), MovementValue.X);
+}
+
+void ADronePrototypePawn::ResetMoveVisualInput(const FInputActionValue&)
+{
+	SetVisualTiltInputGreybox(0.0f, 0.0f);
+}
+
+void ADronePrototypePawn::SetVisualBankInputGreybox(const float NormalizedLateralInput)
+{
+	VisualBankLateralInput = FMath::Clamp(NormalizedLateralInput, -1.0f, 1.0f);
+}
+
+void ADronePrototypePawn::SetVisualTiltInputGreybox(
+	const float NormalizedForwardInput,
+	const float NormalizedLateralInput)
+{
+	VisualTiltForwardInput = FMath::Clamp(NormalizedForwardInput, -1.0f, 1.0f);
+	VisualBankLateralInput = FMath::Clamp(NormalizedLateralInput, -1.0f, 1.0f);
+}
+
+void ADronePrototypePawn::SetFirstPersonViewEnabled(const bool bEnabled)
+{
+	bFirstPersonViewEnabled = bEnabled;
+	ApplyCameraViewMode();
+}
+
+void ADronePrototypePawn::ToggleFirstPersonView()
+{
+	SetFirstPersonViewEnabled(!bFirstPersonViewEnabled);
+}
+
+void ADronePrototypePawn::ToggleViewFromInput(const FInputActionValue&)
+{
+	ToggleFirstPersonView();
+}
+
+void ADronePrototypePawn::ApplyCameraViewMode()
+{
+	if (!CameraBoom || !CollisionComponent || !VisualTiltPivot)
+	{
+		return;
+	}
+
+	const FAttachmentTransformRules KeepRelativeAttachment(EAttachmentRule::KeepRelative, false);
+	if (bFirstPersonViewEnabled)
+	{
+		CameraBoom->AttachToComponent(VisualTiltPivot, KeepRelativeAttachment);
+		CameraBoom->SetRelativeLocation(FirstPersonCameraBoomOffset);
+		CameraBoom->TargetArmLength = 0.0f;
+	}
+	else
+	{
+		CameraBoom->AttachToComponent(CollisionComponent, KeepRelativeAttachment);
+		CameraBoom->SetRelativeLocation(ThirdPersonCameraBoomOffset);
+		CameraBoom->TargetArmLength = ThirdPersonCameraArmLength;
+	}
+}
+
+void ADronePrototypePawn::RefreshVisualTiltAttachments()
+{
+	if (!VisualTiltPivot || !CollisionComponent)
+	{
+		return;
+	}
+
+	const FAttachmentTransformRules KeepRelativeAttachment(EAttachmentRule::KeepRelative, false);
+	if (VisualTiltPivot->GetAttachParent() != CollisionComponent)
+	{
+		VisualTiltPivot->AttachToComponent(CollisionComponent, KeepRelativeAttachment);
+	}
+	if (VisualMeshComponent && VisualMeshComponent->GetAttachParent() != VisualTiltPivot)
+	{
+		VisualMeshComponent->AttachToComponent(VisualTiltPivot, KeepRelativeAttachment);
+	}
+
+	// 프로젝트 FPV BP의 Rotor처럼 Collision Root에 직접 추가된 외형 Mesh도 모두 같은
+	// Pivot을 따르게 한다. CameraBoom 아래 Preview Mesh와 별도 계층 Mesh는 건드리지 않는다.
+	TInlineComponentArray<UStaticMeshComponent*> StaticMeshComponents(this);
+	for (UStaticMeshComponent* MeshComponent : StaticMeshComponents)
+	{
+		if (!MeshComponent
+			|| MeshComponent == VisualMeshComponent
+			|| MeshComponent->GetAttachParent() != CollisionComponent
+			|| MeshComponent->ComponentHasTag(TEXT("DroneNoVisualBank")))
+		{
+			continue;
+		}
+		MeshComponent->AttachToComponent(VisualTiltPivot, KeepRelativeAttachment);
+	}
+}
+
+void ADronePrototypePawn::UpdateVisualBank(const float DeltaSeconds)
+{
+	if (!VisualTiltPivot)
+	{
+		return;
+	}
+
+	// 사용자 조작 기준: 전진은 기수를 아래로, 오른쪽 이동은 외형을 오른쪽으로 기울인다.
+	const float TargetPitch = -VisualTiltForwardInput * MaximumVisualTiltPitchDegrees;
+	const float TargetRoll = VisualBankLateralInput * MaximumVisualBankRollDegrees;
+	const float PitchInterpolationSpeed = FMath::IsNearlyZero(VisualTiltForwardInput)
+		? VisualBankReturnSpeed
+		: VisualBankInterpolationSpeed;
+	const float RollInterpolationSpeed = FMath::IsNearlyZero(VisualBankLateralInput)
+		? VisualBankReturnSpeed
+		: VisualBankInterpolationSpeed;
+	CurrentVisualTiltPitchDegrees = FMath::FInterpTo(
+		CurrentVisualTiltPitchDegrees,
+		TargetPitch,
+		FMath::Max(0.0f, DeltaSeconds),
+		PitchInterpolationSpeed);
+	CurrentVisualBankRollDegrees = FMath::FInterpTo(
+		CurrentVisualBankRollDegrees,
+		TargetRoll,
+		FMath::Max(0.0f, DeltaSeconds),
+		RollInterpolationSpeed);
+	FRotator CombinedRotation = CurrentDamageShakeVisualRotation;
+	CombinedRotation.Pitch += CurrentVisualTiltPitchDegrees;
+	CombinedRotation.Roll += CurrentVisualBankRollDegrees;
+	VisualTiltPivot->SetRelativeRotation(CombinedRotation);
+}
+
+void ADronePrototypePawn::TriggerDamageShakeGreybox(const float AppliedDamage)
+{
+	if (!bDamageShakeEnabled || AppliedDamage <= 0.0f || DamageShakeDurationSeconds <= 0.0f)
+	{
+		return;
+	}
+
+	const float DamageScale = FMath::Clamp(
+		AppliedDamage / FMath::Max(1.0f, DamageForMaximumShake),
+		MinimumDamageShakeScale,
+		1.0f);
+	CurrentDamageShakeStrength = FMath::Max(CurrentDamageShakeStrength, DamageScale);
+	DamageShakeTimeRemainingSeconds = DamageShakeDurationSeconds;
+	DamageShakePhaseRadians = FMath::Fmod(DamageShakePhaseRadians + 1.6180339f, UE_TWO_PI);
+	++DamageShakeEventCount;
+
+	if (FollowCamera && !bCameraAdditiveBaseCaptured)
+	{
+		FollowCamera->GetAdditiveOffset(CameraAdditiveBaseTransform, CameraAdditiveBaseFOV);
+		bCameraAdditiveBaseCaptured = true;
+	}
+}
+
+void ADronePrototypePawn::UpdateDamageShake(const float DeltaSeconds)
+{
+	if (DamageShakeTimeRemainingSeconds <= 0.0f)
+	{
+		return;
+	}
+
+	const float Duration = FMath::Max(0.01f, DamageShakeDurationSeconds);
+	const float RemainingRatio = FMath::Clamp(DamageShakeTimeRemainingSeconds / Duration, 0.0f, 1.0f);
+	const float Envelope = RemainingRatio * RemainingRatio * CurrentDamageShakeStrength;
+	const float ElapsedSeconds = Duration - DamageShakeTimeRemainingSeconds;
+	const float Oscillation = ElapsedSeconds * DamageShakeOscillationsPerSecond * UE_TWO_PI
+		+ DamageShakePhaseRadians;
+
+	CurrentDamageShakeVisualRotation = FRotator(
+		FMath::Sin(Oscillation * 0.83f) * DamageShakeVisualRotationDegrees * 0.65f * Envelope,
+		FMath::Sin(Oscillation * 1.17f + 0.7f) * DamageShakeVisualRotationDegrees * 0.35f * Envelope,
+		FMath::Cos(Oscillation) * DamageShakeVisualRotationDegrees * Envelope);
+
+	const FVector CameraLocationOffset(
+		FMath::Sin(Oscillation * 1.31f),
+		FMath::Cos(Oscillation * 0.91f),
+		FMath::Sin(Oscillation * 1.53f + 0.4f));
+	const FRotator CameraRotationOffset(
+		FMath::Sin(Oscillation * 0.77f) * DamageShakeCameraRotationDegrees * Envelope,
+		FMath::Cos(Oscillation * 1.09f) * DamageShakeCameraRotationDegrees * 0.6f * Envelope,
+		FMath::Sin(Oscillation * 1.43f) * DamageShakeCameraRotationDegrees * 0.5f * Envelope);
+	ApplyDamageShakeCameraOffset(
+		CameraLocationOffset * DamageShakeCameraLocationCentimeters * Envelope,
+		CameraRotationOffset);
+
+	DamageShakeTimeRemainingSeconds = FMath::Max(
+		0.0f,
+		DamageShakeTimeRemainingSeconds - FMath::Max(0.0f, DeltaSeconds));
+	if (DamageShakeTimeRemainingSeconds <= 0.0f)
+	{
+		ResetDamageShakePresentation();
+	}
+}
+
+void ADronePrototypePawn::ApplyDamageShakeCameraOffset(
+	const FVector& LocationOffset,
+	const FRotator& RotationOffset)
+{
+	if (!FollowCamera)
+	{
+		return;
+	}
+
+	FollowCamera->ClearAdditiveOffset();
+	if (bCameraAdditiveBaseCaptured)
+	{
+		FollowCamera->AddAdditiveOffset(CameraAdditiveBaseTransform, CameraAdditiveBaseFOV);
+	}
+	FollowCamera->AddAdditiveOffset(FTransform(RotationOffset, LocationOffset), 0.0f);
+}
+
+void ADronePrototypePawn::ResetDamageShakePresentation()
+{
+	DamageShakeTimeRemainingSeconds = 0.0f;
+	CurrentDamageShakeStrength = 0.0f;
+	CurrentDamageShakeVisualRotation = FRotator::ZeroRotator;
+	if (FollowCamera && bCameraAdditiveBaseCaptured)
+	{
+		FollowCamera->ClearAdditiveOffset();
+		FollowCamera->AddAdditiveOffset(CameraAdditiveBaseTransform, CameraAdditiveBaseFOV);
+	}
+	bCameraAdditiveBaseCaptured = false;
+	CameraAdditiveBaseTransform = FTransform::Identity;
+	CameraAdditiveBaseFOV = 0.0f;
+}
+
+void ADronePrototypePawn::HandleHealthChanged(
+	const float,
+	const float,
+	const float,
+	const float AppliedDamage)
+{
+	TriggerDamageShakeGreybox(AppliedDamage);
 }
 
 void ADronePrototypePawn::ChangeAltitude(const FInputActionValue& Value)
@@ -328,6 +609,7 @@ void ADronePrototypePawn::HandleDeath(
 	{
 		return;
 	}
+	SetVisualTiltInputGreybox(0.0f, 0.0f);
 
 	// 회색상자 사망 규칙: 기체는 현 위치에 남기고 조종·이동·충돌만 중지한다.
 	// 이후 GameMode가 이 Event를 받아 임무 실패 화면이나 Respawn을 결정할 수 있다.

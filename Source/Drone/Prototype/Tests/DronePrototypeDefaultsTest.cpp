@@ -7,6 +7,7 @@
 
 #include "Camera/CameraComponent.h"
 #include "Components/SphereComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/FloatingPawnMovement.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -33,12 +34,14 @@ bool FDronePrototypeDefaultsTest::RunTest(const FString& Parameters)
 	if (PawnDefaults)
 	{
 		TestNotNull(TEXT("Collision component exists"), PawnDefaults->GetCollisionComponent());
+		TestNotNull(TEXT("Visual tilt pivot exists"), PawnDefaults->GetVisualTiltPivot());
 		TestNotNull(TEXT("Visual mesh component exists"), PawnDefaults->GetVisualMeshComponent());
 		TestNotNull(TEXT("Camera boom exists"), PawnDefaults->GetCameraBoom());
 		TestNotNull(TEXT("Follow camera exists"), PawnDefaults->GetFollowCamera());
 		TestNotNull(TEXT("Floating Pawn Movement exists"), PawnDefaults->GetPrototypeMovementComponent());
 		TestNotNull(TEXT("Telemetry component exists"), PawnDefaults->GetTelemetryComponent());
 		TestTrue(TEXT("Collision component is the root"), PawnDefaults->GetRootComponent() == PawnDefaults->GetCollisionComponent());
+		TestTrue(TEXT("Prototype Pawn ticks only for visual banking"), PawnDefaults->PrimaryActorTick.bCanEverTick);
 		TestTrue(TEXT("Pawn exposes the prototype movement component"), PawnDefaults->GetMovementComponent() == PawnDefaults->GetPrototypeMovementComponent());
 
 		if (PawnDefaults->GetCollisionComponent())
@@ -50,10 +53,19 @@ bool FDronePrototypeDefaultsTest::RunTest(const FString& Parameters)
 
 		if (PawnDefaults->GetVisualMeshComponent())
 		{
+			TestTrue(TEXT("Visual mesh follows the visual tilt pivot"),
+				PawnDefaults->GetVisualMeshComponent()->GetAttachParent() == PawnDefaults->GetVisualTiltPivot());
 			TestTrue(
 				TEXT("Prototype visual mesh collision is disabled"),
 				PawnDefaults->GetVisualMeshComponent()->GetCollisionEnabled() == ECollisionEnabled::NoCollision);
 			TestFalse(TEXT("Prototype visual mesh physics simulation is disabled"), PawnDefaults->GetVisualMeshComponent()->IsSimulatingPhysics());
+		}
+		if (PawnDefaults->GetVisualTiltPivot())
+		{
+			TestTrue(TEXT("Visual tilt pivot follows the collision root"),
+				PawnDefaults->GetVisualTiltPivot()->GetAttachParent() == PawnDefaults->GetCollisionComponent());
+			TestTrue(TEXT("Visual bank default maximum is positive"), PawnDefaults->GetMaximumVisualBankRollDegrees() > 0.0f);
+			TestTrue(TEXT("Visual pitch default maximum is positive"), PawnDefaults->GetMaximumVisualTiltPitchDegrees() > 0.0f);
 		}
 
 		if (PawnDefaults->GetCameraBoom())
@@ -61,6 +73,7 @@ bool FDronePrototypeDefaultsTest::RunTest(const FString& Parameters)
 			TestTrue(
 				TEXT("Camera boom is attached to the collision root"),
 				PawnDefaults->GetCameraBoom()->GetAttachParent() == PawnDefaults->GetCollisionComponent());
+			TestTrue(TEXT("Prototype Pawn defaults to third-person view"), !PawnDefaults->IsFirstPersonViewEnabled());
 			TestFalse(TEXT("Camera boom ignores controller rotation"), PawnDefaults->GetCameraBoom()->bUsePawnControlRotation);
 			TestTrue(TEXT("Camera boom inherits Drone yaw"), PawnDefaults->GetCameraBoom()->bInheritYaw);
 		}

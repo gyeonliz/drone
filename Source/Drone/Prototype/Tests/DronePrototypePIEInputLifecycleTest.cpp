@@ -45,7 +45,8 @@ constexpr const TCHAR* AltitudePath = TEXT("/Game/Drone/Prototype/Input/Actions/
 constexpr const TCHAR* YawPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_Yaw.IA_DronePrototype_Yaw");
 constexpr const TCHAR* LookPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_Look.IA_DronePrototype_Look");
 constexpr const TCHAR* CameraPitchRatePath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_CameraPitchRate.IA_DronePrototype_CameraPitchRate");
-constexpr int32 ExpectedMappingCount = 15;
+constexpr const TCHAR* ToggleViewPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_ToggleView.IA_DronePrototype_ToggleView");
+constexpr int32 ExpectedMappingCount = 16;
 constexpr double EffectSampleSeconds = 0.2;
 constexpr float TranslationTolerance = 0.01f;
 constexpr float RotationTolerance = 0.001f;
@@ -768,7 +769,8 @@ private:
 		UInputAction* Yaw = LoadObject<UInputAction>(nullptr, YawPath);
 		UInputAction* Look = LoadObject<UInputAction>(nullptr, LookPath);
 		UInputAction* CameraPitchRate = LoadObject<UInputAction>(nullptr, CameraPitchRatePath);
-		if (!IMC || !Move || !Altitude || !Yaw || !Look || !CameraPitchRate)
+		UInputAction* ToggleView = LoadObject<UInputAction>(nullptr, ToggleViewPath);
+		if (!IMC || !Move || !Altitude || !Yaw || !Look || !CameraPitchRate || !ToggleView)
 		{
 			OutReason = TEXT("one or more Prototype input assets failed to load");
 			return EAcquireResult::Fatal;
@@ -798,7 +800,21 @@ private:
 		}
 
 		const TConstArrayView<const FEnhancedActionKeyMapping> EffectiveMappings = FoundInput->GetEnhancedActionMappingsView();
-		const TArray<const UInputAction*> ExpectedActions{Move, Altitude, Yaw, Look, CameraPitchRate};
+		int32 ToggleViewPMappingCount = 0;
+		for (const FEnhancedActionKeyMapping& Source : SourceMappings)
+		{
+			if (Source.Action == ToggleView && Source.Key == EKeys::P)
+			{
+				++ToggleViewPMappingCount;
+			}
+		}
+		if (ToggleViewPMappingCount != 1)
+		{
+			OutReason = FString::Printf(TEXT("ToggleView/P mapping appears %d times, expected exactly one"), ToggleViewPMappingCount);
+			return EAcquireResult::Fatal;
+		}
+
+		const TArray<const UInputAction*> ExpectedActions{Move, Altitude, Yaw, Look, CameraPitchRate, ToggleView};
 		int32 PrototypeEffectiveCount = 0;
 		for (const FEnhancedActionKeyMapping& Effective : EffectiveMappings)
 		{
@@ -853,13 +869,34 @@ private:
 		for (const UInputAction* Action : ExpectedActions)
 		{
 			int32 ActionBindingCount = 0;
-			const FEnhancedInputActionEventBinding* FoundBinding = nullptr;
+			int32 TriggeredBindingCount = 0;
+			int32 StartedBindingCount = 0;
+			int32 CompletedBindingCount = 0;
+			int32 CanceledBindingCount = 0;
+			bool bAllBindingsOwnedByPawn = true;
 			for (const TUniquePtr<FEnhancedInputActionEventBinding>& Binding : InputComponent->GetActionEventBindings())
 			{
 				if (Binding && Binding->GetAction() == Action)
 				{
 					++ActionBindingCount;
-					FoundBinding = Binding.Get();
+					bAllBindingsOwnedByPawn &= Binding->GetUObject() == FoundPawn;
+					switch (Binding->GetTriggerEvent())
+					{
+					case ETriggerEvent::Started:
+						++StartedBindingCount;
+						break;
+					case ETriggerEvent::Triggered:
+						++TriggeredBindingCount;
+						break;
+					case ETriggerEvent::Completed:
+						++CompletedBindingCount;
+						break;
+					case ETriggerEvent::Canceled:
+						++CanceledBindingCount;
+						break;
+					default:
+						break;
+					}
 				}
 			}
 
@@ -869,12 +906,32 @@ private:
 				return EAcquireResult::Wait;
 			}
 
-			if (ActionBindingCount != 1 || !FoundBinding || FoundBinding->GetTriggerEvent() != ETriggerEvent::Triggered
-				|| FoundBinding->GetUObject() != FoundPawn)
+			const bool bIsMoveAction = Action == Move;
+			const bool bIsToggleViewAction = Action == ToggleView;
+			const int32 ExpectedActionBindingCount = bIsMoveAction ? 3 : 1;
+			const int32 ExpectedTriggeredBindingCount = bIsToggleViewAction ? 0 : 1;
+			const int32 ExpectedStartedBindingCount = bIsToggleViewAction ? 1 : 0;
+			const bool bMoveReleaseBindingsAreValid = !bIsMoveAction
+				|| (CompletedBindingCount == 1 && CanceledBindingCount == 1);
+			if (ActionBindingCount != ExpectedActionBindingCount
+				|| TriggeredBindingCount != ExpectedTriggeredBindingCount
+				|| StartedBindingCount != ExpectedStartedBindingCount
+				|| !bMoveReleaseBindingsAreValid
+				|| !bAllBindingsOwnedByPawn)
 			{
 				OutReason = FString::Printf(
-					TEXT("%s does not have exactly one Pawn-owned Triggered binding"),
-					*GetNameSafe(Action));
+					TEXT("%s bindings are total=%d Started=%d Triggered=%d Completed=%d Canceled=%d; expected Pawn-owned %d/%d/%d/%d/%d"),
+					*GetNameSafe(Action),
+					ActionBindingCount,
+					StartedBindingCount,
+					TriggeredBindingCount,
+					CompletedBindingCount,
+					CanceledBindingCount,
+					ExpectedActionBindingCount,
+					ExpectedStartedBindingCount,
+					ExpectedTriggeredBindingCount,
+					bIsMoveAction ? 1 : 0,
+					bIsMoveAction ? 1 : 0);
 				return EAcquireResult::Fatal;
 			}
 		}
