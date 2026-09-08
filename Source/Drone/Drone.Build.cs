@@ -21,6 +21,7 @@ public class Drone : ModuleRules
 			"GameplayStateTreeModule",
 			"SmartObjectsModule",
 			"GameplayInteractionsModule",
+			"Niagara",
 			"UMG",
 			"Slate",
 			"SlateCore"

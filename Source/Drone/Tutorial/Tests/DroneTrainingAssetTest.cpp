@@ -1,6 +1,8 @@
 #if WITH_EDITOR && WITH_DEV_AUTOMATION_TESTS
 
 #include "Misc/AutomationTest.h"
+#include "Abilities/DroneDroppedPayload.h"
+#include "Abilities/DroneRoleTestTarget.h"
 #include "Prototype/DronePrototypeGameMode.h"
 #include "Prototype/DronePrototypePawn.h"
 #include "Tutorial/DroneTrainingCourse.h"
@@ -102,6 +104,10 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 	int32 PlacedPrototypePawnCount = 0;
 	int32 CourseCount = 0;
 	int32 GateCount = 0;
+	int32 ReconRoleTargetCount = 0;
+	int32 ImpactRoleTargetCount = 0;
+	int32 PayloadRoleTargetCount = 0;
+	int32 CarryablePayloadCount = 0;
 	ADroneTrainingCourse* PlacedCourse = nullptr;
 	TArray<ADroneTrainingGate*> PlacedGates;
 	for (TActorIterator<AActor> ActorIt(TrainingWorld); ActorIt; ++ActorIt)
@@ -124,6 +130,13 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 			++GateCount;
 			PlacedGates.Add(Gate);
 		}
+		ReconRoleTargetCount += Actor->IsA<ADroneReconRoleTestTarget>() ? 1 : 0;
+		ImpactRoleTargetCount += Actor->IsA<ADroneImpactRoleTestTarget>() ? 1 : 0;
+		PayloadRoleTargetCount += Actor->IsA<ADronePayloadRoleTestTarget>() ? 1 : 0;
+		if (const ADroneDroppedPayload* CarryablePayload = Cast<ADroneDroppedPayload>(Actor))
+		{
+			CarryablePayloadCount += CarryablePayload->DoesStartAsCarryablePickup() ? 1 : 0;
+		}
 
 		// 새 Map에 기존 Template/Variant Actor를 직접 배치하는 회귀를 잡는다.
 		const FString ActorClassPath = Actor->GetClass()->GetPathName();
@@ -137,6 +150,10 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Training Map has no pre-placed Prototype Pawn"), PlacedPrototypePawnCount, 0);
 	TestEqual(TEXT("Training Map has exactly one Training Course"), CourseCount, 1);
 	TestEqual(TEXT("Training Map has exactly four Greybox Gates"), GateCount, 4);
+	TestEqual(TEXT("Training Map has one Recon role test target"), ReconRoleTargetCount, 1);
+	TestEqual(TEXT("Training Map has one Impact role test target"), ImpactRoleTargetCount, 1);
+	TestEqual(TEXT("Training Map has one Payload role test target"), PayloadRoleTargetCount, 1);
+	TestEqual(TEXT("Training Map has one placeable carryable Payload"), CarryablePayloadCount, 1);
 	TestNotNull(TEXT("Training Map contains a Training Course instance"), PlacedCourse);
 
 	if (PlacedCourse)

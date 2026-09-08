@@ -82,6 +82,7 @@ void ADroneMissionPlayerController::EndPlay(const EEndPlayReason::Type EndPlayRe
 	}
 	if (MissionObjectiveWidget)
 	{
+		MissionObjectiveWidget->ClearDronePawn();
 		MissionObjectiveWidget->ClearMissionDirector();
 		MissionObjectiveWidget->RemoveFromParent();
 		MissionObjectiveWidget = nullptr;
@@ -295,6 +296,7 @@ void ADroneMissionPlayerController::CreateMissionObjectiveWidget(
 		return;
 	}
 	MissionObjectiveWidget->SetMissionDirector(InMissionDirector);
+	MissionObjectiveWidget->SetDronePawn(SpawnedDrone);
 }
 
 void ADroneMissionPlayerController::CreateMissionResultWidget(const EDroneMissionOutcome Outcome)
@@ -317,6 +319,7 @@ void ADroneMissionPlayerController::HandleMissionFinished(const EDroneMissionOut
 {
 	if (MissionObjectiveWidget)
 	{
+		MissionObjectiveWidget->ClearDronePawn();
 		MissionObjectiveWidget->ClearMissionDirector();
 		MissionObjectiveWidget->RemoveFromParent();
 		MissionObjectiveWidget = nullptr;

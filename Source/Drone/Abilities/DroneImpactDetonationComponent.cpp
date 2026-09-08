@@ -3,6 +3,8 @@
 #include "GameFramework/Pawn.h"
 #include "Health/DroneHealthComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 
 UDroneImpactDetonationComponent::UDroneImpactDetonationComponent()
 {
@@ -53,7 +55,12 @@ bool UDroneImpactDetonationComponent::ArmImpactDetonation()
 
 void UDroneImpactDetonationComponent::DisarmImpactDetonation()
 {
+	const bool bWasArmed = bArmed;
 	bArmed = false;
+	if (bWasArmed)
+	{
+		OnImpactDetonationDisarmed.Broadcast();
+	}
 }
 
 bool UDroneImpactDetonationComponent::TryDetonateFromImpact(
@@ -76,6 +83,23 @@ bool UDroneImpactDetonationComponent::TryDetonateFromImpact(
 	bDetonated = true;
 	++DetonationCount;
 	const FVector ExplosionLocation = OwnerActor->GetActorLocation();
+	if (ExplosionEffect)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			this,
+			ExplosionEffect,
+			ExplosionLocation,
+			FRotator::ZeroRotator,
+			ExplosionEffectScale,
+			true,
+			true,
+			ENCPoolMethod::AutoRelease,
+			true);
+	}
+	if (ExplosionSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, ExplosionSound, ExplosionLocation);
+	}
 	AController* InstigatorController = Cast<APawn>(OwnerActor)
 		? Cast<APawn>(OwnerActor)->GetController()
 		: nullptr;

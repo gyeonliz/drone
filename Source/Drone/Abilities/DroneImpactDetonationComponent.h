@@ -4,7 +4,11 @@
 #include "Components/ActorComponent.h"
 #include "DroneImpactDetonationComponent.generated.h"
 
+class UNiagaraSystem;
+class USoundBase;
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FDroneImpactArmedSignature);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FDroneImpactDisarmedSignature);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FDroneImpactDetonatedSignature,
 	FVector, ExplosionLocation,
@@ -40,6 +44,12 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|FPV|Impact")
 	bool HasDetonated() const { return bDetonated; }
 
+	UFUNCTION(BlueprintPure, Category="Drone|FPV|Impact|Presentation")
+	UNiagaraSystem* GetExplosionEffect() const { return ExplosionEffect; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|FPV|Impact|Presentation")
+	USoundBase* GetExplosionSound() const { return ExplosionSound; }
+
 	UFUNCTION(BlueprintPure, Category="Drone|FPV|Impact|Debug")
 	int32 GetDetonationCount() const { return DetonationCount; }
 
@@ -48,6 +58,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category="Drone|FPV|Impact")
 	FDroneImpactArmedSignature OnImpactDetonationArmed;
+
+	UPROPERTY(BlueprintAssignable, Category="Drone|FPV|Impact")
+	FDroneImpactDisarmedSignature OnImpactDetonationDisarmed;
 
 	UPROPERTY(BlueprintAssignable, Category="Drone|FPV|Impact")
 	FDroneImpactDetonatedSignature OnImpactDetonated;
@@ -64,6 +77,16 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|FPV|Impact", meta=(ClampMin="1.0", ForceUnits="cm"))
 	float ExplosionRadiusCentimeters = 350.0f;
+
+	/** 제공 VFX Asset을 BP 기본값에서 연결해 자폭을 화면에서 즉시 판별한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|FPV|Impact|Presentation")
+	TObjectPtr<UNiagaraSystem> ExplosionEffect;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|FPV|Impact|Presentation")
+	TObjectPtr<USoundBase> ExplosionSound;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|FPV|Impact|Presentation")
+	FVector ExplosionEffectScale = FVector(0.35f);
 
 private:
 	UFUNCTION()

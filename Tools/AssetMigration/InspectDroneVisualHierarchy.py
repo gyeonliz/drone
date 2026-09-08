@@ -19,13 +19,18 @@ if spawned is None:
 components = spawned.get_components_by_class(unreal.StaticMeshComponent)
 for component in components:
     parent = component.get_attach_parent()
+    mesh = component.get_editor_property("static_mesh")
+    relative_location = component.get_editor_property("relative_location")
+    relative_rotation = component.get_editor_property("relative_rotation")
+    relative_scale = component.get_editor_property("relative_scale3d")
     unreal.log(
-        "DRONE_VISUAL_HIERARCHY|component={} | parent={} | mesh={}".format(
+        "DRONE_VISUAL_HIERARCHY|component={} | parent={} | mesh={} | location={} | rotation={} | scale={}".format(
             component.get_name(),
             parent.get_name() if parent else "None",
-            component.get_editor_property("static_mesh").get_path_name()
-            if component.get_editor_property("static_mesh")
-            else "None",
+            mesh.get_path_name() if mesh else "None",
+            relative_location,
+            relative_rotation,
+            relative_scale,
         )
     )
 

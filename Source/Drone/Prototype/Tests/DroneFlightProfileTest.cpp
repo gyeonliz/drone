@@ -54,14 +54,36 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("FPV Strike profile starts in FPV"), FPVStrikeDefinition->FlightProfile.bStartInFirstPersonView);
 	TestFalse(TEXT("Scout profile starts in third person"), ScoutDefinition->FlightProfile.bStartInFirstPersonView);
 	TestFalse(TEXT("Drop profile starts in third person"), DropDefinition->FlightProfile.bStartInFirstPersonView);
+	UClass* ScoutPawnClass = LoadClass<ADronePrototypePawn>(nullptr,
+		TEXT("/Game/Drone/Integrations/RoleDrones/BP_DroneScoutIntegration.BP_DroneScoutIntegration_C"));
+	UClass* FPVPawnClass = LoadClass<ADronePrototypePawn>(nullptr,
+		TEXT("/Game/Drone/Integrations/DronePackFPV/BP_DroneFPVIntegration.BP_DroneFPVIntegration_C"));
+	UClass* DropPawnClass = LoadClass<ADronePrototypePawn>(nullptr,
+		TEXT("/Game/Drone/Integrations/RoleDrones/BP_DroneDropIntegration.BP_DroneDropIntegration_C"));
+	TestNotNull(TEXT("Scout integration Pawn class exists"), ScoutPawnClass);
+	TestNotNull(TEXT("FPV integration Pawn class exists"), FPVPawnClass);
+	TestNotNull(TEXT("Drop integration Pawn class exists"), DropPawnClass);
+	if (!ScoutPawnClass || !FPVPawnClass || !DropPawnClass)
+	{
+		return false;
+	}
 
 	const TArray<UDroneDefinition*> Definitions = {ScoutDefinition, FPVStrikeDefinition, DropDefinition};
+	const TMap<FName, UClass*> ExpectedPawnClasses = {
+		{ScoutDefinition->DroneId, ScoutPawnClass},
+		{FPVStrikeDefinition->DroneId, FPVPawnClass},
+		{DropDefinition->DroneId, DropPawnClass}
+	};
 	for (UDroneDefinition* Definition : Definitions)
 	{
 		UClass* PawnClass = Definition->PawnClass.LoadSynchronous();
 		TestTrue(
 			*FString::Printf(TEXT("%s uses a Prototype Pawn subclass"), *Definition->DroneId.ToString()),
 			PawnClass && PawnClass->IsChildOf(ADronePrototypePawn::StaticClass()));
+		TestEqual(
+			*FString::Printf(TEXT("%s uses its role-specific Drone Pack integration Pawn"), *Definition->DroneId.ToString()),
+			PawnClass,
+			ExpectedPawnClasses.FindRef(Definition->DroneId));
 		if (!PawnClass)
 		{
 			continue;

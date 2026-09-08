@@ -57,6 +57,9 @@ public:
 
 	USphereComponent* GetCollisionComponent() const { return CollisionComponent; }
 	USceneComponent* GetVisualTiltPivot() const { return VisualTiltPivot; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Drop|Pickup")
+	USceneComponent* GetPayloadCarryAnchor() const { return PayloadCarryAnchor; }
 	UStaticMeshComponent* GetVisualMeshComponent() const { return VisualMeshComponent; }
 	USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 	UCameraComponent* GetFollowCamera() const { return FollowCamera; }
@@ -80,7 +83,7 @@ public:
 
 	/**
 	 * 현재 Definition의 역할에 맞는 공통 1차 기능을 실행한다.
-	 * Recon=가장 가까운 유효 대상 Scan, FPV=충돌 자폭 Arm, Drop=Payload 투하다.
+	 * Recon=가장 가까운 유효 대상 Scan, FPV=충돌 자폭 Arm, Drop=적재 중 투하/빈 상태 근처 화물 적재다.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Drone|Role Ability")
 	bool TriggerPrimaryRoleAbility();
@@ -181,6 +184,10 @@ protected:
 	/** 충돌·카메라는 수평으로 두고 Drone 본체와 Rotor 외형만 Pitch·Roll시키는 Pivot이다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USceneComponent> VisualTiltPivot;
+
+	/** 맵 배치 화물을 실제 Actor 상태로 기체 아래에 붙이는 Anchor다. 파생 BP에서 위치를 조정할 수 있다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<USceneComponent> PayloadCarryAnchor;
 
 	/** 현재 Engine 기본 도형을 표시하는 외형 전용 Component. Collision은 사용하지 않는다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))

@@ -27,6 +27,10 @@ namespace DroneMissionEntryPIE
 {
 constexpr const TCHAR* FrontEndMapPackage = TEXT("/Game/Drone/Maps/Lvl_DroneFrontEnd");
 constexpr const TCHAR* MissionMapPackage = TEXT("/Game/Drone/Maps/Lvl_DroneTraining");
+constexpr const TCHAR* ScoutDronePawnClassPath =
+	TEXT("/Game/Drone/Integrations/RoleDrones/BP_DroneScoutIntegration.BP_DroneScoutIntegration_C");
+constexpr const TCHAR* DropDronePawnClassPath =
+	TEXT("/Game/Drone/Integrations/RoleDrones/BP_DroneDropIntegration.BP_DroneDropIntegration_C");
 
 UWorld* FindFrontEndPIEWorld()
 {
@@ -252,9 +256,15 @@ public:
 		Test->TestTrue(TEXT("Confirmed role Drone spawns and is possessed"), SelectionWidget->ConfirmAndLaunchSelectedDrone());
 
 		ADronePrototypePawn* Drone = Controller->GetSpawnedDrone();
+		UClass* IntegratedDronePawnClass = LoadClass<ADronePrototypePawn>(nullptr, ScoutDronePawnClassPath);
 		ADroneMissionDirector* Director = Controller->GetMissionDirector();
 		UDroneMissionObjectiveWidget* ObjectiveWidget = Controller->GetMissionObjectiveWidget();
 		Test->TestNotNull(TEXT("Mission Controller owns the spawned Drone"), Drone);
+		Test->TestNotNull(TEXT("Scout role integration Pawn class is loadable"), IntegratedDronePawnClass);
+		Test->TestEqual(
+			TEXT("Mission selection spawns the Scout model and input-enabled integration Pawn"),
+			Drone ? Drone->GetClass() : nullptr,
+			IntegratedDronePawnClass);
 		Test->TestNotNull(TEXT("Drone launch creates one Mission Director"), Director);
 		Test->TestNotNull(TEXT("Drone launch creates one Event-driven Objective Widget"), ObjectiveWidget);
 		Test->TestTrue(TEXT("Mission Controller possesses the spawned Drone"), Drone && Controller->GetPawn() == Drone);
@@ -276,6 +286,12 @@ public:
 			Test->TestTrue(
 				TEXT("Objective Widget displays the Definition objective"),
 				!ObjectiveWidget->GetObjectiveDisplayText().IsEmpty());
+			Test->TestTrue(
+				TEXT("Objective Widget displays the selected role controls"),
+				!ObjectiveWidget->GetRoleInstructionDisplayText().IsEmpty());
+			Test->TestTrue(
+				TEXT("Objective Widget displays the selected role runtime status"),
+				!ObjectiveWidget->GetRoleStatusDisplayText().IsEmpty());
 			Test->TestTrue(TEXT("Completing the only Training objective succeeds"), Director->CompleteCurrentObjective());
 			Test->TestEqual(TEXT("Objective completion enters Mission Result"), Flow->GetSnapshot().State, EDroneGameFlowState::MissionResult);
 			Test->TestEqual(TEXT("Objective completion records Success"), Flow->GetSnapshot().LastMissionOutcome, EDroneMissionOutcome::Success);
@@ -387,8 +403,13 @@ public:
 		Test->TestTrue(TEXT("Retry can select a different role Drone"), SelectionWidget->SelectDrone(DropId));
 		Test->TestTrue(TEXT("Retry launches exactly one Drop Drone"), SelectionWidget->ConfirmAndLaunchSelectedDrone());
 		ADronePrototypePawn* Drone = Controller->GetSpawnedDrone();
+		UClass* IntegratedDronePawnClass = LoadClass<ADronePrototypePawn>(nullptr, DropDronePawnClassPath);
 		ADroneMissionDirector* Director = Controller->GetMissionDirector();
 		Test->TestNotNull(TEXT("Retry creates a fresh Drone"), Drone);
+		Test->TestEqual(
+			TEXT("Retry spawns the distinct Drop model and input-enabled integration Pawn"),
+			Drone ? Drone->GetClass() : nullptr,
+			IntegratedDronePawnClass);
 		Test->TestNotNull(TEXT("Retry creates a fresh Mission Director"), Director);
 		Test->TestTrue(
 			TEXT("Destroying the Drone applies the Mission failure rule"),

@@ -1,5 +1,8 @@
 #include "UI/DroneMissionObjectiveWidget.h"
 
+#include "Abilities/DroneImpactDetonationComponent.h"
+#include "Abilities/DronePayloadDropComponent.h"
+#include "Abilities/DroneReconScanComponent.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/CanvasPanel.h"
@@ -7,6 +10,7 @@
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Mission/DroneMissionDirector.h"
+#include "Prototype/DronePrototypePawn.h"
 #include "Styling/CoreStyle.h"
 
 namespace DroneMissionObjectiveUI
@@ -15,6 +19,8 @@ const FName PanelName(TEXT("MissionObjectivePanel"));
 const FName TitleName(TEXT("MissionObjectiveTitleText"));
 const FName ObjectiveName(TEXT("MissionObjectiveText"));
 const FName ProgressName(TEXT("MissionObjectiveProgressText"));
+const FName RoleInstructionName(TEXT("MissionRoleInstructionText"));
+const FName RoleStatusName(TEXT("MissionRoleStatusText"));
 }
 
 void UDroneMissionObjectiveWidget::NativeOnInitialized()
@@ -26,8 +32,113 @@ void UDroneMissionObjectiveWidget::NativeOnInitialized()
 
 void UDroneMissionObjectiveWidget::NativeDestruct()
 {
+	ClearDronePawn();
 	ClearMissionDirector();
 	Super::NativeDestruct();
+}
+
+void UDroneMissionObjectiveWidget::SetDronePawn(ADronePrototypePawn* InDronePawn)
+{
+	if (DronePawn.Get() == InDronePawn)
+	{
+		RefreshRoleDisplay();
+		return;
+	}
+	ClearDronePawn();
+	DronePawn = InDronePawn;
+	if (!InDronePawn)
+	{
+		RefreshRoleDisplay();
+		return;
+	}
+
+	if (UDroneReconScanComponent* Recon = InDronePawn->GetReconScanComponent())
+	{
+		Recon->OnScanProgress.AddUniqueDynamic(this, &UDroneMissionObjectiveWidget::HandleReconProgress);
+		Recon->OnScanCompleted.AddUniqueDynamic(this, &UDroneMissionObjectiveWidget::HandleReconStateChanged);
+		Recon->OnScanCanceled.AddUniqueDynamic(this, &UDroneMissionObjectiveWidget::HandleReconStateChanged);
+	}
+	if (UDroneImpactDetonationComponent* Impact = InDronePawn->GetImpactDetonationComponent())
+	{
+		Impact->OnImpactDetonationArmed.AddUniqueDynamic(this, &UDroneMissionObjectiveWidget::HandleImpactStateChanged);
+		Impact->OnImpactDetonationDisarmed.AddUniqueDynamic(this, &UDroneMissionObjectiveWidget::HandleImpactStateChanged);
+		Impact->OnImpactDetonated.AddUniqueDynamic(this, &UDroneMissionObjectiveWidget::HandleImpactDetonated);
+	}
+	if (UDronePayloadDropComponent* Drop = InDronePawn->GetPayloadDropComponent())
+	{
+		Drop->OnPayloadPickedUp.AddUniqueDynamic(this, &UDroneMissionObjectiveWidget::HandlePayloadPickedUp);
+		Drop->OnPayloadDropped.AddUniqueDynamic(this, &UDroneMissionObjectiveWidget::HandlePayloadDropped);
+		Drop->OnPayloadResolved.AddUniqueDynamic(this, &UDroneMissionObjectiveWidget::HandlePayloadResolved);
+		Drop->OnDropViewChanged.AddUniqueDynamic(this, &UDroneMissionObjectiveWidget::HandleDropViewChanged);
+	}
+	RefreshRoleDisplay();
+}
+
+void UDroneMissionObjectiveWidget::ClearDronePawn()
+{
+	if (ADronePrototypePawn* Pawn = DronePawn.Get())
+	{
+		if (UDroneReconScanComponent* Recon = Pawn->GetReconScanComponent())
+		{
+			Recon->OnScanProgress.RemoveDynamic(this, &UDroneMissionObjectiveWidget::HandleReconProgress);
+			Recon->OnScanCompleted.RemoveDynamic(this, &UDroneMissionObjectiveWidget::HandleReconStateChanged);
+			Recon->OnScanCanceled.RemoveDynamic(this, &UDroneMissionObjectiveWidget::HandleReconStateChanged);
+		}
+		if (UDroneImpactDetonationComponent* Impact = Pawn->GetImpactDetonationComponent())
+		{
+			Impact->OnImpactDetonationArmed.RemoveDynamic(this, &UDroneMissionObjectiveWidget::HandleImpactStateChanged);
+			Impact->OnImpactDetonationDisarmed.RemoveDynamic(this, &UDroneMissionObjectiveWidget::HandleImpactStateChanged);
+			Impact->OnImpactDetonated.RemoveDynamic(this, &UDroneMissionObjectiveWidget::HandleImpactDetonated);
+		}
+		if (UDronePayloadDropComponent* Drop = Pawn->GetPayloadDropComponent())
+		{
+			Drop->OnPayloadPickedUp.RemoveDynamic(this, &UDroneMissionObjectiveWidget::HandlePayloadPickedUp);
+			Drop->OnPayloadDropped.RemoveDynamic(this, &UDroneMissionObjectiveWidget::HandlePayloadDropped);
+			Drop->OnPayloadResolved.RemoveDynamic(this, &UDroneMissionObjectiveWidget::HandlePayloadResolved);
+			Drop->OnDropViewChanged.RemoveDynamic(this, &UDroneMissionObjectiveWidget::HandleDropViewChanged);
+		}
+	}
+	DronePawn.Reset();
+}
+
+void UDroneMissionObjectiveWidget::HandlePayloadPickedUp(ADroneDroppedPayload*)
+{
+	RefreshRoleDisplay();
+}
+
+void UDroneMissionObjectiveWidget::HandleReconProgress(AActor*, const float)
+{
+	RefreshRoleDisplay();
+}
+
+void UDroneMissionObjectiveWidget::HandleReconStateChanged(AActor*)
+{
+	RefreshRoleDisplay();
+}
+
+void UDroneMissionObjectiveWidget::HandleImpactStateChanged()
+{
+	RefreshRoleDisplay();
+}
+
+void UDroneMissionObjectiveWidget::HandleImpactDetonated(FVector, AActor*)
+{
+	RefreshRoleDisplay();
+}
+
+void UDroneMissionObjectiveWidget::HandlePayloadDropped(ADroneDroppedPayload*)
+{
+	RefreshRoleDisplay();
+}
+
+void UDroneMissionObjectiveWidget::HandlePayloadResolved(ADroneDroppedPayload*, AActor*, bool)
+{
+	RefreshRoleDisplay();
+}
+
+void UDroneMissionObjectiveWidget::HandleDropViewChanged(bool)
+{
+	RefreshRoleDisplay();
 }
 
 void UDroneMissionObjectiveWidget::SetMissionDirector(ADroneMissionDirector* InMissionDirector)
@@ -77,10 +188,14 @@ bool UDroneMissionObjectiveWidget::TryBindBlueprintLayout()
 	MissionObjectiveTitleText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneMissionObjectiveUI::TitleName));
 	MissionObjectiveText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneMissionObjectiveUI::ObjectiveName));
 	MissionObjectiveProgressText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneMissionObjectiveUI::ProgressName));
+	MissionRoleInstructionText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneMissionObjectiveUI::RoleInstructionName));
+	MissionRoleStatusText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneMissionObjectiveUI::RoleStatusName));
 	return MissionObjectivePanel
 		&& MissionObjectiveTitleText
 		&& MissionObjectiveText
-		&& MissionObjectiveProgressText;
+		&& MissionObjectiveProgressText
+		&& MissionRoleInstructionText
+		&& MissionRoleStatusText;
 }
 
 void UDroneMissionObjectiveWidget::BuildDefaultLayout()
@@ -95,7 +210,7 @@ void UDroneMissionObjectiveWidget::BuildDefaultLayout()
 	UBorder* Panel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), DroneMissionObjectiveUI::PanelName);
 	Panel->SetBrushColor(FLinearColor(0.015f, 0.035f, 0.045f, 0.86f));
 	UCanvasPanelSlot* PanelSlot = Root->AddChildToCanvas(Panel);
-	PanelSlot->SetAnchors(FAnchors(0.70f, 0.08f, 0.98f, 0.34f));
+	PanelSlot->SetAnchors(FAnchors(0.68f, 0.08f, 0.98f, 0.44f));
 	PanelSlot->SetOffsets(FMargin(0.0f));
 	MissionObjectivePanel = Panel;
 
@@ -116,6 +231,59 @@ void UDroneMissionObjectiveWidget::BuildDefaultLayout()
 		UTextBlock::StaticClass(), DroneMissionObjectiveUI::ProgressName);
 	MissionObjectiveProgressText->SetColorAndOpacity(FSlateColor(FLinearColor(0.65f, 0.82f, 0.84f, 1.0f)));
 	Column->AddChildToVerticalBox(MissionObjectiveProgressText);
+	MissionRoleInstructionText = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(), DroneMissionObjectiveUI::RoleInstructionName);
+	MissionRoleInstructionText->SetAutoWrapText(true);
+	MissionRoleInstructionText->SetColorAndOpacity(FSlateColor(FLinearColor(0.95f, 0.88f, 0.42f, 1.0f)));
+	Column->AddChildToVerticalBox(MissionRoleInstructionText);
+	MissionRoleStatusText = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(), DroneMissionObjectiveUI::RoleStatusName);
+	MissionRoleStatusText->SetAutoWrapText(true);
+	MissionRoleStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.70f, 0.90f, 1.0f, 1.0f)));
+	Column->AddChildToVerticalBox(MissionRoleStatusText);
+}
+
+void UDroneMissionObjectiveWidget::RefreshRoleDisplay()
+{
+	RoleInstructionDisplayText = FText::GetEmpty();
+	RoleStatusDisplayText = FText::GetEmpty();
+	ADronePrototypePawn* Pawn = DronePawn.Get();
+	if (Pawn)
+	{
+		if (const UDroneReconScanComponent* Recon = Pawn->GetReconScanComponent(); Recon && Recon->IsFeatureEnabled())
+		{
+			RoleInstructionDisplayText = FText::FromString(TEXT("정찰: 좌클릭/RB 스캔 · 우클릭/LB 취소"));
+			RoleStatusDisplayText = Recon->IsScanning()
+				? FText::Format(FText::FromString(TEXT("스캔 진행 {0}%")), FText::AsNumber(FMath::RoundToInt(Recon->GetScanProgressNormalized() * 100.0f)))
+				: FText::Format(FText::FromString(TEXT("스캔 완료 {0}개")), FText::AsNumber(Recon->GetCompletedScanCount()));
+		}
+		else if (const UDroneImpactDetonationComponent* Impact = Pawn->GetImpactDetonationComponent(); Impact && Impact->IsFeatureEnabled())
+		{
+			RoleInstructionDisplayText = FText::FromString(TEXT("FPV: 좌클릭/RB 무장 · 우클릭/LB 해제 · 고속 충돌"));
+			RoleStatusDisplayText = Impact->HasDetonated()
+				? FText::FromString(TEXT("자폭 완료"))
+				: (Impact->IsArmed() ? FText::FromString(TEXT("경고: 자폭 무장됨")) : FText::FromString(TEXT("자폭 안전")));
+		}
+		else if (const UDronePayloadDropComponent* Drop = Pawn->GetPayloadDropComponent(); Drop && Drop->IsFeatureEnabled())
+		{
+			RoleInstructionDisplayText = Drop->GetRemainingPayloadCount() > 0
+				? FText::FromString(TEXT("드랍: 우클릭/LB 탑뷰 · 좌클릭/RB 화물 투하"))
+				: FText::FromString(TEXT("드랍: 화물 가까이서 좌클릭/RB 적재 · 우클릭/LB 탑뷰"));
+			RoleStatusDisplayText = FText::Format(
+				FText::FromString(TEXT("적재 {0}개 · 성공 {1}회 · 탑뷰 {2}")),
+				FText::AsNumber(Drop->GetRemainingPayloadCount()),
+				FText::AsNumber(Drop->GetSuccessfulDeliveryCount()),
+				Pawn->IsDropCameraViewEnabled() ? FText::FromString(TEXT("ON")) : FText::FromString(TEXT("OFF")));
+		}
+	}
+	if (MissionRoleInstructionText)
+	{
+		MissionRoleInstructionText->SetText(RoleInstructionDisplayText);
+	}
+	if (MissionRoleStatusText)
+	{
+		MissionRoleStatusText->SetText(RoleStatusDisplayText);
+	}
 }
 
 void UDroneMissionObjectiveWidget::ApplySnapshot(const FDroneMissionRuntimeSnapshot& Snapshot)
@@ -162,4 +330,5 @@ void UDroneMissionObjectiveWidget::ApplySnapshot(const FDroneMissionRuntimeSnaps
 		MissionObjectiveProgressText->SetText(ProgressDisplayText);
 	}
 	ReceiveObjectiveSnapshotDisplayed(Snapshot);
+	RefreshRoleDisplay();
 }

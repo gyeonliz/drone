@@ -9,6 +9,7 @@
 #include "Abilities/DroneReconScanComponent.h"
 #include "Abilities/DroneReconScanTargetComponent.h"
 #include "Components/SphereComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "EngineUtils.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Health/DroneHealthComponent.h"
@@ -166,9 +167,23 @@ bool FDroneRoleAbilitiesTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	UDronePayloadDropComponent* Drop = DropDrone->GetPayloadDropComponent();
+	UPrimitiveComponent* CarriedPayloadVisual = nullptr;
+	TInlineComponentArray<UPrimitiveComponent*> DropPrimitives;
+	DropDrone->GetComponents(DropPrimitives);
+	for (UPrimitiveComponent* Primitive : DropPrimitives)
+	{
+		if (Primitive && Primitive->ComponentHasTag(TEXT("DroneCarriedPayload")))
+		{
+			CarriedPayloadVisual = Primitive;
+			break;
+		}
+	}
 	TestTrue(TEXT("Drop capability is enabled"), Drop->IsFeatureEnabled());
 	TestEqual(TEXT("Drop Drone starts with one payload"), Drop->GetRemainingPayloadCount(), 1);
-	Drop->SetDropTarget(DropTarget);
+	TestNotNull(TEXT("Drop Drone visibly carries one payload"), CarriedPayloadVisual);
+	TestTrue(TEXT("Carried payload is visible before release"),
+		CarriedPayloadVisual && CarriedPayloadVisual->IsVisible() && !CarriedPayloadVisual->bHiddenInGame);
+	TestEqual(TEXT("Drop auto-selects the nearest incomplete payload target"), Drop->FindBestAvailablePayloadTarget(), DropTarget);
 	TestTrue(TEXT("Drop secondary role action enters top-down view"), DropDrone->TriggerSecondaryRoleAbility());
 	TestTrue(TEXT("Drop view enters top-down camera"), DropDrone->IsDropCameraViewEnabled());
 	TestTrue(TEXT("Drop view uses a non-zero camera arm"), DropDrone->GetCameraBoom()->TargetArmLength > 0.0f);
@@ -184,6 +199,9 @@ bool FDroneRoleAbilitiesTest::RunTest(const FString& Parameters)
 	}
 	TestNotNull(TEXT("One payload spawns"), Payload);
 	TestEqual(TEXT("Payload inventory decreases"), Drop->GetRemainingPayloadCount(), 0);
+	TestTrue(TEXT("Carried payload visual disappears after release"),
+		CarriedPayloadVisual && (!CarriedPayloadVisual->IsVisible() || CarriedPayloadVisual->bHiddenInGame));
+	TestEqual(TEXT("Drop stores the automatically selected target"), Drop->GetDropTarget(), DropTarget);
 	TestNull(TEXT("Second payload cannot spawn before reload"), Drop->DropPayload());
 	if (Payload)
 	{
@@ -192,10 +210,35 @@ bool FDroneRoleAbilitiesTest::RunTest(const FString& Parameters)
 	}
 	TestTrue(TEXT("Drop target records delivery"), DropTargetComponent->IsPayloadDelivered());
 	TestEqual(TEXT("Drop component records one successful delivery"), Drop->GetSuccessfulDeliveryCount(), 1);
+
+	ADroneDroppedPayload* CarryablePayload = World->SpawnActor<ADroneDroppedPayload>(
+		ADroneDroppedPayload::StaticClass(),
+		FVector(4100.0f, 0.0f, 1000.0f),
+		FRotator::ZeroRotator);
+	TestNotNull(TEXT("Map-placeable carryable payload spawns"), CarryablePayload);
+	if (CarryablePayload)
+	{
+		CarryablePayload->ActivateCarryablePickup();
+	}
+	TestEqual(TEXT("Empty Drop Drone finds the nearest carryable payload"), Drop->FindBestAvailableCarryablePayload(), CarryablePayload);
+	TestTrue(TEXT("Primary action picks up a nearby payload when inventory is empty"), DropDrone->TriggerPrimaryRoleAbility());
+	TestEqual(TEXT("Picked-up payload becomes the carried Actor"), Drop->GetCarriedPayloadActor(), CarryablePayload);
+	TestTrue(TEXT("Picked-up payload is attached and carried"), CarryablePayload && CarryablePayload->IsCarried() && CarryablePayload->GetAttachParentActor() == DropDrone);
+	TestEqual(TEXT("Pickup restores one payload in inventory"), Drop->GetRemainingPayloadCount(), 1);
+	TestTrue(TEXT("Primary action drops the same carried Actor"), DropDrone->TriggerPrimaryRoleAbility());
+	TestNull(TEXT("Carried Actor reference clears after drop"), Drop->GetCarriedPayloadActor());
+	TestTrue(TEXT("Dropped map payload is no longer carried"), CarryablePayload && !CarryablePayload->IsCarried());
+	TestEqual(TEXT("Dropping the carried map object empties inventory"), Drop->GetRemainingPayloadCount(), 0);
+	TestTrue(TEXT("Dropped carryable payload resolves its landing"), CarryablePayload && CarryablePayload->ResolveImpactGreybox(DropTarget));
+	TestTrue(TEXT("Dropped carryable payload remains available in the world"), CarryablePayload && CarryablePayload->IsAvailableForPickup() && !CarryablePayload->IsActorBeingDestroyed());
+	TestEqual(TEXT("Dropped carryable payload has no automatic lifespan"), CarryablePayload ? CarryablePayload->GetLifeSpan() : -1.0f, 0.0f);
+
 	TestTrue(TEXT("Drop secondary role action restores the previous camera"), DropDrone->TriggerSecondaryRoleAbility());
 	TestFalse(TEXT("Leaving Drop view restores normal camera state"), DropDrone->IsDropCameraViewEnabled());
 	Drop->ReloadPayloadsForMission();
 	TestEqual(TEXT("Mission reload restores one payload"), Drop->GetRemainingPayloadCount(), 1);
+	TestTrue(TEXT("Mission reload restores the carried payload visual"),
+		CarriedPayloadVisual && CarriedPayloadVisual->IsVisible() && !CarriedPayloadVisual->bHiddenInGame);
 
 	return !HasAnyErrors();
 }

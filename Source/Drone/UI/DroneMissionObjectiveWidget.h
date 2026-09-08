@@ -6,6 +6,8 @@
 #include "DroneMissionObjectiveWidget.generated.h"
 
 class ADroneMissionDirector;
+class ADronePrototypePawn;
+class ADroneDroppedPayload;
 class UTextBlock;
 class UWidget;
 
@@ -22,6 +24,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Mission UI")
 	void ClearMissionDirector();
 
+	UFUNCTION(BlueprintCallable, Category="Drone|Mission UI")
+	void SetDronePawn(ADronePrototypePawn* InDronePawn);
+
+	UFUNCTION(BlueprintCallable, Category="Drone|Mission UI")
+	void ClearDronePawn();
+
 	UFUNCTION(BlueprintPure, Category="Drone|Mission UI")
 	ADroneMissionDirector* GetMissionDirector() const { return MissionDirector.Get(); }
 
@@ -33,6 +41,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|Mission UI")
 	FText GetProgressDisplayText() const { return ProgressDisplayText; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Mission UI")
+	FText GetRoleInstructionDisplayText() const { return RoleInstructionDisplayText; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Mission UI")
+	FText GetRoleStatusDisplayText() const { return RoleStatusDisplayText; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|Mission UI")
 	bool IsUsingNativeFallbackLayout() const { return bUsingNativeFallbackLayout; }
@@ -48,11 +62,37 @@ private:
 	UFUNCTION()
 	void HandleMissionSnapshotChanged(const FDroneMissionRuntimeSnapshot& Snapshot);
 
+	UFUNCTION()
+	void HandleReconProgress(AActor* TargetActor, float NormalizedProgress);
+
+	UFUNCTION()
+	void HandleReconStateChanged(AActor* TargetActor);
+
+	UFUNCTION()
+	void HandleImpactStateChanged();
+
+	UFUNCTION()
+	void HandleImpactDetonated(FVector ExplosionLocation, AActor* HitActor);
+
+	UFUNCTION()
+	void HandlePayloadDropped(ADroneDroppedPayload* PayloadActor);
+
+	UFUNCTION()
+	void HandlePayloadPickedUp(ADroneDroppedPayload* PayloadActor);
+
+	UFUNCTION()
+	void HandlePayloadResolved(ADroneDroppedPayload* PayloadActor, AActor* HitActor, bool bHitIntendedTarget);
+
+	UFUNCTION()
+	void HandleDropViewChanged(bool bDropViewEnabled);
+
 	void BuildDefaultLayout();
 	bool TryBindBlueprintLayout();
 	void ApplySnapshot(const FDroneMissionRuntimeSnapshot& Snapshot);
+	void RefreshRoleDisplay();
 
 	TWeakObjectPtr<ADroneMissionDirector> MissionDirector;
+	TWeakObjectPtr<ADronePrototypePawn> DronePawn;
 
 	UPROPERTY(Transient)
 	FDroneMissionRuntimeSnapshot DisplayedSnapshot;
@@ -62,6 +102,12 @@ private:
 
 	UPROPERTY(Transient)
 	FText ProgressDisplayText;
+
+	UPROPERTY(Transient)
+	FText RoleInstructionDisplayText;
+
+	UPROPERTY(Transient)
+	FText RoleStatusDisplayText;
 
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UWidget> MissionObjectivePanel;
@@ -74,6 +120,12 @@ private:
 
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UTextBlock> MissionObjectiveProgressText;
+
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UTextBlock> MissionRoleInstructionText;
+
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UTextBlock> MissionRoleStatusText;
 
 	UPROPERTY(Transient)
 	bool bUsingNativeFallbackLayout = false;

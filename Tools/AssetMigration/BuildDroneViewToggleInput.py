@@ -1,4 +1,4 @@
-"""Create and validate the project-owned P-key Drone camera view toggle input."""
+"""Create and validate the project-owned keyboard/gamepad Drone camera view toggle input."""
 
 import unreal
 
@@ -51,8 +51,9 @@ require(
 mapping_context = load_required(CONTEXT_PATH)
 mapping_context.modify()
 mapping_context.unmap_all_keys_from_action(toggle_action)
-p_key = make_key("P")
-mapping_context.map_key(toggle_action, p_key)
+toggle_key_names = ("P", "Gamepad_FaceButton_Top")
+for key_name in toggle_key_names:
+    mapping_context.map_key(toggle_action, make_key(key_name))
 require(
     editor_assets.save_loaded_asset(mapping_context, only_if_is_dirty=False),
     f"Could not save {CONTEXT_PATH}",
@@ -80,10 +81,17 @@ toggle_mappings = [
     for mapping in saved_mappings
     if mapping.get_editor_property("action") == toggle_action
 ]
-require(len(toggle_mappings) == 1, f"ToggleView has {len(toggle_mappings)} mappings; expected one")
 require(
-    str(toggle_mappings[0].get_editor_property("key").get_editor_property("key_name")) == "P",
-    "ToggleView is not mapped to P",
+    len(toggle_mappings) == len(toggle_key_names),
+    f"ToggleView has {len(toggle_mappings)} mappings; expected {len(toggle_key_names)}",
+)
+require(
+    {
+        str(mapping.get_editor_property("key").get_editor_property("key_name"))
+        for mapping in toggle_mappings
+    }
+    == set(toggle_key_names),
+    f"ToggleView is not mapped to {toggle_key_names}",
 )
 require(
     pawn_cdo.get_editor_property("toggle_view_action") == toggle_action,
@@ -92,7 +100,7 @@ require(
 
 unreal.log(
     "DRONE_VIEW_INPUT|OK|"
-    f"action={toggle_action.get_path_name()}|key=P|"
+    f"action={toggle_action.get_path_name()}|keys=P+Gamepad_FaceButton_Top|"
     f"mappings={len(saved_mappings)}|"
     f"pawn={pawn_blueprint.get_path_name()}"
 )

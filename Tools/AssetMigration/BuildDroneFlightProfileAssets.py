@@ -8,6 +8,9 @@ LEGACY_STABLE_PATH = f"{DRONE_FOLDER}/DA_Drone_Stable_Greybox"
 FPV_STRIKE_PATH = f"{DRONE_FOLDER}/DA_Drone_FPVStrike_Greybox"
 DROP_PATH = f"{DRONE_FOLDER}/DA_Drone_Drop_Greybox"
 MISSION_PATH = "/Game/Drone/Data/Missions/DA_Mission_Tutorial_Training"
+SCOUT_PAWN_CLASS_PATH = "/Game/Drone/Integrations/RoleDrones/BP_DroneScoutIntegration.BP_DroneScoutIntegration_C"
+FPV_PAWN_CLASS_PATH = "/Game/Drone/Integrations/DronePackFPV/BP_DroneFPVIntegration.BP_DroneFPVIntegration_C"
+DROP_PAWN_CLASS_PATH = "/Game/Drone/Integrations/RoleDrones/BP_DroneDropIntegration.BP_DroneDropIntegration_C"
 
 
 def require_asset(path):
@@ -65,6 +68,7 @@ def make_profile(
 
 def configure_definition(
     asset,
+    pawn_class,
     drone_id,
     display_name,
     description,
@@ -73,6 +77,8 @@ def configure_definition(
     implemented_capabilities,
     profile,
 ):
+    # 공통 입력/기능 기반은 유지하되 역할별 Blueprint가 서로 다른 제공 Mesh 조립체를 사용한다.
+    asset.set_editor_property("pawn_class", pawn_class)
     asset.set_editor_property("drone_id", unreal.Name(drone_id))
     asset.set_editor_property("display_name", display_name)
     asset.set_editor_property("description", description)
@@ -93,9 +99,15 @@ rename_legacy_asset(LEGACY_STABLE_PATH, DROP_PATH)
 scout = require_asset(SCOUT_PATH)
 fpv_strike = duplicate_if_missing(FPV_STRIKE_PATH)
 drop = duplicate_if_missing(DROP_PATH)
+scout_pawn_class = unreal.load_class(None, SCOUT_PAWN_CLASS_PATH)
+fpv_pawn_class = unreal.load_class(None, FPV_PAWN_CLASS_PATH)
+drop_pawn_class = unreal.load_class(None, DROP_PAWN_CLASS_PATH)
+if not scout_pawn_class or not fpv_pawn_class or not drop_pawn_class:
+    raise RuntimeError("역할별 Drone 통합 Pawn Class 중 하나를 불러오지 못했습니다")
 
 configure_definition(
     scout,
+    scout_pawn_class,
     "Drone.Scout.Greybox",
     "정찰 드론 (그레이박스)",
     "공통 비행과 거리/화각/시야 유지형 정찰 스캔을 사용하는 시험 기체입니다.",
@@ -119,6 +131,7 @@ configure_definition(
 
 configure_definition(
     fpv_strike,
+    fpv_pawn_class,
     "Drone.FPVStrike.Greybox",
     "FPV 자폭 드론 (그레이박스)",
     "공통 비행과 명시적 Arm 뒤 속도 조건을 검사하는 1회 충돌 자폭 시험 기체입니다.",
@@ -142,6 +155,7 @@ configure_definition(
 
 configure_definition(
     drop,
+    drop_pawn_class,
     "Drone.Drop.Greybox",
     "드랍 드론 (그레이박스)",
     "공통 비행과 탑뷰, 1회 Payload 투하 및 목표 접촉 판정을 사용하는 시험 기체입니다.",
@@ -175,4 +189,7 @@ mission.set_editor_property(
 mission.set_editor_property("default_drone_id", unreal.Name("Drone.Scout.Greybox"))
 unreal.EditorAssetLibrary.save_loaded_asset(mission, only_if_is_dirty=False)
 
-unreal.log("[BuildDroneFlightProfileAssets] Figma 역할 3종과 독립 조작/핸들링 기본값 저장 완료")
+unreal.log(
+    "[BuildDroneFlightProfileAssets] 역할 3종, 독립 조작/핸들링 기본값, "
+    "역할별 제공 Mesh 통합 Pawn 연결 저장 완료"
+)

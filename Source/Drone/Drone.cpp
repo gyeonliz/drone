@@ -3,6 +3,8 @@
 #include "Drone.h"
 #include "Modules/ModuleManager.h"
 
+//test
+
 IMPLEMENT_PRIMARY_GAME_MODULE( FDefaultGameModuleImpl, Drone, "Drone" );
 
 DEFINE_LOG_CATEGORY(LogDrone)

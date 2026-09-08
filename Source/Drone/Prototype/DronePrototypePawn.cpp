@@ -46,6 +46,10 @@ ADronePrototypePawn::ADronePrototypePawn()
 	VisualTiltPivot = CreateDefaultSubobject<USceneComponent>(TEXT("VisualTiltPivot"));
 	VisualTiltPivot->SetupAttachment(CollisionComponent);
 
+	PayloadCarryAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("PayloadCarryAnchor"));
+	PayloadCarryAnchor->SetupAttachment(VisualTiltPivot);
+	PayloadCarryAnchor->SetRelativeLocation(FVector(0.0f, 0.0f, -65.0f));
+
 	VisualMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("VisualMeshComponent"));
 	VisualMeshComponent->SetupAttachment(VisualTiltPivot);
 	VisualMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -167,7 +171,7 @@ bool ADronePrototypePawn::TriggerPrimaryRoleAbility()
 	}
 	if (PayloadDropComponent && PayloadDropComponent->IsFeatureEnabled())
 	{
-		return PayloadDropComponent->DropPayload() != nullptr;
+		return PayloadDropComponent->ActivatePrimaryPayloadAction();
 	}
 	return false;
 }

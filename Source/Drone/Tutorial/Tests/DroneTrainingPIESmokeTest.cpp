@@ -421,13 +421,13 @@ bool FDroneTrainingPIESmokeTest::RunTest(const FString& Parameters)
 {
 	using namespace DroneTrainingPIESmoke;
 
-	// In-process PIE는 저장된 Recast Actor를 PIE NavDataSet에 등록하기 직전 CrowdManager를 먼저 만든다.
-	// 아래 한 줄은 현재 fresh PIE에서 한 번 발생하는 Engine 초기화 순서 경고만 정확히 허용한다.
+	// Commandlet은 Editor Map load와 in-process PIE 양쪽에서 저장된 Recast Actor를 등록하기 직전
+	// CrowdManager를 먼저 만들므로 같은 Engine 초기화 순서 경고가 정확히 두 번 발생한다.
 	// 검증 본문은 저장된 Recast Actor의 존재와 Course Component의 Navigation 비간섭 Flag를 별도로 검사한다.
 	AddExpectedError(
 		TEXT("Unable to find RecastNavMesh instance while trying to create UCrowdManager instance"),
 		EAutomationExpectedErrorFlags::Contains,
-		1);
+		2);
 
 	if (!GEditor)
 	{

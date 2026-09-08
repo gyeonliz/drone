@@ -1,8 +1,10 @@
 #include "Abilities/DroneDroppedPayload.h"
 
 #include "Abilities/DronePayloadTargetComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/TextRenderComponent.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/ProjectileMovementComponent.h"
@@ -23,6 +25,7 @@ ADroneDroppedPayload::ADroneDroppedPayload()
 	CollisionComponent->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
 	CollisionComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
 	CollisionComponent->SetNotifyRigidBodyCollision(true);
+	CollisionComponent->SetCanEverAffectNavigation(false);
 
 	PayloadVisual = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PayloadVisual"));
 	PayloadVisual->SetupAttachment(CollisionComponent);
@@ -36,6 +39,17 @@ ADroneDroppedPayload::ADroneDroppedPayload()
 		PayloadVisual->SetStaticMesh(CubeMesh.Object);
 	}
 
+	PickupLabel = CreateDefaultSubobject<UTextRenderComponent>(TEXT("PickupLabel"));
+	PickupLabel->SetupAttachment(CollisionComponent);
+	PickupLabel->SetRelativeLocation(FVector(0.0f, 0.0f, 65.0f));
+	PickupLabel->SetHorizontalAlignment(EHTA_Center);
+	PickupLabel->SetWorldSize(28.0f);
+	PickupLabel->SetText(FText::FromString(TEXT("드랍 화물\n가까이서 좌클릭/RB 적재")));
+	PickupLabel->SetTextRenderColor(FColor(255, 205, 30));
+	PickupLabel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PickupLabel->SetCanEverAffectNavigation(false);
+	PickupLabel->SetVisibility(false);
+
 	ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
 	ProjectileMovement->SetUpdatedComponent(CollisionComponent);
 	ProjectileMovement->InitialSpeed = 300.0f;
@@ -43,8 +57,9 @@ ADroneDroppedPayload::ADroneDroppedPayload()
 	ProjectileMovement->ProjectileGravityScale = 1.0f;
 	ProjectileMovement->bRotationFollowsVelocity = false;
 	ProjectileMovement->bShouldBounce = false;
+	ProjectileMovement->bAutoActivate = false;
 
-	InitialLifeSpan = 15.0f;
+	InitialLifeSpan = 0.0f;
 }
 
 void ADroneDroppedPayload::BeginPlay()
@@ -54,18 +69,80 @@ void ADroneDroppedPayload::BeginPlay()
 	{
 		CollisionComponent->IgnoreActorWhenMoving(OwnerActor, true);
 	}
+	if (bStartsAsCarryablePickup)
+	{
+		ActivateCarryablePickup();
+	}
+}
+
+void ADroneDroppedPayload::ActivateCarryablePickup()
+{
+	if (AActor* PreviousOwner = GetOwner())
+	{
+		CollisionComponent->IgnoreActorWhenMoving(PreviousOwner, false);
+	}
+	DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	SetOwner(nullptr);
+	bReusableCarryable = true;
+	bAvailableForPickup = true;
+	bCarried = false;
+	bImpactResolved = false;
+	bHitIntendedTarget = false;
+	IntendedTarget.Reset();
+	ProjectileMovement->StopMovementImmediately();
+	ProjectileMovement->Deactivate();
+	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	SetActorHiddenInGame(false);
+	PayloadVisual->SetVisibility(true, true);
+	PickupLabel->SetVisibility(true, true);
+	SetLifeSpan(0.0f);
+}
+
+bool ADroneDroppedPayload::PrepareForCarry(AActor* NewCarrierActor, USceneComponent* CarryAnchor)
+{
+	if (!bAvailableForPickup || !IsValid(NewCarrierActor) || !IsValid(CarryAnchor))
+	{
+		return false;
+	}
+
+	bAvailableForPickup = false;
+	bCarried = true;
+	ProjectileMovement->StopMovementImmediately();
+	ProjectileMovement->Deactivate();
+	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PickupLabel->SetVisibility(false, true);
+	SetOwner(NewCarrierActor);
+	AttachToComponent(CarryAnchor, FAttachmentTransformRules::KeepWorldTransform);
+	SetActorLocationAndRotation(
+		CarryAnchor->GetComponentLocation(),
+		CarryAnchor->GetComponentRotation(),
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+	SetLifeSpan(0.0f);
+	return true;
 }
 
 void ADroneDroppedPayload::InitializePayload(
 	AActor* NewIntendedTarget,
 	const float DownwardSpeedCentimetersPerSecond)
 {
+	bAvailableForPickup = false;
+	bCarried = false;
+	bImpactResolved = false;
+	bHitIntendedTarget = false;
 	IntendedTarget = NewIntendedTarget;
+	PickupLabel->SetVisibility(false, true);
+	PayloadVisual->SetVisibility(true, true);
+	SetActorHiddenInGame(false);
+	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	if (AActor* OwnerActor = GetOwner())
 	{
 		CollisionComponent->IgnoreActorWhenMoving(OwnerActor, true);
 	}
+	ProjectileMovement->Activate(true);
 	ProjectileMovement->Velocity = FVector::DownVector * FMath::Max(1.0f, DownwardSpeedCentimetersPerSecond);
+	SetLifeSpan(bReusableCarryable ? 0.0f : FMath::Max(0.1f, DroppedPayloadLifetimeSeconds));
 }
 
 void ADroneDroppedPayload::NotifyHit(
@@ -84,7 +161,7 @@ void ADroneDroppedPayload::NotifyHit(
 
 bool ADroneDroppedPayload::ResolveImpactGreybox(AActor* HitActor)
 {
-	if (bImpactResolved || !IsValid(HitActor) || HitActor == this || HitActor == GetOwner())
+	if (bAvailableForPickup || bCarried || bImpactResolved || !IsValid(HitActor) || HitActor == this || HitActor == GetOwner())
 	{
 		return false;
 	}
@@ -102,6 +179,20 @@ bool ADroneDroppedPayload::ResolveImpactGreybox(AActor* HitActor)
 	ProjectileMovement->StopMovementImmediately();
 	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	OnPayloadImpact.Broadcast(this, HitActor, bHitIntendedTarget);
+	if (bReusableCarryable)
+	{
+		if (AActor* PreviousOwner = GetOwner())
+		{
+			CollisionComponent->IgnoreActorWhenMoving(PreviousOwner, false);
+		}
+		SetOwner(nullptr);
+		bAvailableForPickup = true;
+		bCarried = false;
+		CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		PickupLabel->SetVisibility(true, true);
+		SetLifeSpan(0.0f);
+		return true;
+	}
 	SetLifeSpan(0.10f);
 	return true;
 }

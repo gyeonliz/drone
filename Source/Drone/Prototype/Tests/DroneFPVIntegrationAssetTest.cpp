@@ -1,6 +1,7 @@
 #if WITH_EDITOR && WITH_DEV_AUTOMATION_TESTS
 
 #include "Misc/AutomationTest.h"
+#include "Abilities/DroneImpactDetonationComponent.h"
 #include "Prototype/DronePrototypeGameMode.h"
 #include "Prototype/DronePrototypePawn.h"
 #include "Tests/AutomationCommon.h"
@@ -11,6 +12,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "NiagaraSystem.h"
 #include "Sound/SoundBase.h"
 
 namespace DroneFPVIntegrationAssets
@@ -21,6 +23,10 @@ constexpr const TCHAR* GameModeClassPath =
 	TEXT("/Game/Drone/Prototype/Blueprints/BP_DronePrototypeGameMode.BP_DronePrototypeGameMode_C");
 constexpr const TCHAR* EngineSoundPath =
 	TEXT("/Game/Drone/ThirdParty/DroneSounds/SC_DroneStandardLoop.SC_DroneStandardLoop");
+constexpr const TCHAR* ExplosionEffectPath =
+	TEXT("/Game/Drone/ThirdParty/ArmyVFX/Niagara/Destroyed/NS_Expl_Tank_1.NS_Expl_Tank_1");
+constexpr const TCHAR* ExplosionSoundPath =
+	TEXT("/Game/Drone/ThirdParty/InfantrySFX/Explosions/Cues/Cue_Explosion01_Cue.Cue_Explosion01_Cue");
 
 const TSet<FString> ExpectedMeshPaths = {
 	TEXT("/Game/Drone/ThirdParty/DronePackFPV/SM_DroneFPVBody.SM_DroneFPVBody"),
@@ -158,6 +164,20 @@ bool FDroneFPVIntegrationAssetTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("Selected engine Cue is configured to loop"), EngineAudio->Sound->IsLooping());
 		}
 		TestTrue(TEXT("Engine Audio activates with the Pawn"), EngineAudio->bAutoActivate);
+	}
+
+	const UDroneImpactDetonationComponent* Impact = SpawnedPawn->GetImpactDetonationComponent();
+	TestNotNull(TEXT("FPV integration has its impact detonation component"), Impact);
+	if (Impact)
+	{
+		TestNotNull(TEXT("FPV detonation has a visible Niagara effect"), Impact->GetExplosionEffect());
+		TestNotNull(TEXT("FPV detonation has an explosion sound"), Impact->GetExplosionSound());
+		TestEqual(TEXT("FPV detonation uses the selected provided Niagara effect"),
+			Impact->GetExplosionEffect() ? Impact->GetExplosionEffect()->GetPathName() : FString(),
+			FString(DroneFPVIntegrationAssets::ExplosionEffectPath));
+		TestEqual(TEXT("FPV detonation uses the selected provided explosion Cue"),
+			Impact->GetExplosionSound() ? Impact->GetExplosionSound()->GetPathName() : FString(),
+			FString(DroneFPVIntegrationAssets::ExplosionSoundPath));
 	}
 
 	UClass* GameModeClass = LoadClass<ADronePrototypeGameMode>(nullptr, DroneFPVIntegrationAssets::GameModeClassPath);

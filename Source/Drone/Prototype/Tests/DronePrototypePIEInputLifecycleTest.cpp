@@ -48,7 +48,7 @@ constexpr const TCHAR* CameraPitchRatePath = TEXT("/Game/Drone/Prototype/Input/A
 constexpr const TCHAR* ToggleViewPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_ToggleView.IA_DronePrototype_ToggleView");
 constexpr const TCHAR* PrimaryAbilityPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_PrimaryAbility.IA_DronePrototype_PrimaryAbility");
 constexpr const TCHAR* SecondaryAbilityPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_SecondaryAbility.IA_DronePrototype_SecondaryAbility");
-constexpr int32 ExpectedMappingCount = 18;
+constexpr int32 ExpectedMappingCount = 21;
 constexpr double EffectSampleSeconds = 0.2;
 constexpr float TranslationTolerance = 0.01f;
 constexpr float RotationTolerance = 0.001f;
@@ -813,34 +813,57 @@ private:
 
 		const TConstArrayView<const FEnhancedActionKeyMapping> EffectiveMappings = FoundInput->GetEnhancedActionMappingsView();
 		int32 ToggleViewPMappingCount = 0;
+		int32 ToggleViewGamepadTopMappingCount = 0;
 		int32 PrimaryLeftMouseMappingCount = 0;
+		int32 PrimaryRightShoulderMappingCount = 0;
 		int32 SecondaryRightMouseMappingCount = 0;
+		int32 SecondaryLeftShoulderMappingCount = 0;
 		for (const FEnhancedActionKeyMapping& Source : SourceMappings)
 		{
 			if (Source.Action == ToggleView && Source.Key == EKeys::P)
 			{
 				++ToggleViewPMappingCount;
 			}
+			if (Source.Action == ToggleView && Source.Key == EKeys::Gamepad_FaceButton_Top)
+			{
+				++ToggleViewGamepadTopMappingCount;
+			}
 			if (Source.Action == PrimaryAbility && Source.Key == EKeys::LeftMouseButton)
 			{
 				++PrimaryLeftMouseMappingCount;
+			}
+			if (Source.Action == PrimaryAbility && Source.Key == EKeys::Gamepad_RightShoulder)
+			{
+				++PrimaryRightShoulderMappingCount;
 			}
 			if (Source.Action == SecondaryAbility && Source.Key == EKeys::RightMouseButton)
 			{
 				++SecondaryRightMouseMappingCount;
 			}
+			if (Source.Action == SecondaryAbility && Source.Key == EKeys::Gamepad_LeftShoulder)
+			{
+				++SecondaryLeftShoulderMappingCount;
+			}
 		}
-		if (ToggleViewPMappingCount != 1)
-		{
-			OutReason = FString::Printf(TEXT("ToggleView/P mapping appears %d times, expected exactly one"), ToggleViewPMappingCount);
-			return EAcquireResult::Fatal;
-		}
-		if (PrimaryLeftMouseMappingCount != 1 || SecondaryRightMouseMappingCount != 1)
+		if (ToggleViewPMappingCount != 1 || ToggleViewGamepadTopMappingCount != 1)
 		{
 			OutReason = FString::Printf(
-				TEXT("Role ability mappings are Primary/LMB=%d Secondary/RMB=%d; expected one each"),
+				TEXT("ToggleView mappings are P=%d GamepadY=%d; expected one each"),
+				ToggleViewPMappingCount,
+				ToggleViewGamepadTopMappingCount);
+			return EAcquireResult::Fatal;
+		}
+		if (PrimaryLeftMouseMappingCount != 1
+			|| PrimaryRightShoulderMappingCount != 1
+			|| SecondaryRightMouseMappingCount != 1
+			|| SecondaryLeftShoulderMappingCount != 1)
+		{
+			OutReason = FString::Printf(
+				TEXT("Role ability mappings are Primary/LMB=%d Primary/RB=%d Secondary/RMB=%d Secondary/LB=%d; expected one each"),
 				PrimaryLeftMouseMappingCount,
-				SecondaryRightMouseMappingCount);
+				PrimaryRightShoulderMappingCount,
+				SecondaryRightMouseMappingCount,
+				SecondaryLeftShoulderMappingCount);
 			return EAcquireResult::Fatal;
 		}
 
