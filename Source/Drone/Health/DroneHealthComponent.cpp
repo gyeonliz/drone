@@ -74,6 +74,19 @@ void UDroneHealthComponent::ResetHealth()
 	DeathEventCount = 0;
 }
 
+void UDroneHealthComponent::ConfigureMaxHealth(const float NewMaxHealth, const bool bResetToMaximum)
+{
+	MaxHealth = FMath::Max(1.0f, NewMaxHealth);
+	if (bResetToMaximum)
+	{
+		ResetHealth();
+		return;
+	}
+
+	CurrentHealth = FMath::Clamp(CurrentHealth, 0.0f, MaxHealth);
+	bDead = CurrentHealth <= 0.0f;
+}
+
 void UDroneHealthComponent::HandleOwnerAnyDamage(
 	AActor* DamagedActor,
 	const float Damage,

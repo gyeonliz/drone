@@ -46,7 +46,9 @@ constexpr const TCHAR* YawPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_Dr
 constexpr const TCHAR* LookPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_Look.IA_DronePrototype_Look");
 constexpr const TCHAR* CameraPitchRatePath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_CameraPitchRate.IA_DronePrototype_CameraPitchRate");
 constexpr const TCHAR* ToggleViewPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_ToggleView.IA_DronePrototype_ToggleView");
-constexpr int32 ExpectedMappingCount = 16;
+constexpr const TCHAR* PrimaryAbilityPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_PrimaryAbility.IA_DronePrototype_PrimaryAbility");
+constexpr const TCHAR* SecondaryAbilityPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_SecondaryAbility.IA_DronePrototype_SecondaryAbility");
+constexpr int32 ExpectedMappingCount = 18;
 constexpr double EffectSampleSeconds = 0.2;
 constexpr float TranslationTolerance = 0.01f;
 constexpr float RotationTolerance = 0.001f;
@@ -770,7 +772,17 @@ private:
 		UInputAction* Look = LoadObject<UInputAction>(nullptr, LookPath);
 		UInputAction* CameraPitchRate = LoadObject<UInputAction>(nullptr, CameraPitchRatePath);
 		UInputAction* ToggleView = LoadObject<UInputAction>(nullptr, ToggleViewPath);
-		if (!IMC || !Move || !Altitude || !Yaw || !Look || !CameraPitchRate || !ToggleView)
+		UInputAction* PrimaryAbility = LoadObject<UInputAction>(nullptr, PrimaryAbilityPath);
+		UInputAction* SecondaryAbility = LoadObject<UInputAction>(nullptr, SecondaryAbilityPath);
+		if (!IMC
+			|| !Move
+			|| !Altitude
+			|| !Yaw
+			|| !Look
+			|| !CameraPitchRate
+			|| !ToggleView
+			|| !PrimaryAbility
+			|| !SecondaryAbility)
 		{
 			OutReason = TEXT("one or more Prototype input assets failed to load");
 			return EAcquireResult::Fatal;
@@ -801,11 +813,21 @@ private:
 
 		const TConstArrayView<const FEnhancedActionKeyMapping> EffectiveMappings = FoundInput->GetEnhancedActionMappingsView();
 		int32 ToggleViewPMappingCount = 0;
+		int32 PrimaryLeftMouseMappingCount = 0;
+		int32 SecondaryRightMouseMappingCount = 0;
 		for (const FEnhancedActionKeyMapping& Source : SourceMappings)
 		{
 			if (Source.Action == ToggleView && Source.Key == EKeys::P)
 			{
 				++ToggleViewPMappingCount;
+			}
+			if (Source.Action == PrimaryAbility && Source.Key == EKeys::LeftMouseButton)
+			{
+				++PrimaryLeftMouseMappingCount;
+			}
+			if (Source.Action == SecondaryAbility && Source.Key == EKeys::RightMouseButton)
+			{
+				++SecondaryRightMouseMappingCount;
 			}
 		}
 		if (ToggleViewPMappingCount != 1)
@@ -813,8 +835,24 @@ private:
 			OutReason = FString::Printf(TEXT("ToggleView/P mapping appears %d times, expected exactly one"), ToggleViewPMappingCount);
 			return EAcquireResult::Fatal;
 		}
+		if (PrimaryLeftMouseMappingCount != 1 || SecondaryRightMouseMappingCount != 1)
+		{
+			OutReason = FString::Printf(
+				TEXT("Role ability mappings are Primary/LMB=%d Secondary/RMB=%d; expected one each"),
+				PrimaryLeftMouseMappingCount,
+				SecondaryRightMouseMappingCount);
+			return EAcquireResult::Fatal;
+		}
 
-		const TArray<const UInputAction*> ExpectedActions{Move, Altitude, Yaw, Look, CameraPitchRate, ToggleView};
+		const TArray<const UInputAction*> ExpectedActions{
+			Move,
+			Altitude,
+			Yaw,
+			Look,
+			CameraPitchRate,
+			ToggleView,
+			PrimaryAbility,
+			SecondaryAbility};
 		int32 PrototypeEffectiveCount = 0;
 		for (const FEnhancedActionKeyMapping& Effective : EffectiveMappings)
 		{
@@ -907,10 +945,12 @@ private:
 			}
 
 			const bool bIsMoveAction = Action == Move;
-			const bool bIsToggleViewAction = Action == ToggleView;
+			const bool bIsStartedAction = Action == ToggleView
+				|| Action == PrimaryAbility
+				|| Action == SecondaryAbility;
 			const int32 ExpectedActionBindingCount = bIsMoveAction ? 3 : 1;
-			const int32 ExpectedTriggeredBindingCount = bIsToggleViewAction ? 0 : 1;
-			const int32 ExpectedStartedBindingCount = bIsToggleViewAction ? 1 : 0;
+			const int32 ExpectedTriggeredBindingCount = bIsStartedAction ? 0 : 1;
+			const int32 ExpectedStartedBindingCount = bIsStartedAction ? 1 : 0;
 			const bool bMoveReleaseBindingsAreValid = !bIsMoveAction
 				|| (CompletedBindingCount == 1 && CanceledBindingCount == 1);
 			if (ActionBindingCount != ExpectedActionBindingCount

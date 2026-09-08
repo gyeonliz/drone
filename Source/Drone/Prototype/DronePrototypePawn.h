@@ -2,12 +2,17 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "Prototype/DroneFlightControlTypes.h"
 #include "DronePrototypePawn.generated.h"
 
 class AController;
 class UCameraComponent;
+class UDroneDefinition;
 class UDroneTelemetryComponent;
 class UDroneHealthComponent;
+class UDroneImpactDetonationComponent;
+class UDronePayloadDropComponent;
+class UDroneReconScanComponent;
 class UEnhancedInputLocalPlayerSubsystem;
 class UFloatingPawnMovement;
 class UInputAction;
@@ -21,6 +26,10 @@ struct FInputActionValue;
 
 class ADronePrototypePawn;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDroneDestroyedSignature, ADronePrototypePawn*, DestroyedDrone);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FDroneFlightControlSettingsChangedSignature,
+	EDroneControlMode, ControlMode,
+	EDroneHandlingPreset, HandlingPreset);
 
 /**
  * 기존 Third Person Character와 분리한 Drone 조종 Prototype Pawn.
@@ -54,7 +63,55 @@ public:
 	UFloatingPawnMovement* GetPrototypeMovementComponent() const { return PrototypeMovementComponent; }
 	UDroneTelemetryComponent* GetTelemetryComponent() const { return TelemetryComponent; }
 	UDroneHealthComponent* GetHealthComponent() const { return HealthComponent; }
+	UDroneReconScanComponent* GetReconScanComponent() const { return ReconScanComponent; }
+	UDroneImpactDetonationComponent* GetImpactDetonationComponent() const { return ImpactDetonationComponent; }
+	UDronePayloadDropComponent* GetPayloadDropComponent() const { return PayloadDropComponent; }
 	UAIPerceptionStimuliSourceComponent* GetPerceptionStimuliSource() const { return PerceptionStimuliSource; }
+
+	/** FLOW-05가 Spawn한 Pawn에 선택 Definition의 실제 비행 수치를 한 번에 적용한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Profile")
+	bool ApplyDroneDefinition(const UDroneDefinition* Definition);
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Profile")
+	FName GetAppliedDroneId() const { return AppliedDroneId; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Profile")
+	float GetPrototypeYawRateDegreesPerSecond() const { return PrototypeYawRateDegreesPerSecond; }
+
+	/**
+	 * 현재 Definition의 역할에 맞는 공통 1차 기능을 실행한다.
+	 * Recon=가장 가까운 유효 대상 Scan, FPV=충돌 자폭 Arm, Drop=Payload 투하다.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Drone|Role Ability")
+	bool TriggerPrimaryRoleAbility();
+
+	/** Recon=Scan 취소, FPV=Disarm, Drop=상단 Camera 전환을 실행한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Role Ability")
+	bool TriggerSecondaryRoleAbility();
+
+	/** 쉬운 조작과 실제 조작형 Greybox를 플레이 중에도 바꾼다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control")
+	void SetControlMode(EDroneControlMode NewControlMode);
+
+	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control")
+	void ToggleControlMode();
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control")
+	EDroneControlMode GetControlMode() const { return CurrentControlMode; }
+
+	/** 안정/균형/고기동은 기체 종류가 아니라 독립된 반응성 프리셋이다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control")
+	void SetHandlingPreset(EDroneHandlingPreset NewHandlingPreset);
+
+	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control")
+	void CycleHandlingPreset();
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control")
+	EDroneHandlingPreset GetHandlingPreset() const { return CurrentHandlingPreset; }
+
+	/** FLOW-05 선택 UI나 설정 Widget은 이 Event로 현재 조작 설정 표시를 갱신한다. */
+	UPROPERTY(BlueprintAssignable, Category="Drone|Flight|Control")
+	FDroneFlightControlSettingsChangedSignature OnFlightControlSettingsChanged;
 
 	UFUNCTION(BlueprintPure, Category="Drone|Flight|VisualBank")
 	float GetCurrentVisualBankRollDegrees() const { return CurrentVisualBankRollDegrees; }
@@ -77,6 +134,13 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Drone|Camera")
 	void ToggleFirstPersonView();
+
+	/** 드랍 조준용 상단 Camera다. Payload Component가 사용하며 기존 1/3인칭 상태를 복원한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Camera")
+	void SetDropCameraViewEnabled(bool bEnabled);
+
+	UFUNCTION(BlueprintPure, Category="Drone|Camera")
+	bool IsDropCameraViewEnabled() const { return bDropCameraViewEnabled; }
 
 	/** 기존 Blueprint 호환용 좌우 입력 함수다. 전후 입력 상태는 유지한다. -1=좌, +1=우. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Flight|VisualBank")
@@ -139,6 +203,18 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UDroneHealthComponent> HealthComponent;
 
+	/** Definition의 ImplementedCapabilities에 ReconScan이 있을 때만 활성화된다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UDroneReconScanComponent> ReconScanComponent;
+
+	/** Definition의 ImplementedCapabilities에 ImpactDetonation이 있을 때만 활성화된다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UDroneImpactDetonationComponent> ImpactDetonationComponent;
+
+	/** Definition의 ImplementedCapabilities에 PayloadDrop이 있을 때만 활성화된다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UDronePayloadDropComponent> PayloadDropComponent;
+
 	/** Enemy AI Sight가 드론을 명시적인 감지 대상으로 등록하는 Component다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UAIPerceptionStimuliSourceComponent> PerceptionStimuliSource;
@@ -164,11 +240,36 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UInputAction> ToggleViewAction;
 
+	/** 임시 Greybox 기본키는 Left Mouse Button이다. 최종 입력 방식은 아직 미정이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UInputAction> PrimaryRoleAbilityAction;
+
+	/** 임시 Greybox 기본키는 Right Mouse Button이다. 최종 입력 방식은 아직 미정이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UInputAction> SecondaryRoleAbilityAction;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input", meta=(AllowPrivateAccess="true"))
 	int32 PrototypeMappingPriority = 1;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Movement", meta=(ClampMin="0.0", AllowPrivateAccess="true"))
 	float PrototypeYawRateDegreesPerSecond = 90.0f;
+
+	/** 쉬운 조작은 즉시 수평 이동하고 World Up 고도를 사용한다. 파생 BP에서 배율을 조정할 수 있다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|ControlModes", meta=(AllowPrivateAccess="true"))
+	FDroneControlModeTuning AssistedEasyTuning;
+
+	/** 실제 조작형은 감속 보조가 적고 기체 Root 기울기 및 Local Up을 사용한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|ControlModes", meta=(AllowPrivateAccess="true"))
+	FDroneControlModeTuning ManualRealisticGreyboxTuning;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|HandlingPresets", meta=(AllowPrivateAccess="true"))
+	FDroneHandlingPresetTuning StableHandlingTuning;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|HandlingPresets", meta=(AllowPrivateAccess="true"))
+	FDroneHandlingPresetTuning BalancedHandlingTuning;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|HandlingPresets", meta=(AllowPrivateAccess="true"))
+	FDroneHandlingPresetTuning AgileHandlingTuning;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera", meta=(ClampMin="0.0", AllowPrivateAccess="true"))
 	float PrototypeMouseYawDegreesPerInput = 1.0f;
@@ -195,14 +296,23 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera", meta=(AllowPrivateAccess="true"))
 	FVector FirstPersonCameraBoomOffset = FVector(70.0f, 0.0f, 12.0f);
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera|DropView", meta=(AllowPrivateAccess="true"))
+	FVector DropViewCameraBoomOffset = FVector(0.0f, 0.0f, 250.0f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera|DropView", meta=(ClampMin="0.0", ForceUnits="cm", AllowPrivateAccess="true"))
+	float DropViewCameraArmLength = 700.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera|DropView", meta=(ClampMin="-89.0", ClampMax="-1.0", ForceUnits="deg", AllowPrivateAccess="true"))
+	float DropViewCameraPitchDegrees = -75.0f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera", meta=(AllowPrivateAccess="true"))
 	bool bStartInFirstPersonView = false;
 
-	/** 좌우 입력 1.0에서 외형에 적용할 최대 Roll이다. 이동·충돌·카메라 회전에는 적용하지 않는다. */
+	/** 좌우 입력 1.0에서 허용할 최대 Roll이다. 쉬운 조작은 외형에만, 실제 조작형은 Root에 적용한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|VisualBank", meta=(ClampMin="0.0", ClampMax="45.0", ForceUnits="deg", AllowPrivateAccess="true"))
 	float MaximumVisualBankRollDegrees = 18.0f;
 
-	/** 전후 입력 1.0에서 외형에 적용할 최대 Pitch다. 전진은 기수 아래, 후진은 기수 위 방향이다. */
+	/** 전후 입력 1.0에서 허용할 최대 Pitch다. 전진은 기수 아래, 후진은 기수 위 방향이다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|VisualBank", meta=(ClampMin="0.0", ClampMax="45.0", ForceUnits="deg", AllowPrivateAccess="true"))
 	float MaximumVisualTiltPitchDegrees = 14.0f;
 
@@ -258,9 +368,13 @@ private:
 	void Look(const FInputActionValue& Value);
 	void ChangeCameraPitch(const FInputActionValue& Value);
 	void ToggleViewFromInput(const FInputActionValue& Value);
+	void TriggerPrimaryRoleAbilityFromInput(const FInputActionValue& Value);
+	void TriggerSecondaryRoleAbilityFromInput(const FInputActionValue& Value);
 	void AdjustCameraPitch(float PitchDeltaDegrees);
 	void ApplyCameraViewMode();
 	void RefreshVisualTiltAttachments();
+	void ApplyRuntimeFlightTuning();
+	void UpdateControlAttitude(float DeltaSeconds);
 	void UpdateVisualBank(float DeltaSeconds);
 	void UpdateDamageShake(float DeltaSeconds);
 	void ApplyDamageShakeCameraOffset(const FVector& LocationOffset, const FRotator& RotationOffset);
@@ -283,6 +397,24 @@ private:
 	float VisualBankLateralInput = 0.0f;
 	float VisualTiltForwardInput = 0.0f;
 	bool bFirstPersonViewEnabled = false;
+	bool bDropCameraViewEnabled = false;
+	bool bFirstPersonViewBeforeDropCamera = false;
+	FRotator CameraBoomRotationBeforeDropCamera = FRotator::ZeroRotator;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|Flight|Control")
+	EDroneControlMode CurrentControlMode = EDroneControlMode::AssistedEasy;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|Flight|Control")
+	EDroneHandlingPreset CurrentHandlingPreset = EDroneHandlingPreset::Balanced;
+
+	/** Data Asset의 원본값이다. 모드/프리셋 전환 시 누적 곱셈하지 않고 이 값에서 다시 계산한다. */
+	float BaseMaxSpeedCentimetersPerSecond = 1200.0f;
+	float BaseAccelerationCentimetersPerSecondSquared = 2400.0f;
+	float BaseDecelerationCentimetersPerSecondSquared = 3000.0f;
+	float BaseTurningBoost = 8.0f;
+	float BaseYawRateDegreesPerSecond = 90.0f;
+	float BaseMaximumVisualBankRollDegrees = 18.0f;
+	float BaseMaximumVisualTiltPitchDegrees = 14.0f;
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|Feedback|DamageShake")
 	float CurrentDamageShakeStrength = 0.0f;
@@ -298,4 +430,8 @@ private:
 	FTransform CameraAdditiveBaseTransform = FTransform::Identity;
 	float CameraAdditiveBaseFOV = 0.0f;
 	bool bCameraAdditiveBaseCaptured = false;
+
+	/** NAME_None이면 아직 FLOW-05 Definition이 적용되지 않은 기본 Prototype 상태다. */
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|Flight|Profile")
+	FName AppliedDroneId = NAME_None;
 };

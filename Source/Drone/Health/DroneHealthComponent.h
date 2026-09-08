@@ -62,6 +62,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Health")
 	void ResetHealth();
 
+	/** Spawn 설정 단계에서 Definition의 최대 체력을 적용한다. 전투 중 회복 규칙으로 사용하지 않는다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Health")
+	void ConfigureMaxHealth(float NewMaxHealth, bool bResetToMaximum = true);
+
 	UFUNCTION(BlueprintPure, Category="Drone|Health|Debug")
 	int32 GetDeathEventCount() const { return DeathEventCount; }
 

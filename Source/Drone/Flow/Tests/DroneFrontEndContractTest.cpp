@@ -6,6 +6,7 @@
 #include "Flow/DroneFrontEndGameMode.h"
 #include "Flow/DroneFrontEndPlayerController.h"
 #include "Flow/DroneGameFlowSubsystem.h"
+#include "GameFramework/SpectatorPawn.h"
 #include "UI/DroneFrontEndRootWidget.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -24,7 +25,10 @@ bool FDroneFrontEndContractTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	TestNull(TEXT("Front-end does not spawn a Pawn before Drone selection"), GameModeDefaults->DefaultPawnClass);
+	TestTrue(
+		TEXT("Front-end uses only a non-Drone Spectator before selection"),
+		GameModeDefaults->DefaultPawnClass
+			&& GameModeDefaults->DefaultPawnClass->IsChildOf(ASpectatorPawn::StaticClass()));
 	TestTrue(
 		TEXT("Front-end uses its dedicated PlayerController"),
 		GameModeDefaults->PlayerControllerClass
@@ -37,7 +41,7 @@ bool FDroneFrontEndContractTest::RunTest(const FString& Parameters)
 	UGameInstance* GameInstance = NewObject<UGameInstance>();
 	UDroneGameFlowSubsystem* Flow = NewObject<UDroneGameFlowSubsystem>(GameInstance);
 	TestTrue(TEXT("Default Catalog loads for the Front-end"), Flow && Flow->EnsureDefaultCatalog());
-	TestEqual(TEXT("Default Catalog has one Drone"), Flow ? Flow->GetRegisteredDroneCount() : 0, 1);
+	TestEqual(TEXT("Default Catalog has three functional Drone profiles"), Flow ? Flow->GetRegisteredDroneCount() : 0, 3);
 	TestEqual(TEXT("Default Catalog has one Mission"), Flow ? Flow->GetRegisteredMissionCount() : 0, 1);
 	TestTrue(TEXT("Opening Trailer begins once"), Flow && Flow->BeginOpeningTrailer());
 	TestFalse(TEXT("Opening Trailer cannot be started twice"), Flow && Flow->BeginOpeningTrailer());

@@ -2,6 +2,9 @@
 
 #include "Camera/CameraComponent.h"
 #include "AI/DroneNPCAIController.h"
+#include "Abilities/DroneImpactDetonationComponent.h"
+#include "Abilities/DronePayloadDropComponent.h"
+#include "Abilities/DroneReconScanComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -17,6 +20,7 @@
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
+#include "Mission/DroneDefinition.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "Telemetry/DroneTelemetryComponent.h"
@@ -63,12 +67,229 @@ ADronePrototypePawn::ADronePrototypePawn()
 	PrototypeMovementComponent->Deceleration = 3000.0f;
 	PrototypeMovementComponent->TurningBoost = 8.0f;
 
+	// 쉬운 조작은 기존 반응을 그대로 유지한다. 실제 조작형은 자동 제동과 선회 보조를 줄이고
+	// Root 자세를 실제 이동 축에 반영한다. 이는 모터별 추력 물리가 아닌 1차 조작 검증값이다.
+	ManualRealisticGreyboxTuning.AccelerationMultiplier = 0.85f;
+	ManualRealisticGreyboxTuning.DecelerationMultiplier = 0.20f;
+	ManualRealisticGreyboxTuning.TurningBoostMultiplier = 0.35f;
+	ManualRealisticGreyboxTuning.YawRateMultiplier = 0.85f;
+	ManualRealisticGreyboxTuning.bUseLocalAltitudeAxis = true;
+	ManualRealisticGreyboxTuning.bTiltCollisionRoot = true;
+
+	StableHandlingTuning.MaxSpeedMultiplier = 0.80f;
+	StableHandlingTuning.AccelerationMultiplier = 0.75f;
+	StableHandlingTuning.YawRateMultiplier = 0.75f;
+	StableHandlingTuning.AttitudeLimitMultiplier = 0.65f;
+
+	AgileHandlingTuning.MaxSpeedMultiplier = 1.25f;
+	AgileHandlingTuning.AccelerationMultiplier = 1.30f;
+	AgileHandlingTuning.YawRateMultiplier = 1.35f;
+	AgileHandlingTuning.AttitudeLimitMultiplier = 1.25f;
+
 	// HUD가 Pawn을 직접 계산하지 않도록 공용 데이터 공급 Component를 기본 부착한다.
 	TelemetryComponent = CreateDefaultSubobject<UDroneTelemetryComponent>(TEXT("TelemetryComponent"));
 	HealthComponent = CreateDefaultSubobject<UDroneHealthComponent>(TEXT("HealthComponent"));
+	ReconScanComponent = CreateDefaultSubobject<UDroneReconScanComponent>(TEXT("ReconScanComponent"));
+	ImpactDetonationComponent = CreateDefaultSubobject<UDroneImpactDetonationComponent>(TEXT("ImpactDetonationComponent"));
+	PayloadDropComponent = CreateDefaultSubobject<UDronePayloadDropComponent>(TEXT("PayloadDropComponent"));
 
 	// AI Perception의 전역 Pawn 자동 등록 설정에 의존하지 않고 Sight 대상으로 명시한다.
 	PerceptionStimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("PerceptionStimuliSource"));
+}
+
+bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definition)
+{
+	FString ValidationError;
+	if (!IsValid(Definition) || !Definition->ValidateDefinition(ValidationError))
+	{
+		UE_LOG(
+			LogDrone,
+			Warning,
+			TEXT("Prototype pawn '%s' rejected Drone Definition: %s"),
+			*GetNameSafe(this),
+			ValidationError.IsEmpty() ? TEXT("Definition이 없습니다.") : *ValidationError);
+		return false;
+	}
+
+	const FDroneFlightProfile& Profile = Definition->FlightProfile;
+	BaseMaxSpeedCentimetersPerSecond = Profile.MaxSpeedCentimetersPerSecond;
+	BaseAccelerationCentimetersPerSecondSquared = Profile.AccelerationCentimetersPerSecondSquared;
+	BaseDecelerationCentimetersPerSecondSquared = Profile.DecelerationCentimetersPerSecondSquared;
+	BaseTurningBoost = Profile.TurningBoost;
+	BaseYawRateDegreesPerSecond = Profile.YawRateDegreesPerSecond;
+	BaseMaximumVisualBankRollDegrees = Profile.MaximumVisualBankRollDegrees;
+	BaseMaximumVisualTiltPitchDegrees = Profile.MaximumVisualTiltPitchDegrees;
+	CurrentControlMode = Profile.DefaultControlMode;
+	CurrentHandlingPreset = Profile.DefaultHandlingPreset;
+	ApplyRuntimeFlightTuning();
+	OnFlightControlSettingsChanged.Broadcast(CurrentControlMode, CurrentHandlingPreset);
+	bStartInFirstPersonView = Profile.bStartInFirstPersonView;
+	SetFirstPersonViewEnabled(Profile.bStartInFirstPersonView);
+	HealthComponent->ConfigureMaxHealth(Profile.MaxHealth, true);
+	// 기획된 기능이 아니라 현재 빌드에서 검증 완료된 기능만 활성화해 역할 중첩을 막는다.
+	ReconScanComponent->ConfigureFeatureEnabled(
+		Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::ReconScan));
+	ImpactDetonationComponent->ConfigureFeatureEnabled(
+		Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::ImpactDetonation));
+	PayloadDropComponent->ConfigureFeatureEnabled(
+		Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::PayloadDrop));
+	AppliedDroneId = Definition->DroneId;
+
+	UE_LOG(
+		LogDrone,
+		Display,
+		TEXT("Applied Drone Definition '%s' to '%s' (speed %.0f, yaw %.0f, health %.0f, control %d, handling %d)."),
+		*AppliedDroneId.ToString(),
+		*GetNameSafe(this),
+		Profile.MaxSpeedCentimetersPerSecond,
+		Profile.YawRateDegreesPerSecond,
+		Profile.MaxHealth,
+		static_cast<uint8>(CurrentControlMode),
+		static_cast<uint8>(CurrentHandlingPreset));
+	return true;
+}
+
+bool ADronePrototypePawn::TriggerPrimaryRoleAbility()
+{
+	if ((HealthComponent && HealthComponent->IsDead()) || AppliedDroneId.IsNone())
+	{
+		return false;
+	}
+
+	// 현재 세 역할은 Data Asset Validation에서 상호 배타적으로 활성화된다.
+	if (ReconScanComponent && ReconScanComponent->IsFeatureEnabled())
+	{
+		return ReconScanComponent->StartBestAvailableScan();
+	}
+	if (ImpactDetonationComponent && ImpactDetonationComponent->IsFeatureEnabled())
+	{
+		return ImpactDetonationComponent->ArmImpactDetonation();
+	}
+	if (PayloadDropComponent && PayloadDropComponent->IsFeatureEnabled())
+	{
+		return PayloadDropComponent->DropPayload() != nullptr;
+	}
+	return false;
+}
+
+bool ADronePrototypePawn::TriggerSecondaryRoleAbility()
+{
+	if ((HealthComponent && HealthComponent->IsDead()) || AppliedDroneId.IsNone())
+	{
+		return false;
+	}
+
+	if (ReconScanComponent && ReconScanComponent->IsFeatureEnabled())
+	{
+		const bool bWasScanning = ReconScanComponent->IsScanning();
+		ReconScanComponent->CancelScan();
+		return bWasScanning;
+	}
+	if (ImpactDetonationComponent && ImpactDetonationComponent->IsFeatureEnabled())
+	{
+		const bool bWasArmed = ImpactDetonationComponent->IsArmed();
+		ImpactDetonationComponent->DisarmImpactDetonation();
+		return bWasArmed && !ImpactDetonationComponent->IsArmed();
+	}
+	if (PayloadDropComponent && PayloadDropComponent->IsFeatureEnabled())
+	{
+		const bool bRequestedEnabled = !IsDropCameraViewEnabled();
+		PayloadDropComponent->SetDropViewEnabled(bRequestedEnabled);
+		return IsDropCameraViewEnabled() == bRequestedEnabled;
+	}
+	return false;
+}
+
+void ADronePrototypePawn::SetControlMode(const EDroneControlMode NewControlMode)
+{
+	const bool bChanged = CurrentControlMode != NewControlMode;
+	CurrentControlMode = NewControlMode;
+	ApplyRuntimeFlightTuning();
+	if (bChanged)
+	{
+		OnFlightControlSettingsChanged.Broadcast(CurrentControlMode, CurrentHandlingPreset);
+	}
+}
+
+void ADronePrototypePawn::ToggleControlMode()
+{
+	SetControlMode(CurrentControlMode == EDroneControlMode::AssistedEasy
+		? EDroneControlMode::ManualRealisticGreybox
+		: EDroneControlMode::AssistedEasy);
+}
+
+void ADronePrototypePawn::SetHandlingPreset(const EDroneHandlingPreset NewHandlingPreset)
+{
+	const bool bChanged = CurrentHandlingPreset != NewHandlingPreset;
+	CurrentHandlingPreset = NewHandlingPreset;
+	ApplyRuntimeFlightTuning();
+	if (bChanged)
+	{
+		OnFlightControlSettingsChanged.Broadcast(CurrentControlMode, CurrentHandlingPreset);
+	}
+}
+
+void ADronePrototypePawn::CycleHandlingPreset()
+{
+	switch (CurrentHandlingPreset)
+	{
+	case EDroneHandlingPreset::Stable:
+		SetHandlingPreset(EDroneHandlingPreset::Balanced);
+		break;
+	case EDroneHandlingPreset::Balanced:
+		SetHandlingPreset(EDroneHandlingPreset::Agile);
+		break;
+	case EDroneHandlingPreset::Agile:
+	default:
+		SetHandlingPreset(EDroneHandlingPreset::Stable);
+		break;
+	}
+}
+
+void ADronePrototypePawn::ApplyRuntimeFlightTuning()
+{
+	if (!PrototypeMovementComponent)
+	{
+		return;
+	}
+
+	const FDroneControlModeTuning& ControlTuning = CurrentControlMode == EDroneControlMode::ManualRealisticGreybox
+		? ManualRealisticGreyboxTuning
+		: AssistedEasyTuning;
+
+	const FDroneHandlingPresetTuning* HandlingTuning = &BalancedHandlingTuning;
+	switch (CurrentHandlingPreset)
+	{
+	case EDroneHandlingPreset::Stable:
+		HandlingTuning = &StableHandlingTuning;
+		break;
+	case EDroneHandlingPreset::Agile:
+		HandlingTuning = &AgileHandlingTuning;
+		break;
+	case EDroneHandlingPreset::Balanced:
+	default:
+		break;
+	}
+
+	// 항상 Data Asset의 원본값에서 다시 계산하므로 모드를 반복 전환해도 배율이 누적되지 않는다.
+	PrototypeMovementComponent->MaxSpeed =
+		BaseMaxSpeedCentimetersPerSecond * HandlingTuning->MaxSpeedMultiplier;
+	PrototypeMovementComponent->Acceleration =
+		BaseAccelerationCentimetersPerSecondSquared
+		* ControlTuning.AccelerationMultiplier
+		* HandlingTuning->AccelerationMultiplier;
+	PrototypeMovementComponent->Deceleration =
+		BaseDecelerationCentimetersPerSecondSquared * ControlTuning.DecelerationMultiplier;
+	PrototypeMovementComponent->TurningBoost =
+		BaseTurningBoost * ControlTuning.TurningBoostMultiplier;
+	PrototypeYawRateDegreesPerSecond =
+		BaseYawRateDegreesPerSecond
+		* ControlTuning.YawRateMultiplier
+		* HandlingTuning->YawRateMultiplier;
+	MaximumVisualBankRollDegrees =
+		BaseMaximumVisualBankRollDegrees * HandlingTuning->AttitudeLimitMultiplier;
+	MaximumVisualTiltPitchDegrees =
+		BaseMaximumVisualTiltPitchDegrees * HandlingTuning->AttitudeLimitMultiplier;
 }
 
 void ADronePrototypePawn::OnConstruction(const FTransform& Transform)
@@ -111,6 +332,7 @@ void ADronePrototypePawn::Tick(const float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	UpdateDamageShake(DeltaSeconds);
+	UpdateControlAttitude(DeltaSeconds);
 	UpdateVisualBank(DeltaSeconds);
 }
 
@@ -204,7 +426,32 @@ void ADronePrototypePawn::SetupPlayerInputComponent(UInputComponent* PlayerInput
 			&ADronePrototypePawn::ToggleViewFromInput);
 	}
 
-	if (!MoveAction || !AltitudeAction || !YawAction || !LookAction || !CameraPitchRateAction || !ToggleViewAction)
+	if (PrimaryRoleAbilityAction)
+	{
+		EnhancedInputComponent->BindAction(
+			PrimaryRoleAbilityAction,
+			ETriggerEvent::Started,
+			this,
+			&ADronePrototypePawn::TriggerPrimaryRoleAbilityFromInput);
+	}
+
+	if (SecondaryRoleAbilityAction)
+	{
+		EnhancedInputComponent->BindAction(
+			SecondaryRoleAbilityAction,
+			ETriggerEvent::Started,
+			this,
+			&ADronePrototypePawn::TriggerSecondaryRoleAbilityFromInput);
+	}
+
+	if (!MoveAction
+		|| !AltitudeAction
+		|| !YawAction
+		|| !LookAction
+		|| !CameraPitchRateAction
+		|| !ToggleViewAction
+		|| !PrimaryRoleAbilityAction
+		|| !SecondaryRoleAbilityAction)
 	{
 		UE_LOG(LogDrone, Display, TEXT("Prototype pawn '%s' does not have all prototype Input Actions assigned yet."), *GetNameSafe(this));
 	}
@@ -319,6 +566,10 @@ void ADronePrototypePawn::SetVisualTiltInputGreybox(
 void ADronePrototypePawn::SetFirstPersonViewEnabled(const bool bEnabled)
 {
 	bFirstPersonViewEnabled = bEnabled;
+	if (bDropCameraViewEnabled)
+	{
+		bFirstPersonViewBeforeDropCamera = bEnabled;
+	}
 	ApplyCameraViewMode();
 }
 
@@ -327,9 +578,45 @@ void ADronePrototypePawn::ToggleFirstPersonView()
 	SetFirstPersonViewEnabled(!bFirstPersonViewEnabled);
 }
 
+void ADronePrototypePawn::SetDropCameraViewEnabled(const bool bEnabled)
+{
+	if (bEnabled == bDropCameraViewEnabled)
+	{
+		return;
+	}
+	if (bEnabled)
+	{
+		bFirstPersonViewBeforeDropCamera = bFirstPersonViewEnabled;
+		CameraBoomRotationBeforeDropCamera = CameraBoom
+			? CameraBoom->GetRelativeRotation()
+			: FRotator::ZeroRotator;
+		bDropCameraViewEnabled = true;
+		ApplyCameraViewMode();
+		return;
+	}
+
+	bDropCameraViewEnabled = false;
+	bFirstPersonViewEnabled = bFirstPersonViewBeforeDropCamera;
+	ApplyCameraViewMode();
+	if (CameraBoom)
+	{
+		CameraBoom->SetRelativeRotation(CameraBoomRotationBeforeDropCamera);
+	}
+}
+
 void ADronePrototypePawn::ToggleViewFromInput(const FInputActionValue&)
 {
 	ToggleFirstPersonView();
+}
+
+void ADronePrototypePawn::TriggerPrimaryRoleAbilityFromInput(const FInputActionValue&)
+{
+	TriggerPrimaryRoleAbility();
+}
+
+void ADronePrototypePawn::TriggerSecondaryRoleAbilityFromInput(const FInputActionValue&)
+{
+	TriggerSecondaryRoleAbility();
 }
 
 void ADronePrototypePawn::ApplyCameraViewMode()
@@ -340,6 +627,14 @@ void ADronePrototypePawn::ApplyCameraViewMode()
 	}
 
 	const FAttachmentTransformRules KeepRelativeAttachment(EAttachmentRule::KeepRelative, false);
+	if (bDropCameraViewEnabled)
+	{
+		CameraBoom->AttachToComponent(CollisionComponent, KeepRelativeAttachment);
+		CameraBoom->SetRelativeLocation(DropViewCameraBoomOffset);
+		CameraBoom->SetRelativeRotation(FRotator(DropViewCameraPitchDegrees, 0.0f, 0.0f));
+		CameraBoom->TargetArmLength = DropViewCameraArmLength;
+		return;
+	}
 	if (bFirstPersonViewEnabled)
 	{
 		CameraBoom->AttachToComponent(VisualTiltPivot, KeepRelativeAttachment);
@@ -387,6 +682,41 @@ void ADronePrototypePawn::RefreshVisualTiltAttachments()
 	}
 }
 
+void ADronePrototypePawn::UpdateControlAttitude(const float DeltaSeconds)
+{
+	const FDroneControlModeTuning& ControlTuning = CurrentControlMode == EDroneControlMode::ManualRealisticGreybox
+		? ManualRealisticGreyboxTuning
+		: AssistedEasyTuning;
+	const bool bUseRootAttitude = ControlTuning.bTiltCollisionRoot;
+
+	// 쉬운 조작에서는 Root를 자동으로 수평 복귀시킨다. 실제 조작형에서는 이동 입력이
+	// Root Pitch/Roll이 되어 다음 프레임의 Forward/Right/Up 이동 축까지 바꾼다.
+	const float TargetPitch = bUseRootAttitude
+		? -VisualTiltForwardInput * MaximumVisualTiltPitchDegrees
+		: 0.0f;
+	const float TargetRoll = bUseRootAttitude
+		? VisualBankLateralInput * MaximumVisualBankRollDegrees
+		: 0.0f;
+	const bool bHasAttitudeInput = !FMath::IsNearlyZero(VisualTiltForwardInput)
+		|| !FMath::IsNearlyZero(VisualBankLateralInput);
+	const float InterpolationSpeed = bHasAttitudeInput
+		? VisualBankInterpolationSpeed
+		: VisualBankReturnSpeed;
+
+	FRotator ActorRotation = GetActorRotation();
+	ActorRotation.Pitch = FMath::FInterpTo(
+		ActorRotation.Pitch,
+		TargetPitch,
+		FMath::Max(0.0f, DeltaSeconds),
+		InterpolationSpeed);
+	ActorRotation.Roll = FMath::FInterpTo(
+		ActorRotation.Roll,
+		TargetRoll,
+		FMath::Max(0.0f, DeltaSeconds),
+		InterpolationSpeed);
+	SetActorRotation(ActorRotation);
+}
+
 void ADronePrototypePawn::UpdateVisualBank(const float DeltaSeconds)
 {
 	if (!VisualTiltPivot)
@@ -394,9 +724,16 @@ void ADronePrototypePawn::UpdateVisualBank(const float DeltaSeconds)
 		return;
 	}
 
-	// 사용자 조작 기준: 전진은 기수를 아래로, 오른쪽 이동은 외형을 오른쪽으로 기울인다.
-	const float TargetPitch = -VisualTiltForwardInput * MaximumVisualTiltPitchDegrees;
-	const float TargetRoll = VisualBankLateralInput * MaximumVisualBankRollDegrees;
+	const FDroneControlModeTuning& ControlTuning = CurrentControlMode == EDroneControlMode::ManualRealisticGreybox
+		? ManualRealisticGreyboxTuning
+		: AssistedEasyTuning;
+	// 실제 조작형은 Root가 이미 기울어지므로 외형 Pivot에는 중복 기울기를 적용하지 않는다.
+	const float TargetPitch = ControlTuning.bTiltCollisionRoot
+		? 0.0f
+		: -VisualTiltForwardInput * MaximumVisualTiltPitchDegrees;
+	const float TargetRoll = ControlTuning.bTiltCollisionRoot
+		? 0.0f
+		: VisualBankLateralInput * MaximumVisualBankRollDegrees;
 	const float PitchInterpolationSpeed = FMath::IsNearlyZero(VisualTiltForwardInput)
 		? VisualBankReturnSpeed
 		: VisualBankInterpolationSpeed;
@@ -530,8 +867,14 @@ void ADronePrototypePawn::ChangeAltitude(const FInputActionValue& Value)
 		return;
 	}
 
-	// 기체 기울기와 무관하게 World Up 방향을 사용한다.
-	AddMovementInput(FVector::UpVector, Value.Get<float>());
+	const FDroneControlModeTuning& ControlTuning = CurrentControlMode == EDroneControlMode::ManualRealisticGreybox
+		? ManualRealisticGreyboxTuning
+		: AssistedEasyTuning;
+	// 쉬운 조작은 World Up, 실제 조작형은 현재 기체의 Local Up을 사용한다.
+	const FVector AltitudeAxis = ControlTuning.bUseLocalAltitudeAxis
+		? GetActorUpVector()
+		: FVector::UpVector;
+	AddMovementInput(AltitudeAxis, Value.Get<float>());
 }
 
 void ADronePrototypePawn::ChangeYaw(const FInputActionValue& Value)
@@ -610,6 +953,9 @@ void ADronePrototypePawn::HandleDeath(
 		return;
 	}
 	SetVisualTiltInputGreybox(0.0f, 0.0f);
+	ReconScanComponent->CancelScan();
+	ImpactDetonationComponent->DisarmImpactDetonation();
+	PayloadDropComponent->SetDropViewEnabled(false);
 
 	// 회색상자 사망 규칙: 기체는 현 위치에 남기고 조종·이동·충돌만 중지한다.
 	// 이후 GameMode가 이 Event를 받아 임무 실패 화면이나 Respawn을 결정할 수 있다.

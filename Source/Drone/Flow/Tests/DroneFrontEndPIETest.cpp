@@ -146,7 +146,7 @@ public:
 		Test->TestNotNull(TEXT("Front-end PIE has its GameInstance Flow"), Flow);
 		if (Flow)
 		{
-			Test->TestEqual(TEXT("PIE Catalog contains one Drone"), Flow->GetRegisteredDroneCount(), 1);
+			Test->TestEqual(TEXT("PIE Catalog contains three functional Drone profiles"), Flow->GetRegisteredDroneCount(), 3);
 			Test->TestEqual(TEXT("PIE Catalog contains one Mission"), Flow->GetRegisteredMissionCount(), 1);
 		}
 
@@ -184,12 +184,27 @@ public:
 			}
 			Test->TestTrue(TEXT("Lobby Start confirms the selected Mission"), FrontEndWidget->ConfirmSelectedMission());
 			Test->TestEqual(
-				TEXT("Lobby Start enters Mission Trailer without loading a Map"),
+				TEXT("Lobby Start enters Mission Trailer before loading a Map"),
 				Flow->GetSnapshot().State,
 				EDroneGameFlowState::MissionTrailer);
+			Test->TestEqual(
+				TEXT("Mission Trailer displays the selected Mission briefing"),
+				FrontEndWidget->GetDisplayedState(),
+				EDroneGameFlowState::MissionTrailer);
+			if (Mission)
+			{
+				Test->TestEqual(
+					TEXT("Static Briefing title comes from the selected Mission"),
+					FrontEndWidget->GetDisplayedBriefingTitle().ToString(),
+					Mission->DisplayName.ToString());
+				Test->TestTrue(
+					TEXT("Static Briefing contains the Mission description"),
+					FrontEndWidget->GetDisplayedBriefingBody().ToString().Contains(
+						Mission->LobbyDescription.ToString()));
+			}
 			Test->TestFalse(TEXT("Mission confirmation cannot run twice"), FrontEndWidget->ConfirmSelectedMission());
-			Test->TestTrue(TEXT("FLOW-03 still reuses the same Root Widget"), Controller->GetFrontEndWidget() == FrontEndWidget);
-			Test->TestEqual(TEXT("FLOW-03 still has one Root Widget creation"), Controller->GetFrontEndWidgetCreationCount(), 1);
+			Test->TestTrue(TEXT("FLOW-04 still reuses the same Root Widget"), Controller->GetFrontEndWidget() == FrontEndWidget);
+			Test->TestEqual(TEXT("FLOW-04 still has one Root Widget creation"), Controller->GetFrontEndWidgetCreationCount(), 1);
 		}
 		return true;
 	}

@@ -18,8 +18,9 @@ bool FDroneGameFlowContractTest::RunTest(const FString& Parameters)
 	UGameInstance* CatalogGameInstance = NewObject<UGameInstance>();
 	UDroneGameFlowSubsystem* CatalogFlow = NewObject<UDroneGameFlowSubsystem>(CatalogGameInstance);
 	TestTrue(TEXT("Default Catalog registers from saved assets"), CatalogFlow && CatalogFlow->EnsureDefaultCatalog());
-	TestEqual(TEXT("Default Catalog contains one Drone"), CatalogFlow ? CatalogFlow->GetRegisteredDroneCount() : 0, 1);
+	TestEqual(TEXT("Default Catalog contains three Figma-aligned Drone roles"), CatalogFlow ? CatalogFlow->GetRegisteredDroneCount() : 0, 3);
 	TestEqual(TEXT("Default Catalog contains one Mission"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 1);
+	TestEqual(TEXT("Default Catalog exposes three sorted Drone IDs"), CatalogFlow ? CatalogFlow->GetRegisteredDroneIds().Num() : 0, 3);
 	TestEqual(TEXT("Default Catalog exposes one sorted Mission ID"), CatalogFlow ? CatalogFlow->GetRegisteredMissionIds().Num() : 0, 1);
 	if (CatalogFlow && CatalogFlow->GetRegisteredMissionIds().Num() == 1)
 	{
@@ -29,7 +30,7 @@ bool FDroneGameFlowContractTest::RunTest(const FString& Parameters)
 			FName(TEXT("Mission.Tutorial.Training")));
 	}
 	TestTrue(TEXT("Default Catalog registration is idempotent"), CatalogFlow && CatalogFlow->EnsureDefaultCatalog());
-	TestEqual(TEXT("Idempotent registration keeps one Drone"), CatalogFlow ? CatalogFlow->GetRegisteredDroneCount() : 0, 1);
+	TestEqual(TEXT("Idempotent registration keeps three Drones"), CatalogFlow ? CatalogFlow->GetRegisteredDroneCount() : 0, 3);
 	TestEqual(TEXT("Idempotent registration keeps one Mission"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 1);
 
 	UGameInstance* GameInstance = NewObject<UGameInstance>();
@@ -37,21 +38,36 @@ bool FDroneGameFlowContractTest::RunTest(const FString& Parameters)
 	UDroneDefinition* ScoutDrone = LoadObject<UDroneDefinition>(
 		nullptr,
 		TEXT("/Game/Drone/Data/Drones/DA_Drone_Scout_Greybox.DA_Drone_Scout_Greybox"));
+	UDroneDefinition* FPVStrikeDrone = LoadObject<UDroneDefinition>(
+		nullptr,
+		TEXT("/Game/Drone/Data/Drones/DA_Drone_FPVStrike_Greybox.DA_Drone_FPVStrike_Greybox"));
+	UDroneDefinition* DropDrone = LoadObject<UDroneDefinition>(
+		nullptr,
+		TEXT("/Game/Drone/Data/Drones/DA_Drone_Drop_Greybox.DA_Drone_Drop_Greybox"));
 	UDroneMissionDefinition* TutorialMission = LoadObject<UDroneMissionDefinition>(
 		nullptr,
 		TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Training.DA_Mission_Tutorial_Training"));
 	TestNotNull(TEXT("Flow test GameInstance exists"), GameInstance);
 	TestNotNull(TEXT("Flow Subsystem test instance exists inside GameInstance"), Flow);
 	TestNotNull(TEXT("Scout Drone Definition exists"), ScoutDrone);
+	TestNotNull(TEXT("FPV Strike Drone Definition exists"), FPVStrikeDrone);
+	TestNotNull(TEXT("Drop Drone Definition exists"), DropDrone);
 	TestNotNull(TEXT("Tutorial Mission Definition exists"), TutorialMission);
-	if (!Flow || !ScoutDrone || !TutorialMission)
+	if (!Flow || !ScoutDrone || !FPVStrikeDrone || !DropDrone || !TutorialMission)
 	{
 		return false;
 	}
 
 	const FName ScoutDroneId(TEXT("Drone.Scout.Greybox"));
+	const FName FPVStrikeDroneId(TEXT("Drone.FPVStrike.Greybox"));
+	const FName DropDroneId(TEXT("Drone.Drop.Greybox"));
 	const FName TutorialMissionId(TEXT("Mission.Tutorial.Training"));
 	TestEqual(TEXT("Saved Scout Drone uses the stable ID"), ScoutDrone->DroneId, ScoutDroneId);
+	TestEqual(TEXT("Saved FPV Strike Definition uses the stable ID"), FPVStrikeDrone->DroneId, FPVStrikeDroneId);
+	TestEqual(TEXT("Saved Drop Definition uses the stable ID"), DropDrone->DroneId, DropDroneId);
+	TestEqual(TEXT("Scout role is Reconnaissance"), ScoutDrone->MissionRole, EDroneMissionRole::Reconnaissance);
+	TestEqual(TEXT("FPV role is FPV Strike"), FPVStrikeDrone->MissionRole, EDroneMissionRole::FPVStrike);
+	TestEqual(TEXT("Drop role is Drop Delivery"), DropDrone->MissionRole, EDroneMissionRole::DropDelivery);
 	TestEqual(TEXT("Saved Tutorial Mission uses the stable ID"), TutorialMission->MissionId, TutorialMissionId);
 	UClass* ScoutPawnClass = ScoutDrone->PawnClass.LoadSynchronous();
 	TestTrue(
@@ -59,7 +75,9 @@ bool FDroneGameFlowContractTest::RunTest(const FString& Parameters)
 		ScoutPawnClass && ScoutPawnClass->IsChildOf(ADronePrototypePawn::StaticClass()));
 	TestEqual(TEXT("Saved Tutorial Mission points at Training Map"), TutorialMission->MissionMap.ToSoftObjectPath(), FSoftObjectPath(TEXT("/Game/Drone/Maps/Lvl_DroneTraining.Lvl_DroneTraining")));
 
-	TestTrue(TEXT("Valid Drone Definition registers"), Flow->RegisterDroneDefinition(ScoutDrone));
+	TestTrue(TEXT("Valid Scout Definition registers"), Flow->RegisterDroneDefinition(ScoutDrone));
+	TestTrue(TEXT("Valid FPV Strike Definition registers"), Flow->RegisterDroneDefinition(FPVStrikeDrone));
+	TestTrue(TEXT("Valid Drop Definition registers"), Flow->RegisterDroneDefinition(DropDrone));
 	TestFalse(TEXT("Duplicate Drone ID is rejected"), Flow->RegisterDroneDefinition(ScoutDrone));
 	TestTrue(TEXT("Valid Mission with a registered Drone registers"), Flow->RegisterMissionDefinition(TutorialMission));
 	TestFalse(TEXT("Duplicate Mission ID is rejected"), Flow->RegisterMissionDefinition(TutorialMission));
@@ -82,10 +100,13 @@ bool FDroneGameFlowContractTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Unknown Mission ID is rejected without changing selection"), Flow->SelectMission(FName(TEXT("Mission.Unknown"))));
 	TestTrue(TEXT("Tutorial Mission can be selected"), Flow->SelectMission(TutorialMissionId));
 	TestEqual(TEXT("Selected Mission ID is preserved"), Flow->GetSnapshot().SelectedMissionId, TutorialMissionId);
-	TestEqual(TEXT("Mission exposes exactly one allowed Drone"), Flow->GetSnapshot().AvailableDroneIds.Num(), 1);
-	if (Flow->GetSnapshot().AvailableDroneIds.Num() == 1)
+	TestEqual(TEXT("Mission exposes three controllable role Definitions"), Flow->GetSnapshot().AvailableDroneIds.Num(), 3);
+	TestEqual(TEXT("Available Definition list follows the Mission list"), Flow->GetAvailableDroneDefinitions().Num(), 3);
+	if (Flow->GetSnapshot().AvailableDroneIds.Num() == 3)
 	{
-		TestEqual(TEXT("Allowed Drone ID matches the Mission Definition"), Flow->GetSnapshot().AvailableDroneIds[0], ScoutDroneId);
+		TestEqual(TEXT("Scout remains the default first option"), Flow->GetSnapshot().AvailableDroneIds[0], ScoutDroneId);
+		TestEqual(TEXT("FPV Strike is the second option"), Flow->GetSnapshot().AvailableDroneIds[1], FPVStrikeDroneId);
+		TestEqual(TEXT("Drop is the third option"), Flow->GetSnapshot().AvailableDroneIds[2], DropDroneId);
 	}
 	TestFalse(TEXT("Drone cannot be selected before Mission Map is ready"), Flow->SelectDrone(ScoutDroneId));
 
@@ -96,6 +117,7 @@ bool FDroneGameFlowContractTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Drone outside the allowed list is rejected"), Flow->SelectDrone(FName(TEXT("Drone.Unknown"))));
 	TestTrue(TEXT("Allowed Scout Drone can be selected"), Flow->SelectDrone(ScoutDroneId));
 	TestEqual(TEXT("Selected Drone ID is preserved"), Flow->GetSnapshot().SelectedDroneId, ScoutDroneId);
+	TestTrue(TEXT("Selected Drone Definition is resolved for FLOW-05 spawn"), Flow->GetSelectedDroneDefinition() == ScoutDrone);
 
 	TestTrue(TEXT("Selected Drone permits exactly one Mission start"), Flow->RequestMissionStart());
 	TestEqual(TEXT("Flow enters In Mission"), Flow->GetSnapshot().State, EDroneGameFlowState::InMission);

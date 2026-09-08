@@ -19,7 +19,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 
 /**
  * Map 전환 사이에 Front-end 선택과 Mission 진입 상태를 한 곳에서 보존한다.
- * FLOW-01에서는 실제 OpenLevel/Widget/Pawn Spawn을 수행하지 않고 허용된 요청만 검증한다.
+ * 실제 OpenLevel·Widget·Pawn 수명은 각 PlayerController가 맡고 이 Subsystem은 상태와 데이터만 검증한다.
  */
 UCLASS()
 class DRONE_API UDroneGameFlowSubsystem : public UGameInstanceSubsystem
@@ -54,6 +54,18 @@ public:
 	/** 로비 목록이 Map 순서에 의존하지 않도록 ID를 이름순으로 반환한다. */
 	UFUNCTION(BlueprintPure, Category="Drone|Flow|Data")
 	TArray<FName> GetRegisteredMissionIds() const;
+
+	/** FLOW-05 선택 카드 생성용. Catalog의 Drone ID를 이름순으로 반환한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flow|Data")
+	TArray<FName> GetRegisteredDroneIds() const;
+
+	/** 현재 Mission이 허용한 순서를 보존해 선택 카드가 그대로 사용할 Definition을 반환한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flow|Data")
+	TArray<UDroneDefinition*> GetAvailableDroneDefinitions() const;
+
+	/** 선택 전에는 nullptr이며 FLOW-05 Spawn/Possess가 사용할 단일 Definition이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flow|Data")
+	UDroneDefinition* GetSelectedDroneDefinition() const;
 
 	UFUNCTION(BlueprintPure, Category="Drone|Flow|Data")
 	int32 GetRegisteredDroneCount() const { return DroneDefinitions.Num(); }

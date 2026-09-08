@@ -35,7 +35,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Mission Definition|Display")
 	TSoftObjectPtr<UTexture2D> Thumbnail;
 
-	/** Media Source 또는 Level Sequence 형식은 FLOW-04에서 확정한다. 현재는 선택 참조만 보존한다. */
+	/** 선택적 영상/Sequence 참조다. 비어 있으면 FLOW-04 정적 Briefing을 사용한다. 최종 Media 형식은 현재 미정이다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Mission Definition|Briefing")
 	FSoftObjectPath BriefingAsset;
 
@@ -63,4 +63,3 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Flow|Data")
 	bool IsDefinitionValid() const;
 };
-

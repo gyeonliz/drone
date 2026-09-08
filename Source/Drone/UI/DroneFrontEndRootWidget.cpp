@@ -17,6 +17,7 @@ namespace DroneFrontEndUI
 {
 const FName OpeningPanelName(TEXT("OpeningPanel"));
 const FName LobbyPanelName(TEXT("LobbyPanel"));
+const FName MissionBriefingPanelName(TEXT("MissionBriefingPanel"));
 const FName ContinueButtonName(TEXT("ContinueButton"));
 const FName OpeningTitleName(TEXT("OpeningTitleText"));
 const FName LobbyTitleName(TEXT("LobbyTitleText"));
@@ -27,6 +28,9 @@ const FName MissionNameName(TEXT("MissionNameText"));
 const FName MissionDescriptionName(TEXT("MissionDescriptionText"));
 const FName MissionMetaName(TEXT("MissionMetaText"));
 const FName StartMissionButtonName(TEXT("StartMissionButton"));
+const FName MissionBriefingTitleName(TEXT("MissionBriefingTitleText"));
+const FName MissionBriefingBodyName(TEXT("MissionBriefingBodyText"));
+const FName FinishMissionBriefingButtonName(TEXT("FinishMissionBriefingButton"));
 }
 
 void UDroneFrontEndRootWidget::NativeOnInitialized()
@@ -47,6 +51,12 @@ void UDroneFrontEndRootWidget::NativeOnInitialized()
 	{
 		StartMissionButton->OnClicked.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleStartMissionClicked);
 	}
+	if (FinishMissionBriefingButton)
+	{
+		FinishMissionBriefingButton->OnClicked.AddUniqueDynamic(
+			this,
+			&UDroneFrontEndRootWidget::HandleFinishBriefingClicked);
+	}
 	ApplyDisplayedState(DisplayedState);
 }
 
@@ -63,6 +73,12 @@ void UDroneFrontEndRootWidget::NativeDestruct()
 	if (StartMissionButton)
 	{
 		StartMissionButton->OnClicked.RemoveDynamic(this, &UDroneFrontEndRootWidget::HandleStartMissionClicked);
+	}
+	if (FinishMissionBriefingButton)
+	{
+		FinishMissionBriefingButton->OnClicked.RemoveDynamic(
+			this,
+			&UDroneFrontEndRootWidget::HandleFinishBriefingClicked);
 	}
 	ClearFlowBinding();
 	Super::NativeDestruct();
@@ -111,6 +127,25 @@ bool UDroneFrontEndRootWidget::FinishOpeningTrailer()
 	return Flow && Flow->EnterLobbyFromOpeningTrailer();
 }
 
+bool UDroneFrontEndRootWidget::FinishMissionBriefing()
+{
+	UDroneGameFlowSubsystem* Flow = FlowSubsystem.Get();
+	if (!Flow || Flow->GetSnapshot().State != EDroneGameFlowState::MissionTrailer)
+	{
+		return false;
+	}
+
+	UDroneMissionDefinition* Mission = Flow->FindMissionDefinition(Flow->GetSnapshot().SelectedMissionId);
+	// Map 참조를 먼저 검증해 Loading 상태에 진입한 뒤 되돌릴 수 없는 정지 상태를 만들지 않는다.
+	if (!Mission || Mission->MissionMap.IsNull() || !Flow->NotifyMissionTrailerFinished())
+	{
+		return false;
+	}
+
+	OnMissionMapLoadRequested.Broadcast(Mission);
+	return true;
+}
+
 void UDroneFrontEndRootWidget::HandleFlowStateChanged(
 	const EDroneGameFlowState /*PreviousState*/,
 	const EDroneGameFlowState NewState)
@@ -123,6 +158,10 @@ void UDroneFrontEndRootWidget::HandleFlowSnapshotChanged(const FDroneGameFlowSna
 	if (Snapshot.State == EDroneGameFlowState::LobbyMissionSelect)
 	{
 		RefreshLobbyContent();
+	}
+	else if (Snapshot.State == EDroneGameFlowState::MissionTrailer)
+	{
+		RefreshMissionBriefingContent();
 	}
 }
 
@@ -144,6 +183,11 @@ void UDroneFrontEndRootWidget::HandleStartMissionClicked()
 	ConfirmSelectedMission();
 }
 
+void UDroneFrontEndRootWidget::HandleFinishBriefingClicked()
+{
+	FinishMissionBriefing();
+}
+
 bool UDroneFrontEndRootWidget::TryBindBlueprintLayout()
 {
 	if (!WidgetTree)
@@ -153,6 +197,7 @@ bool UDroneFrontEndRootWidget::TryBindBlueprintLayout()
 
 	OpeningPanel = WidgetTree->FindWidget(DroneFrontEndUI::OpeningPanelName);
 	LobbyPanel = WidgetTree->FindWidget(DroneFrontEndUI::LobbyPanelName);
+	MissionBriefingPanel = WidgetTree->FindWidget(DroneFrontEndUI::MissionBriefingPanelName);
 	ContinueButton = Cast<UButton>(WidgetTree->FindWidget(DroneFrontEndUI::ContinueButtonName));
 	OpeningTitleText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneFrontEndUI::OpeningTitleName));
 	LobbyTitleText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneFrontEndUI::LobbyTitleName));
@@ -163,15 +208,23 @@ bool UDroneFrontEndRootWidget::TryBindBlueprintLayout()
 	MissionDescriptionText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneFrontEndUI::MissionDescriptionName));
 	MissionMetaText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneFrontEndUI::MissionMetaName));
 	StartMissionButton = Cast<UButton>(WidgetTree->FindWidget(DroneFrontEndUI::StartMissionButtonName));
+	MissionBriefingTitleText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneFrontEndUI::MissionBriefingTitleName));
+	MissionBriefingBodyText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneFrontEndUI::MissionBriefingBodyName));
+	FinishMissionBriefingButton = Cast<UButton>(
+		WidgetTree->FindWidget(DroneFrontEndUI::FinishMissionBriefingButtonName));
 	return OpeningPanel
 		&& LobbyPanel
+		&& MissionBriefingPanel
 		&& ContinueButton
 		&& MissionSelectButton
 		&& MissionSelectButtonText
 		&& MissionNameText
 		&& MissionDescriptionText
 		&& MissionMetaText
-		&& StartMissionButton;
+		&& StartMissionButton
+		&& MissionBriefingTitleText
+		&& MissionBriefingBodyText
+		&& FinishMissionBriefingButton;
 }
 
 void UDroneFrontEndRootWidget::BuildDefaultLayout()
@@ -301,7 +354,43 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 	StartMissionText->SetText(FText::FromString(TEXT("미션 시작")));
 	StartMissionButton->AddChild(StartMissionText);
 	LobbyColumn->AddChildToVerticalBox(StartMissionButton);
+
+	// FLOW-04의 영상 Asset이 없어도 전체 진입 흐름을 시험할 수 있는 정적 Briefing 안전망이다.
+	UBorder* NativeBriefingPanel = AddFullScreenPanel(
+		DroneFrontEndUI::MissionBriefingPanelName,
+		FLinearColor(0.008f, 0.018f, 0.025f, 1.0f));
+	MissionBriefingPanel = NativeBriefingPanel;
+	UVerticalBox* BriefingColumn = WidgetTree->ConstructWidget<UVerticalBox>(
+		UVerticalBox::StaticClass(),
+		TEXT("MissionBriefingColumn"));
+	NativeBriefingPanel->SetContent(BriefingColumn);
+
+	MissionBriefingTitleText = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(),
+		DroneFrontEndUI::MissionBriefingTitleName);
+	MissionBriefingTitleText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 32.0f));
+	MissionBriefingTitleText->SetJustification(ETextJustify::Center);
+	MissionBriefingTitleText->SetColorAndOpacity(FSlateColor(FLinearColor(0.20f, 0.95f, 0.82f, 1.0f)));
+	BriefingColumn->AddChildToVerticalBox(MissionBriefingTitleText);
+
+	MissionBriefingBodyText = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(),
+		DroneFrontEndUI::MissionBriefingBodyName);
+	MissionBriefingBodyText->SetAutoWrapText(true);
+	MissionBriefingBodyText->SetColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.87f, 0.89f, 1.0f)));
+	BriefingColumn->AddChildToVerticalBox(MissionBriefingBodyText);
+
+	FinishMissionBriefingButton = WidgetTree->ConstructWidget<UButton>(
+		UButton::StaticClass(),
+		DroneFrontEndUI::FinishMissionBriefingButtonName);
+	UTextBlock* FinishBriefingText = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(),
+		TEXT("FinishMissionBriefingButtonText"));
+	FinishBriefingText->SetText(FText::FromString(TEXT("작전 지역으로 이동")));
+	FinishMissionBriefingButton->AddChild(FinishBriefingText);
+	BriefingColumn->AddChildToVerticalBox(FinishMissionBriefingButton);
 	RefreshLobbyContent();
+	RefreshMissionBriefingContent();
 }
 
 void UDroneFrontEndRootWidget::ApplyDisplayedState(const EDroneGameFlowState State)
@@ -321,11 +410,62 @@ void UDroneFrontEndRootWidget::ApplyDisplayedState(const EDroneGameFlowState Sta
 				? ESlateVisibility::Visible
 				: ESlateVisibility::Collapsed);
 	}
+	if (MissionBriefingPanel)
+	{
+		MissionBriefingPanel->SetVisibility(
+			State == EDroneGameFlowState::MissionTrailer
+				? ESlateVisibility::Visible
+				: ESlateVisibility::Collapsed);
+	}
 	if (State == EDroneGameFlowState::LobbyMissionSelect)
 	{
 		RefreshLobbyContent();
 	}
+	else if (State == EDroneGameFlowState::MissionTrailer)
+	{
+		RefreshMissionBriefingContent();
+	}
 	ReceiveFrontEndStateDisplayed(State);
+}
+
+void UDroneFrontEndRootWidget::RefreshMissionBriefingContent()
+{
+	UDroneGameFlowSubsystem* Flow = FlowSubsystem.Get();
+	UDroneMissionDefinition* Mission = Flow
+		? Flow->FindMissionDefinition(Flow->GetSnapshot().SelectedMissionId)
+		: nullptr;
+	if (Mission)
+	{
+		DisplayedBriefingTitle = Mission->DisplayName;
+		FString Body = Mission->LobbyDescription.ToString();
+		if (!Mission->InitialObjectives.IsEmpty())
+		{
+			Body += TEXT("\n\n초기 목표");
+			for (const FText& Objective : Mission->InitialObjectives)
+			{
+				Body += FString::Printf(TEXT("\n- %s"), *Objective.ToString());
+			}
+		}
+		DisplayedBriefingBody = FText::FromString(Body);
+	}
+	else
+	{
+		DisplayedBriefingTitle = FText::FromString(TEXT("작전 브리핑"));
+		DisplayedBriefingBody = FText::FromString(TEXT("선택된 미션 정보가 없습니다."));
+	}
+
+	if (MissionBriefingTitleText)
+	{
+		MissionBriefingTitleText->SetText(DisplayedBriefingTitle);
+	}
+	if (MissionBriefingBodyText)
+	{
+		MissionBriefingBodyText->SetText(DisplayedBriefingBody);
+	}
+	if (FinishMissionBriefingButton)
+	{
+		FinishMissionBriefingButton->SetIsEnabled(Mission && !Mission->MissionMap.IsNull());
+	}
 }
 
 void UDroneFrontEndRootWidget::RefreshLobbyContent()

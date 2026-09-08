@@ -11,12 +11,16 @@ class UDroneMissionDefinition;
 class UTextBlock;
 class UWidget;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FDroneMissionMapLoadRequestedSignature,
+	UDroneMissionDefinition*, MissionDefinition);
+
 /**
  * 시작 트레일러 대체 화면과 로비의 단일 Front-end Widget Host다.
  *
  * C++는 상태 구독, 버튼 전환과 중복 방지를 담당한다. Widget Blueprint는 같은 이름의
  * 선택 위젯을 배치해 외형만 교체할 수 있으며, Designer가 비어 있으면 학습용 기본 UI가
- * 자동으로 만들어진다. 실제 영상 재생은 FLOW-04와 분리한다.
+ * 자동으로 만들어진다. 실제 영상 Asset이 없으면 같은 Mission 데이터의 정적 Briefing을 표시한다.
  */
 UCLASS(Blueprintable)
 class DRONE_API UDroneFrontEndRootWidget : public UUserWidget
@@ -45,9 +49,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Front End|Lobby")
 	bool SelectLobbyMission(FName MissionId);
 
-	/** 선택한 Mission을 확정해 MissionTrailer 상태로 넘긴다. 실제 영상/Map 이동은 하지 않는다. */
+	/** 선택한 Mission을 확정해 정적 Briefing 또는 추후 영상이 표시될 MissionTrailer 상태로 넘긴다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Front End|Lobby")
 	bool ConfirmSelectedMission();
+
+	/** 정적 Briefing의 작전 시작 버튼과 추후 영상 종료 Callback이 함께 사용하는 Map 진입 경계다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Front End|Briefing")
+	bool FinishMissionBriefing();
 
 	UFUNCTION(BlueprintPure, Category="Drone|Front End|Lobby")
 	FText GetDisplayedMissionName() const { return DisplayedMissionName; }
@@ -57,6 +65,16 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|Front End|Lobby")
 	FText GetDisplayedMissionMeta() const { return DisplayedMissionMeta; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Front End|Briefing")
+	FText GetDisplayedBriefingTitle() const { return DisplayedBriefingTitle; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Front End|Briefing")
+	FText GetDisplayedBriefingBody() const { return DisplayedBriefingBody; }
+
+	/** PlayerController만 이 요청을 받아 실제 OpenLevel을 수행한다. Widget은 Map 수명을 소유하지 않는다. */
+	UPROPERTY(BlueprintAssignable, Category="Drone|Front End|Briefing")
+	FDroneMissionMapLoadRequestedSignature OnMissionMapLoadRequested;
 
 	/** 최종 WBP가 Animation/영상/전환 표현을 붙이는 지점이며 Flow 상태를 바꾸지는 않는다. */
 	UFUNCTION(BlueprintImplementableEvent, Category="Drone|Front End", meta=(DisplayName="On Front End State Displayed"))
@@ -86,10 +104,14 @@ private:
 	UFUNCTION()
 	void HandleStartMissionClicked();
 
+	UFUNCTION()
+	void HandleFinishBriefingClicked();
+
 	void BuildDefaultLayout();
 	bool TryBindBlueprintLayout();
 	void ApplyDisplayedState(EDroneGameFlowState State);
 	void RefreshLobbyContent();
+	void RefreshMissionBriefingContent();
 	void ClearFlowBinding();
 
 	TWeakObjectPtr<UDroneGameFlowSubsystem> FlowSubsystem;
@@ -109,12 +131,21 @@ private:
 	UPROPERTY(Transient)
 	FText DisplayedMissionMeta;
 
+	UPROPERTY(Transient)
+	FText DisplayedBriefingTitle;
+
+	UPROPERTY(Transient)
+	FText DisplayedBriefingBody;
+
 	/** WBP Designer에서 같은 이름을 쓰면 C++ 수명·전환 로직을 그대로 재사용한다. */
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UWidget> OpeningPanel;
 
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UWidget> LobbyPanel;
+
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UWidget> MissionBriefingPanel;
 
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UButton> ContinueButton;
@@ -145,6 +176,15 @@ private:
 
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UButton> StartMissionButton;
+
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UTextBlock> MissionBriefingTitleText;
+
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UTextBlock> MissionBriefingBodyText;
+
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UButton> FinishMissionBriefingButton;
 
 	UPROPERTY(Transient)
 	bool bUsingNativeFallbackLayout = false;

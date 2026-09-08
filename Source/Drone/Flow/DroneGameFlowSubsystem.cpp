@@ -7,8 +7,12 @@
 
 namespace DroneGameFlow
 {
-const TCHAR* DefaultDronePath =
-	TEXT("/Game/Drone/Data/Drones/DA_Drone_Scout_Greybox.DA_Drone_Scout_Greybox");
+const TCHAR* DefaultDronePaths[] =
+{
+	TEXT("/Game/Drone/Data/Drones/DA_Drone_Scout_Greybox.DA_Drone_Scout_Greybox"),
+	TEXT("/Game/Drone/Data/Drones/DA_Drone_FPVStrike_Greybox.DA_Drone_FPVStrike_Greybox"),
+	TEXT("/Game/Drone/Data/Drones/DA_Drone_Drop_Greybox.DA_Drone_Drop_Greybox")
+};
 const TCHAR* DefaultMissionPath =
 	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Training.DA_Mission_Tutorial_Training");
 }
@@ -37,22 +41,27 @@ void UDroneGameFlowSubsystem::Deinitialize()
 
 bool UDroneGameFlowSubsystem::EnsureDefaultCatalog()
 {
-	UDroneDefinition* DefaultDrone = LoadObject<UDroneDefinition>(nullptr, DroneGameFlow::DefaultDronePath);
-	if (!DefaultDrone)
+	for (const TCHAR* DefaultDronePath : DroneGameFlow::DefaultDronePaths)
 	{
-		return Reject(LOCTEXT("DefaultDroneMissing", "기본 Drone Definition을 불러오지 못했습니다."));
-	}
-
-	if (UDroneDefinition* RegisteredDrone = FindDroneDefinition(DefaultDrone->DroneId))
-	{
-		if (RegisteredDrone != DefaultDrone)
+		UDroneDefinition* DefaultDrone = LoadObject<UDroneDefinition>(nullptr, DefaultDronePath);
+		if (!DefaultDrone)
 		{
-			return Reject(LOCTEXT("DefaultDroneConflict", "기본 Drone ID가 다른 Asset으로 이미 등록되어 있습니다."));
+			return Reject(FText::Format(
+				LOCTEXT("DefaultDroneMissing", "기본 Drone Definition '{0}'을 불러오지 못했습니다."),
+				FText::FromString(DefaultDronePath)));
 		}
-	}
-	else if (!RegisterDroneDefinition(DefaultDrone))
-	{
-		return false;
+
+		if (UDroneDefinition* RegisteredDrone = FindDroneDefinition(DefaultDrone->DroneId))
+		{
+			if (RegisteredDrone != DefaultDrone)
+			{
+				return Reject(LOCTEXT("DefaultDroneConflict", "기본 Drone ID가 다른 Asset으로 이미 등록되어 있습니다."));
+			}
+		}
+		else if (!RegisterDroneDefinition(DefaultDrone))
+		{
+			return false;
+		}
 	}
 
 	UDroneMissionDefinition* DefaultMission = LoadObject<UDroneMissionDefinition>(
@@ -151,6 +160,39 @@ TArray<FName> UDroneGameFlowSubsystem::GetRegisteredMissionIds() const
 	return MissionIds;
 }
 
+TArray<FName> UDroneGameFlowSubsystem::GetRegisteredDroneIds() const
+{
+	TArray<FName> DroneIds;
+	DroneDefinitions.GenerateKeyArray(DroneIds);
+	DroneIds.Sort([](const FName Left, const FName Right)
+	{
+		return Left.Compare(Right) < 0;
+	});
+	return DroneIds;
+}
+
+TArray<UDroneDefinition*> UDroneGameFlowSubsystem::GetAvailableDroneDefinitions() const
+{
+	TArray<UDroneDefinition*> AvailableDefinitions;
+	AvailableDefinitions.Reserve(Snapshot.AvailableDroneIds.Num());
+	for (const FName DroneId : Snapshot.AvailableDroneIds)
+	{
+		if (UDroneDefinition* Definition = FindDroneDefinition(DroneId);
+			Definition && Definition->bPlayerControllableInCurrentBuild && !Definition->bLocked)
+		{
+			AvailableDefinitions.Add(Definition);
+		}
+	}
+	return AvailableDefinitions;
+}
+
+UDroneDefinition* UDroneGameFlowSubsystem::GetSelectedDroneDefinition() const
+{
+	return Snapshot.SelectedDroneId.IsNone()
+		? nullptr
+		: FindDroneDefinition(Snapshot.SelectedDroneId);
+}
+
 bool UDroneGameFlowSubsystem::BeginOpeningTrailer()
 {
 	return ChangeState(EDroneGameFlowState::Boot, EDroneGameFlowState::OpeningTrailer);
@@ -180,7 +222,15 @@ bool UDroneGameFlowSubsystem::SelectMission(const FName MissionId)
 	}
 
 	Snapshot.SelectedMissionId = MissionId;
-	Snapshot.AvailableDroneIds = Mission->AllowedDroneIds;
+	Snapshot.AvailableDroneIds.Reset();
+	for (const FName AllowedDroneId : Mission->AllowedDroneIds)
+	{
+		const UDroneDefinition* Definition = FindDroneDefinition(AllowedDroneId);
+		if (Definition && Definition->bPlayerControllableInCurrentBuild && !Definition->bLocked)
+		{
+			Snapshot.AvailableDroneIds.Add(AllowedDroneId);
+		}
+	}
 	Snapshot.SelectedDroneId = NAME_None;
 	Snapshot.bMissionStartRequested = false;
 	Snapshot.LastMissionOutcome = EDroneMissionOutcome::None;
@@ -221,7 +271,7 @@ bool UDroneGameFlowSubsystem::SelectDrone(const FName DroneId)
 	}
 
 	UDroneDefinition* Drone = FindDroneDefinition(DroneId);
-	if (!Drone || Drone->bLocked)
+	if (!Drone || Drone->bLocked || !Drone->bPlayerControllableInCurrentBuild)
 	{
 		return Reject(FText::Format(LOCTEXT("DroneUnavailable", "Drone ID '{0}'를 선택할 수 없습니다."), FText::FromName(DroneId)));
 	}
@@ -234,9 +284,11 @@ bool UDroneGameFlowSubsystem::SelectDrone(const FName DroneId)
 
 bool UDroneGameFlowSubsystem::RequestMissionStart()
 {
+	const UDroneDefinition* SelectedDrone = FindDroneDefinition(Snapshot.SelectedDroneId);
 	if (Snapshot.State != EDroneGameFlowState::DroneSelect
-		|| Snapshot.SelectedDroneId.IsNone()
-		|| !FindDroneDefinition(Snapshot.SelectedDroneId))
+		|| !SelectedDrone
+		|| SelectedDrone->bLocked
+		|| !SelectedDrone->bPlayerControllableInCurrentBuild)
 	{
 		return Reject(LOCTEXT("MissionStartInvalid", "허용된 Drone을 확정한 뒤에만 Mission을 시작할 수 있습니다."));
 	}
