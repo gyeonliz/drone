@@ -3,13 +3,6 @@
 #include "AI/DroneNPCAIController.h"
 #include "GameFramework/Pawn.h"
 
-namespace
-{
-	constexpr float SpineLookWeight = 0.20f;
-	constexpr float NeckLookWeight = 0.45f;
-	constexpr float HeadLookWeight = 0.35f;
-}
-
 void UDroneNPCAnimInstance::NativeInitializeAnimation()
 {
 	Super::NativeInitializeAnimation();

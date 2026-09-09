@@ -5,6 +5,7 @@
 #include "Components/SceneComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Prototype/DronePrototypePawn.h"
 #include "Tests/AutomationEditorCommon.h"
@@ -46,19 +47,41 @@ bool FDronePrototypeVisualBankTest::RunTest(const FString& Parameters)
 	}
 
 	int32 VisualMeshCount = 0;
+	int32 RotorVisualCount = 0;
+	UStaticMeshComponent* FirstRotorVisual = nullptr;
 	TInlineComponentArray<UStaticMeshComponent*> MeshComponents(Pawn);
-	for (const UStaticMeshComponent* MeshComponent : MeshComponents)
+	for (UStaticMeshComponent* MeshComponent : MeshComponents)
 	{
 		if (!MeshComponent || MeshComponent->GetClass()->GetName().Contains(TEXT("CameraProxyMeshComponent")))
 		{
 			continue;
 		}
 		++VisualMeshCount;
+		if (MeshComponent->GetName().Contains(TEXT("Rotor")))
+		{
+			++RotorVisualCount;
+			FirstRotorVisual = FirstRotorVisual ? FirstRotorVisual : MeshComponent;
+		}
 		TestTrue(
 			*FString::Printf(TEXT("%s follows the visual tilt pivot"), *MeshComponent->GetName()),
 			MeshComponent->GetAttachParent() == Pawn->GetVisualTiltPivot());
 	}
 	TestEqual(TEXT("FPV body and four rotors participate in visual bank"), VisualMeshCount, 5);
+	TestEqual(TEXT("FPV integration has four Rotor visuals"), RotorVisualCount, 4);
+	TestEqual(TEXT("Runtime Pawn collects all four FPV Rotor visuals"), Pawn->GetRotorVisualComponentCount(), 4);
+	if (FirstRotorVisual)
+	{
+		const FQuat InitialRotorRotation = FirstRotorVisual->GetRelativeRotation().Quaternion();
+		const FVector InitialRotorVisualCenter = FirstRotorVisual->GetComponentTransform().TransformPosition(
+			FirstRotorVisual->GetStaticMesh()->GetBoundingBox().GetCenter());
+		Pawn->Tick(0.01f);
+		TestFalse(TEXT("FPV Rotor changes local rotation during gameplay Tick"),
+			FirstRotorVisual->GetRelativeRotation().Quaternion().Equals(InitialRotorRotation, KINDA_SMALL_NUMBER));
+		const FVector UpdatedRotorVisualCenter = FirstRotorVisual->GetComponentTransform().TransformPosition(
+			FirstRotorVisual->GetStaticMesh()->GetBoundingBox().GetCenter());
+		TestTrue(TEXT("FPV Rotor spins in place around its own Mesh center"),
+			InitialRotorVisualCenter.Equals(UpdatedRotorVisualCenter, 0.1f));
+	}
 	TestFalse(TEXT("Drone starts in third-person view"), Pawn->IsFirstPersonViewEnabled());
 	TestTrue(TEXT("Third-person CameraBoom follows the collision root"),
 		Pawn->GetCameraBoom()->GetAttachParent() == Pawn->GetCollisionComponent());

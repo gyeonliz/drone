@@ -23,14 +23,20 @@ for component in components:
     relative_location = component.get_editor_property("relative_location")
     relative_rotation = component.get_editor_property("relative_rotation")
     relative_scale = component.get_editor_property("relative_scale3d")
+    mesh_box = mesh.get_bounding_box() if mesh else None
+    mesh_bounds = mesh.get_bounds() if mesh else None
+    component_local_bounds = component.get_local_bounds()
     unreal.log(
-        "DRONE_VISUAL_HIERARCHY|component={} | parent={} | mesh={} | location={} | rotation={} | scale={}".format(
+        "DRONE_VISUAL_HIERARCHY|component={} | parent={} | mesh={} | location={} | rotation={} | scale={} | mesh_box={} | mesh_bounds={} | component_local_bounds={}".format(
             component.get_name(),
             parent.get_name() if parent else "None",
             mesh.get_path_name() if mesh else "None",
             relative_location,
             relative_rotation,
             relative_scale,
+            mesh_box,
+            mesh_bounds,
+            component_local_bounds,
         )
     )
 

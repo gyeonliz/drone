@@ -106,6 +106,7 @@ bool FDroneFPVIntegrationAssetTest::RunTest(const FString& Parameters)
 	SpawnedPawn->GetComponents(MeshComponents);
 
 	TSet<FString> ActualMeshPaths;
+	TSet<int32> OccupiedRotorQuadrants;
 	int32 FPVVisualMeshCount = 0;
 	for (const UStaticMeshComponent* MeshComponent : MeshComponents)
 	{
@@ -126,6 +127,17 @@ bool FDroneFPVIntegrationAssetTest::RunTest(const FString& Parameters)
 		if (Mesh)
 		{
 			ActualMeshPaths.Add(Mesh->GetPathName());
+			if (MeshComponent->ComponentHasTag(TEXT("DroneRotor")))
+			{
+				const FVector RotorVisualCenter = MeshComponent->GetComponentTransform().TransformPosition(
+					Mesh->GetBoundingBox().GetCenter());
+				TestTrue(
+					*FString::Printf(TEXT("%s visual center is placed away from the FPV body center"), *MeshComponent->GetName()),
+					FVector2D(RotorVisualCenter.X, RotorVisualCenter.Y).Size() > 20.0f);
+				const int32 Quadrant = (RotorVisualCenter.X >= 0.0f ? 1 : 0)
+					| (RotorVisualCenter.Y >= 0.0f ? 2 : 0);
+				OccupiedRotorQuadrants.Add(Quadrant);
+			}
 		}
 
 		TestEqual(
@@ -147,6 +159,7 @@ bool FDroneFPVIntegrationAssetTest::RunTest(const FString& Parameters)
 		TEXT("FPV Integration references exactly the selected body and four rotors"),
 		ActualMeshPaths.Num() == DroneFPVIntegrationAssets::ExpectedMeshPaths.Num()
 			&& ActualMeshPaths.Includes(DroneFPVIntegrationAssets::ExpectedMeshPaths));
+	TestEqual(TEXT("FPV Rotor visuals occupy all four body-arm quadrants"), OccupiedRotorQuadrants.Num(), 4);
 
 	TInlineComponentArray<UAudioComponent*> AudioComponents;
 	SpawnedPawn->GetComponents(AudioComponents);

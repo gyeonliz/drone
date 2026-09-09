@@ -30,6 +30,12 @@ constexpr const TCHAR* GateClassPath =
 	TEXT("/Game/Drone/Tutorial/Blueprints/BP_DroneTrainingGate.BP_DroneTrainingGate_C");
 constexpr const TCHAR* GameModeClassPath =
 	TEXT("/Game/Drone/Prototype/Blueprints/BP_DronePrototypeGameMode.BP_DronePrototypeGameMode_C");
+constexpr const TCHAR* ReconRoleTargetClassPath =
+	TEXT("/Game/Drone/Abilities/RoleTargets/BP_RoleTest_ReconTarget.BP_RoleTest_ReconTarget_C");
+constexpr const TCHAR* ImpactRoleTargetClassPath =
+	TEXT("/Game/Drone/Abilities/RoleTargets/BP_RoleTest_ImpactTarget.BP_RoleTest_ImpactTarget_C");
+constexpr const TCHAR* PayloadRoleTargetClassPath =
+	TEXT("/Game/Drone/Abilities/RoleTargets/BP_RoleTest_PayloadTarget.BP_RoleTest_PayloadTarget_C");
 constexpr const TCHAR* TrainingMapObjectPath =
 	TEXT("/Game/Drone/Maps/Lvl_DroneTraining.Lvl_DroneTraining");
 constexpr const TCHAR* GuideMaterialObjectPath =
@@ -64,6 +70,19 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 			TEXT("BP_DroneTrainingGate derives from the native Training Gate"),
 			GateClass->IsChildOf(ADroneTrainingGate::StaticClass()));
 	}
+
+	UClass* ReconRoleTargetClass = LoadClass<ADroneReconRoleTestTarget>(
+		nullptr,
+		DroneTrainingAssets::ReconRoleTargetClassPath);
+	UClass* ImpactRoleTargetClass = LoadClass<ADroneImpactRoleTestTarget>(
+		nullptr,
+		DroneTrainingAssets::ImpactRoleTargetClassPath);
+	UClass* PayloadRoleTargetClass = LoadClass<ADronePayloadRoleTestTarget>(
+		nullptr,
+		DroneTrainingAssets::PayloadRoleTargetClassPath);
+	TestNotNull(TEXT("BP_RoleTest_ReconTarget generated Class loads"), ReconRoleTargetClass);
+	TestNotNull(TEXT("BP_RoleTest_ImpactTarget generated Class loads"), ImpactRoleTargetClass);
+	TestNotNull(TEXT("BP_RoleTest_PayloadTarget generated Class loads"), PayloadRoleTargetClass);
 
 	UMaterialInterface* GuideMaterial = LoadObject<UMaterialInterface>(
 		nullptr,
@@ -107,6 +126,9 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 	int32 ReconRoleTargetCount = 0;
 	int32 ImpactRoleTargetCount = 0;
 	int32 PayloadRoleTargetCount = 0;
+	int32 BlueprintReconRoleTargetCount = 0;
+	int32 BlueprintImpactRoleTargetCount = 0;
+	int32 BlueprintPayloadRoleTargetCount = 0;
 	int32 CarryablePayloadCount = 0;
 	ADroneTrainingCourse* PlacedCourse = nullptr;
 	TArray<ADroneTrainingGate*> PlacedGates;
@@ -133,6 +155,9 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 		ReconRoleTargetCount += Actor->IsA<ADroneReconRoleTestTarget>() ? 1 : 0;
 		ImpactRoleTargetCount += Actor->IsA<ADroneImpactRoleTestTarget>() ? 1 : 0;
 		PayloadRoleTargetCount += Actor->IsA<ADronePayloadRoleTestTarget>() ? 1 : 0;
+		BlueprintReconRoleTargetCount += Actor->GetClass() == ReconRoleTargetClass ? 1 : 0;
+		BlueprintImpactRoleTargetCount += Actor->GetClass() == ImpactRoleTargetClass ? 1 : 0;
+		BlueprintPayloadRoleTargetCount += Actor->GetClass() == PayloadRoleTargetClass ? 1 : 0;
 		if (const ADroneDroppedPayload* CarryablePayload = Cast<ADroneDroppedPayload>(Actor))
 		{
 			CarryablePayloadCount += CarryablePayload->DoesStartAsCarryablePickup() ? 1 : 0;
@@ -153,6 +178,9 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Training Map has one Recon role test target"), ReconRoleTargetCount, 1);
 	TestEqual(TEXT("Training Map has one Impact role test target"), ImpactRoleTargetCount, 1);
 	TestEqual(TEXT("Training Map has one Payload role test target"), PayloadRoleTargetCount, 1);
+	TestEqual(TEXT("Training Map uses BP_RoleTest_ReconTarget"), BlueprintReconRoleTargetCount, 1);
+	TestEqual(TEXT("Training Map uses BP_RoleTest_ImpactTarget"), BlueprintImpactRoleTargetCount, 1);
+	TestEqual(TEXT("Training Map uses BP_RoleTest_PayloadTarget"), BlueprintPayloadRoleTargetCount, 1);
 	TestEqual(TEXT("Training Map has one placeable carryable Payload"), CarryablePayloadCount, 1);
 	TestNotNull(TEXT("Training Map contains a Training Course instance"), PlacedCourse);
 

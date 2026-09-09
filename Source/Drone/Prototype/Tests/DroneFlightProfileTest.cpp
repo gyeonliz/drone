@@ -18,6 +18,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 {
+	const ADronePrototypePawn* BasePawnDefaults = GetDefault<ADronePrototypePawn>();
+	TestNotNull(TEXT("Prototype Pawn defaults exist"), BasePawnDefaults);
+	TestFalse(TEXT("Definition profile remains the default until a Drone BP explicitly enables its override"),
+		BasePawnDefaults && BasePawnDefaults->UsesBlueprintFlightProfileOverride());
+
 	UWorld* World = FAutomationEditorCommonUtils::CreateNewMap();
 	TestNotNull(TEXT("Flight profile test World exists"), World);
 	if (!World)

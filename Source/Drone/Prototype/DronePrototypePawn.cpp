@@ -10,6 +10,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Drone.h"
 #include "Engine/LocalPlayer.h"
+#include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -115,7 +116,20 @@ bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definitio
 		return false;
 	}
 
-	const FDroneFlightProfile& Profile = Definition->FlightProfile;
+	const FDroneFlightProfile& Profile = bOverrideDefinitionFlightProfileInBlueprint
+		? BlueprintFlightProfileOverride
+		: Definition->FlightProfile;
+	FString ProfileValidationError;
+	if (!Profile.ValidateProfile(ProfileValidationError))
+	{
+		UE_LOG(
+			LogDrone,
+			Warning,
+			TEXT("Prototype pawn '%s' rejected its Blueprint Flight Profile override: %s"),
+			*GetNameSafe(this),
+			*ProfileValidationError);
+		return false;
+	}
 	BaseMaxSpeedCentimetersPerSecond = Profile.MaxSpeedCentimetersPerSecond;
 	BaseAccelerationCentimetersPerSecondSquared = Profile.AccelerationCentimetersPerSecondSquared;
 	BaseDecelerationCentimetersPerSecondSquared = Profile.DecelerationCentimetersPerSecondSquared;
@@ -300,6 +314,7 @@ void ADronePrototypePawn::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 	RefreshVisualTiltAttachments();
+	RefreshRotorVisualComponents();
 	EnsureHealthFeedbackBindings();
 }
 
@@ -307,6 +322,7 @@ void ADronePrototypePawn::BeginPlay()
 {
 	Super::BeginPlay();
 	RefreshVisualTiltAttachments();
+	RefreshRotorVisualComponents();
 	EnsureHealthFeedbackBindings();
 	bFirstPersonViewEnabled = bStartInFirstPersonView;
 	ApplyCameraViewMode();
@@ -319,6 +335,7 @@ void ADronePrototypePawn::BeginPlay()
 void ADronePrototypePawn::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
+	RefreshRotorVisualComponents();
 	EnsureHealthFeedbackBindings();
 }
 
@@ -338,6 +355,7 @@ void ADronePrototypePawn::Tick(const float DeltaSeconds)
 	UpdateDamageShake(DeltaSeconds);
 	UpdateControlAttitude(DeltaSeconds);
 	UpdateVisualBank(DeltaSeconds);
+	UpdateRotorVisuals(DeltaSeconds);
 }
 
 void ADronePrototypePawn::PawnClientRestart()
@@ -683,6 +701,76 @@ void ADronePrototypePawn::RefreshVisualTiltAttachments()
 			continue;
 		}
 		MeshComponent->AttachToComponent(VisualTiltPivot, KeepRelativeAttachment);
+	}
+}
+
+void ADronePrototypePawn::RefreshRotorVisualComponents()
+{
+	RotorVisualComponents.Reset();
+	TInlineComponentArray<UStaticMeshComponent*> StaticMeshComponents(this);
+	for (UStaticMeshComponent* MeshComponent : StaticMeshComponents)
+	{
+		if (!MeshComponent || MeshComponent == VisualMeshComponent)
+		{
+			continue;
+		}
+
+		const bool bHasRotorTag = !RotorVisualComponentTag.IsNone()
+			&& MeshComponent->ComponentHasTag(RotorVisualComponentTag);
+		const bool bUsesLegacyRotorName = MeshComponent->GetName().Contains(TEXT("Rotor"));
+		if (bHasRotorTag || bUsesLegacyRotorName)
+		{
+			RotorVisualComponents.Add(MeshComponent);
+		}
+	}
+
+	// Component 생성 순서와 무관하게 A/B/C/D/5/6의 교차 방향을 항상 동일하게 만든다.
+	RotorVisualComponents.Sort([](
+		const TWeakObjectPtr<UStaticMeshComponent>& Left,
+		const TWeakObjectPtr<UStaticMeshComponent>& Right)
+	{
+		return GetNameSafe(Left.Get()) < GetNameSafe(Right.Get());
+	});
+}
+
+void ADronePrototypePawn::UpdateRotorVisuals(const float DeltaSeconds)
+{
+	if (!bRotorVisualSpinEnabled
+		|| RotorVisualComponents.IsEmpty()
+		|| RotorVisualSpinDegreesPerSecond <= 0.0f
+		|| DeltaSeconds <= 0.0f
+		|| (HealthComponent && HealthComponent->IsDead()))
+	{
+		return;
+	}
+
+	const FVector SpinAxis = RotorVisualLocalSpinAxis.GetSafeNormal();
+	if (SpinAxis.IsNearlyZero())
+	{
+		return;
+	}
+
+	const float StepRadians = FMath::DegreesToRadians(RotorVisualSpinDegreesPerSecond * DeltaSeconds);
+	for (int32 RotorIndex = 0; RotorIndex < RotorVisualComponents.Num(); ++RotorIndex)
+	{
+		if (UStaticMeshComponent* RotorComponent = RotorVisualComponents[RotorIndex].Get())
+		{
+			// 제공 Drone Pack의 일부 Rotor Mesh는 Asset Pivot이 기체 원점에 있고
+			// 실제 날개 Geometry는 원점에서 멀리 떨어져 있다. 단순 LocalRotation은
+			// 이 경우 날개를 기체 주위로 공전시키므로 Mesh Bounds 중심을 고정한 채 회전한다.
+			const UStaticMesh* RotorMesh = RotorComponent->GetStaticMesh();
+			const FVector RotorLocalCenter = RotorMesh
+				? RotorMesh->GetBoundingBox().GetCenter()
+				: FVector::ZeroVector;
+			const FVector CenterBeforeRotation = RotorComponent->GetRelativeTransform().TransformPosition(RotorLocalCenter);
+			const float Direction = bAlternateRotorVisualSpinDirections && (RotorIndex % 2) == 1
+				? -1.0f
+				: 1.0f;
+			RotorComponent->AddLocalRotation(FQuat(SpinAxis, StepRadians * Direction));
+			const FVector CenterAfterRotation = RotorComponent->GetRelativeTransform().TransformPosition(RotorLocalCenter);
+			RotorComponent->SetRelativeLocation(
+				RotorComponent->GetRelativeLocation() + CenterBeforeRotation - CenterAfterRotation);
+		}
 	}
 }
 

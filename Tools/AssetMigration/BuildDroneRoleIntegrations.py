@@ -10,6 +10,7 @@ DROP_BP = f"{ROLE_FOLDER}/BP_DroneDropIntegration"
 
 FPV_EXPLOSION = "/Game/Drone/ThirdParty/ArmyVFX/Niagara/Destroyed/NS_Expl_Tank_1"
 FPV_SOUND = "/Game/Drone/ThirdParty/InfantrySFX/Explosions/Cues/Cue_Explosion01_Cue"
+FPV_ROTOR_VARIABLE_NAMES = ("FPVRotorA", "FPVRotorB", "FPVRotorC", "FPVRotorD")
 
 SCOUT_PARTS = [
     ("VisualMeshComponent", "/Game/Drone/ThirdParty/DronePack/D_Mesh/DroneSpy/SM_Drone01Body", (0, 0, 0), (0, -90, 0), (6, 6, 6), "DroneRoleVisual"),
@@ -87,7 +88,7 @@ def ensure_static_mesh_component(bp, variable_name):
     return unreal.SubobjectDataBlueprintFunctionLibrary.get_object_for_blueprint(data, bp)
 
 
-def configure_mesh(component, mesh_path, location, rotation, scale, tag):
+def configure_mesh(component, variable_name, mesh_path, location, rotation, scale, tag):
     mesh = require_asset(mesh_path)
     component.set_editor_property("static_mesh", mesh)
     component.set_editor_property("relative_location", unreal.Vector(*location))
@@ -96,7 +97,10 @@ def configure_mesh(component, mesh_path, location, rotation, scale, tag):
         unreal.Rotator(pitch=rotation[0], yaw=rotation[1], roll=rotation[2]),
     )
     component.set_editor_property("relative_scale3d", unreal.Vector(*scale))
-    component.set_editor_property("component_tags", [unreal.Name(tag)])
+    component_tags = [unreal.Name(tag)]
+    if "Rotor" in variable_name:
+        component_tags.append(unreal.Name("DroneRotor"))
+    component.set_editor_property("component_tags", component_tags)
     component.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
     component.set_editor_property("generate_overlap_events", False)
     component.set_editor_property("can_ever_affect_navigation", False)
@@ -110,7 +114,7 @@ def configure_blueprint(path, parts):
         component = ensure_static_mesh_component(bp, variable_name)
         if not component:
             raise RuntimeError(f"{bp.get_name()}: {variable_name} Component template을 찾지 못했습니다")
-        configure_mesh(component, mesh_path, location, rotation, scale, tag)
+        configure_mesh(component, variable_name, mesh_path, location, rotation, scale, tag)
     unreal.BlueprintEditorLibrary.compile_blueprint(bp)
     unreal.EditorAssetLibrary.save_loaded_asset(bp, only_if_is_dirty=False)
     unreal.log(f"DRONE_ROLE_BP|saved={path}|parts={len(parts)}")
@@ -119,6 +123,27 @@ def configure_blueprint(path, parts):
 def configure_fpv_presentation():
     bp = require_asset(BASE_BP)
     _, entries = gather(bp)
+
+    for variable_name in FPV_ROTOR_VARIABLE_NAMES:
+        entry = entries.get(variable_name)
+        if not entry or not entry[1]:
+            raise RuntimeError(f"FPV Blueprint의 {variable_name}를 찾지 못했습니다")
+        component = entry[1]
+
+        # FPV 공급 Mesh는 각 Rotor Geometry가 이미 본체 기준 네 모서리 좌표에 있다.
+        # Component Location까지 반대 Offset을 주면 Geometry 중심이 기체 중앙으로 상쇄된다.
+        component.set_editor_property("relative_location", unreal.Vector(0.0, 0.0, 0.0))
+        component.set_editor_property(
+            "relative_rotation",
+            unreal.Rotator(pitch=0.0, yaw=90.0, roll=0.0),
+        )
+        component.set_editor_property("relative_scale3d", unreal.Vector(1.0, 1.0, 1.0))
+        tags = list(component.get_editor_property("component_tags"))
+        rotor_tag = unreal.Name("DroneRotor")
+        if rotor_tag not in tags:
+            tags.append(rotor_tag)
+            component.set_editor_property("component_tags", tags)
+
     impact = entries.get("ImpactDetonationComponent")
     if not impact or not impact[1]:
         raise RuntimeError("FPV Blueprint의 ImpactDetonationComponent를 찾지 못했습니다")

@@ -35,6 +35,16 @@ public:
 	UPROPERTY(Transient, BlueprintReadOnly, Category="Drone|AI|Gaze")
 	bool bHasDroneLookTarget = false;
 
+	/** 총 시선 회전 중 척추에 분배할 비율. AnimBP Class Defaults에서 체형에 맞춰 조정한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze|BoneWeights", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float SpineLookWeight = 0.20f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze|BoneWeights", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float NeckLookWeight = 0.45f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze|BoneWeights", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float HeadLookWeight = 0.35f;
+
 private:
 	UPROPERTY(Transient)
 	TWeakObjectPtr<class ADroneNPCAIController> CachedDroneController;

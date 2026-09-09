@@ -2,12 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "Mission/DroneDefinition.h"
 #include "Prototype/DroneFlightControlTypes.h"
 #include "DronePrototypePawn.generated.h"
 
 class AController;
 class UCameraComponent;
-class UDroneDefinition;
 class UDroneTelemetryComponent;
 class UDroneHealthComponent;
 class UDroneImpactDetonationComponent;
@@ -81,6 +81,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Flight|Profile")
 	float GetPrototypeYawRateDegreesPerSecond() const { return PrototypeYawRateDegreesPerSecond; }
 
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Profile")
+	bool UsesBlueprintFlightProfileOverride() const { return bOverrideDefinitionFlightProfileInBlueprint; }
+
 	/**
 	 * 현재 Definition의 역할에 맞는 공통 1차 기능을 실행한다.
 	 * Recon=가장 가까운 유효 대상 Scan, FPV=충돌 자폭 Arm, Drop=적재 중 투하/빈 상태 근처 화물 적재다.
@@ -127,6 +130,16 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|Flight|VisualBank")
 	float GetMaximumVisualTiltPitchDegrees() const { return MaximumVisualTiltPitchDegrees; }
+
+	/** DroneRotor Tag 또는 Rotor 이름을 가진 외형 Mesh를 다시 수집한다. BP Component를 바꾼 뒤 호출할 수 있다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Flight|RotorVisual")
+	void RefreshRotorVisualComponents();
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|RotorVisual")
+	int32 GetRotorVisualComponentCount() const { return RotorVisualComponents.Num(); }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|RotorVisual")
+	float GetRotorVisualSpinDegreesPerSecond() const { return RotorVisualSpinDegreesPerSecond; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|Camera")
 	bool IsFirstPersonViewEnabled() const { return bFirstPersonViewEnabled; }
@@ -261,6 +274,17 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Movement", meta=(ClampMin="0.0", AllowPrivateAccess="true"))
 	float PrototypeYawRateDegreesPerSecond = 90.0f;
 
+	/**
+	 * false면 선택 화면의 DA_Drone_* FlightProfile을 사용한다.
+	 * true면 이 Pawn Blueprint의 아래 Profile로 속도·가속·Yaw·기울기·체력·시작 시점을 모두 덮어쓴다.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FlightProfileOverride", meta=(AllowPrivateAccess="true"))
+	bool bOverrideDefinitionFlightProfileInBlueprint = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FlightProfileOverride",
+		meta=(EditCondition="bOverrideDefinitionFlightProfileInBlueprint", ShowOnlyInnerProperties, AllowPrivateAccess="true"))
+	FDroneFlightProfile BlueprintFlightProfileOverride;
+
 	/** 쉬운 조작은 즉시 수평 이동하고 World Up 고도를 사용한다. 파생 BP에서 배율을 조정할 수 있다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|ControlModes", meta=(AllowPrivateAccess="true"))
 	FDroneControlModeTuning AssistedEasyTuning;
@@ -329,6 +353,26 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|VisualBank", meta=(ClampMin="0.0", AllowPrivateAccess="true"))
 	float VisualBankReturnSpeed = 5.0f;
 
+	/** Rotor 회전은 외형 Component만 움직이며 Pawn 이동·Collision에는 영향을 주지 않는다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|RotorVisual", meta=(AllowPrivateAccess="true"))
+	bool bRotorVisualSpinEnabled = true;
+
+	/** 현재 Greybox 회전 속도다. 각 역할 Drone BP에서 모델과 화면 체감에 맞춰 조정한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|RotorVisual", meta=(ClampMin="0.0", ForceUnits="deg/s", AllowPrivateAccess="true"))
+	float RotorVisualSpinDegreesPerSecond = 1440.0f;
+
+	/** Mesh의 로컬 회전축. 현재 Drone Pack Rotor는 로컬 Z축을 사용한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|RotorVisual", meta=(AllowPrivateAccess="true"))
+	FVector RotorVisualLocalSpinAxis = FVector::UpVector;
+
+	/** 인접 Rotor를 반대 방향으로 돌려 Quad/Hexa Rotor의 기본 시각 방향을 만든다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|RotorVisual", meta=(AllowPrivateAccess="true"))
+	bool bAlternateRotorVisualSpinDirections = true;
+
+	/** 이 Component Tag를 가진 Static Mesh를 Rotor로 수집한다. 기존 BP는 이름에 Rotor가 있어도 자동 인식한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|RotorVisual", meta=(AllowPrivateAccess="true"))
+	FName RotorVisualComponentTag = TEXT("DroneRotor");
+
 	/** 피격 흔들림은 외형과 Camera View에만 적용하고 Actor 이동·Collision에는 적용하지 않는다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|DamageShake", meta=(AllowPrivateAccess="true"))
 	bool bDamageShakeEnabled = true;
@@ -383,6 +427,7 @@ private:
 	void ApplyRuntimeFlightTuning();
 	void UpdateControlAttitude(float DeltaSeconds);
 	void UpdateVisualBank(float DeltaSeconds);
+	void UpdateRotorVisuals(float DeltaSeconds);
 	void UpdateDamageShake(float DeltaSeconds);
 	void ApplyDamageShakeCameraOffset(const FVector& LocationOffset, const FRotator& RotationOffset);
 	void ResetDamageShakePresentation();
@@ -403,6 +448,7 @@ private:
 
 	float VisualBankLateralInput = 0.0f;
 	float VisualTiltForwardInput = 0.0f;
+	TArray<TWeakObjectPtr<UStaticMeshComponent>> RotorVisualComponents;
 	bool bFirstPersonViewEnabled = false;
 	bool bDropCameraViewEnabled = false;
 	bool bFirstPersonViewBeforeDropCamera = false;

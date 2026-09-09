@@ -56,6 +56,13 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI")
 	UAIPerceptionComponent* GetDronePerceptionComponent() const { return DronePerceptionComponent; }
 
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	UAISenseConfig_Sight* GetDroneSightConfig() const { return SightConfig; }
+
+	/** Controller Blueprint의 감지 수치를 Sight Config에 다시 적용한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Perception")
+	void RefreshDroneSightTuning();
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI")
 	UDroneSmartObjectReservationComponent* GetReservationComponent() const { return ReservationComponent; }
 
@@ -319,6 +326,27 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Components")
 	TObjectPtr<UAISenseConfig_Sight> SightConfig;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Perception|Sight", meta=(ClampMin="1.0", ForceUnits="cm"))
+	float DroneSightRadius = 4000.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Perception|Sight", meta=(ClampMin="1.0", ForceUnits="cm"))
+	float DroneLoseSightRadius = 4500.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Perception|Sight", meta=(ClampMin="0.0", ClampMax="180.0", ForceUnits="deg"))
+	float DronePeripheralVisionAngleDegrees = 70.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Perception|Sight", meta=(ClampMin="0.0", ForceUnits="s"))
+	float DroneSightStimulusMaxAgeSeconds = 3.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Perception|Sight")
+	bool bDroneSightDetectEnemies = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Perception|Sight")
+	bool bDroneSightDetectFriendlies = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Perception|Sight")
+	bool bDroneSightDetectNeutrals = true;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Components")
 	TObjectPtr<UDroneSmartObjectReservationComponent> ReservationComponent;

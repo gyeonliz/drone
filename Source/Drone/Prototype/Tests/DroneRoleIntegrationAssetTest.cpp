@@ -18,6 +18,7 @@ struct FRoleAssetContract
 	const TCHAR* DefinitionPath;
 	const TCHAR* PawnClassPath;
 	TSet<FString> ExpectedRoleMeshes;
+	int32 ExpectedRotorCount;
 };
 
 const FRoleAssetContract Scout = {
@@ -30,7 +31,8 @@ const FRoleAssetContract Scout = {
 		TEXT("/Game/Drone/ThirdParty/DronePack/D_Mesh/DroneSpy/SM_Drone01_r2.SM_Drone01_r2"),
 		TEXT("/Game/Drone/ThirdParty/DronePack/D_Mesh/DroneSpy/SM_Drone01_r3.SM_Drone01_r3"),
 		TEXT("/Game/Drone/ThirdParty/DronePack/D_Mesh/DroneSpy/SM_Drone01_r4.SM_Drone01_r4")
-	}
+	},
+	4
 };
 
 const FRoleAssetContract Drop = {
@@ -45,7 +47,8 @@ const FRoleAssetContract Drop = {
 		TEXT("/Game/Drone/ThirdParty/DronePack/D_Mesh/Delivery/SM_R4.SM_R4"),
 		TEXT("/Game/Drone/ThirdParty/DronePack/D_Mesh/Delivery/SM_R5.SM_R5"),
 		TEXT("/Game/Drone/ThirdParty/DronePack/D_Mesh/Delivery/SM_R6.SM_R6")
-	}
+	},
+	6
 };
 }
 
@@ -113,6 +116,8 @@ bool FDroneRoleIntegrationAssetTest::RunTest(const FString& Parameters)
 
 		TSet<FString> ActualRoleMeshes;
 		int32 PayloadVisualCount = 0;
+		int32 RotorVisualCount = 0;
+		UStaticMeshComponent* FirstRotorVisual = nullptr;
 		TInlineComponentArray<UStaticMeshComponent*> MeshComponents;
 		Pawn->GetComponents(MeshComponents);
 		for (UStaticMeshComponent* MeshComponent : MeshComponents)
@@ -132,10 +137,33 @@ bool FDroneRoleIntegrationAssetTest::RunTest(const FString& Parameters)
 				++PayloadVisualCount;
 				TestTrue(TEXT("Loaded Drop payload is visible before release"), MeshComponent->IsVisible() && !MeshComponent->bHiddenInGame);
 			}
+			if (MeshComponent->ComponentHasTag(TEXT("DroneRotor")))
+			{
+				++RotorVisualCount;
+				FirstRotorVisual = FirstRotorVisual ? FirstRotorVisual : MeshComponent;
+			}
 		}
 		TestTrue(TEXT("Role Pawn references exactly its selected Drone Pack meshes"),
 			ActualRoleMeshes.Num() == Contract.ExpectedRoleMeshes.Num()
 				&& ActualRoleMeshes.Includes(Contract.ExpectedRoleMeshes));
+		TestEqual(TEXT("Role Pawn tags every expected Rotor visual"), RotorVisualCount, Contract.ExpectedRotorCount);
+		TestEqual(TEXT("Runtime Pawn collects every tagged Rotor visual"),
+			Pawn->GetRotorVisualComponentCount(), Contract.ExpectedRotorCount);
+		TestTrue(TEXT("Rotor visual speed is enabled by a positive BP-adjustable value"),
+			Pawn->GetRotorVisualSpinDegreesPerSecond() > 0.0f);
+		if (FirstRotorVisual)
+		{
+			const FQuat InitialRotorRotation = FirstRotorVisual->GetRelativeRotation().Quaternion();
+			const FVector InitialRotorVisualCenter = FirstRotorVisual->GetComponentTransform().TransformPosition(
+				FirstRotorVisual->GetStaticMesh()->GetBoundingBox().GetCenter());
+			Pawn->Tick(0.01f);
+			TestFalse(TEXT("Rotor visual changes local rotation during gameplay Tick"),
+				FirstRotorVisual->GetRelativeRotation().Quaternion().Equals(InitialRotorRotation, KINDA_SMALL_NUMBER));
+			const FVector UpdatedRotorVisualCenter = FirstRotorVisual->GetComponentTransform().TransformPosition(
+				FirstRotorVisual->GetStaticMesh()->GetBoundingBox().GetCenter());
+			TestTrue(TEXT("Rotor visual spins around its own Mesh center instead of orbiting the Pawn"),
+				InitialRotorVisualCenter.Equals(UpdatedRotorVisualCenter, 0.1f));
+		}
 
 		if (Definition->DroneId == FName(TEXT("Drone.Drop.Greybox")))
 		{
