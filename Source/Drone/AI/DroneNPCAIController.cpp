@@ -43,15 +43,7 @@ ADroneNPCAIController::ADroneNPCAIController()
 
 	SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
 	// 첫 감지 Spike용 편집 가능 시험값이다. 최종 탐지 거리·각도·난이도 규칙이 아니다.
-	SightConfig->SightRadius = 4000.0f;
-	SightConfig->LoseSightRadius = 4500.0f;
-	SightConfig->PeripheralVisionAngleDegrees = 70.0f;
-	SightConfig->SetMaxAge(3.0f);
-	SightConfig->DetectionByAffiliation.bDetectEnemies = true;
-	SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
-	SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
-
-	DronePerceptionComponent->ConfigureSense(*SightConfig);
+	RefreshDroneSightTuning();
 	DronePerceptionComponent->SetDominantSense(UAISense_Sight::StaticClass());
 	DronePerceptionComponent->OnTargetPerceptionUpdated.AddDynamic(
 		this,
@@ -61,10 +53,33 @@ ADroneNPCAIController::ADroneNPCAIController()
 void ADroneNPCAIController::BeginPlay()
 {
 	Super::BeginPlay();
+	// Native Constructor 뒤 적용된 파생 Controller BP Class Defaults를 실제 Sense에 반영한다.
+	RefreshDroneSightTuning();
 
 	// UWorldSubsystem::OnWorldBeginPlay 뒤라 Smart Object Runtime 조회가 안전하다.
 	// 레벨에 미리 배치된 Controller는 OnPossess에서 Asset만 지정하고 여기서 실행한다.
 	TryStartAssignedStateTree();
+}
+
+void ADroneNPCAIController::RefreshDroneSightTuning()
+{
+	if (!SightConfig || !DronePerceptionComponent)
+	{
+		return;
+	}
+
+	SightConfig->SightRadius = FMath::Max(1.0f, DroneSightRadius);
+	SightConfig->LoseSightRadius = FMath::Max(SightConfig->SightRadius, DroneLoseSightRadius);
+	SightConfig->PeripheralVisionAngleDegrees = FMath::Clamp(DronePeripheralVisionAngleDegrees, 0.0f, 180.0f);
+	SightConfig->SetMaxAge(FMath::Max(0.0f, DroneSightStimulusMaxAgeSeconds));
+	SightConfig->DetectionByAffiliation.bDetectEnemies = bDroneSightDetectEnemies;
+	SightConfig->DetectionByAffiliation.bDetectFriendlies = bDroneSightDetectFriendlies;
+	SightConfig->DetectionByAffiliation.bDetectNeutrals = bDroneSightDetectNeutrals;
+	DronePerceptionComponent->ConfigureSense(*SightConfig);
+	if (HasActorBegunPlay())
+	{
+		DronePerceptionComponent->RequestStimuliListenerUpdate();
+	}
 }
 
 void ADroneNPCAIController::Tick(const float DeltaSeconds)

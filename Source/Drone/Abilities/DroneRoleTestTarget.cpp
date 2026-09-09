@@ -23,7 +23,7 @@ ADroneRoleTestTarget::ADroneRoleTestTarget()
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (CubeMesh.Succeeded())
 	{
-		TargetMesh->SetStaticMesh(CubeMesh.Object);
+		TargetVisualMesh = CubeMesh.Object;
 	}
 
 	InstructionText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("InstructionText"));
@@ -35,6 +35,24 @@ ADroneRoleTestTarget::ADroneRoleTestTarget()
 	InstructionText->SetRelativeRotation(FRotator(0.0f, 0.0f, 0.0f));
 	InstructionText->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	InstructionText->SetCanEverAffectNavigation(false);
+	RefreshPresentation();
+}
+
+void ADroneRoleTestTarget::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	RefreshPresentation();
+}
+
+void ADroneRoleTestTarget::RefreshPresentation()
+{
+	TargetMesh->SetStaticMesh(TargetVisualMesh);
+	TargetMesh->SetRelativeScale3D(TargetVisualScale);
+	InstructionText->SetText(InstructionMessage);
+	InstructionText->SetTextRenderColor(InstructionColor);
+	InstructionText->SetWorldSize(FMath::Max(1.0f, InstructionWorldSize));
+	InstructionText->SetRelativeLocation(InstructionRelativeLocation);
+	InstructionText->SetRelativeRotation(InstructionRelativeRotation);
 }
 
 void ADroneRoleTestTarget::ConfigurePresentation(
@@ -42,9 +60,10 @@ void ADroneRoleTestTarget::ConfigurePresentation(
 	const FColor& InColor,
 	const FVector& InScale)
 {
-	TargetMesh->SetRelativeScale3D(InScale);
-	InstructionText->SetText(InText);
-	InstructionText->SetTextRenderColor(InColor);
+	TargetVisualScale = InScale;
+	InstructionMessage = InText;
+	InstructionColor = InColor;
+	RefreshPresentation();
 }
 
 ADroneReconRoleTestTarget::ADroneReconRoleTestTarget()
