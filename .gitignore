@@ -6,6 +6,7 @@ Saved/
 
 # Visual Studio and other IDE-generated data
 .vs/
+.vsconfig
 *.sln
 *.slnx
 *.suo
