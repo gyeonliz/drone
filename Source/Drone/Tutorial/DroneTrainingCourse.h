@@ -73,16 +73,19 @@ public:
 	UFUNCTION(BlueprintPure, Category="Tutorial|Course|Automatic Gates")
 	bool IsUsingAutomaticSplineGates() const { return bUseAutomaticSplineGates; }
 
-	/** 켜져 있으면 CourseSpline의 제어점 하나가 Ring 하나의 직접 편집 위치가 된다. */
+	/** 켜져 있으면 Spline 제어점과 별개인 Ring 전용 3D Handle을 사용한다. */
 	UFUNCTION(BlueprintPure, Category="Tutorial|Course|Automatic Gates")
-	bool IsUsingSplinePointsAsAutomaticGatePositions() const
+	bool IsUsingIndependentAutomaticGateHandles() const
 	{
-		return bUseSplinePointsAsAutomaticGatePositions;
+		return bUseIndependentAutomaticGateHandles;
 	}
 
-	/** 현재 배치 방식에서 실제로 사용할 Ring 수. Spline Point 모드에서는 Point 수와 같다. */
+	/** 현재 배치 방식에서 실제로 사용할 Ring 수. Handle 모드에서는 Handle 배열 수와 같다. */
 	UFUNCTION(BlueprintPure, Category="Tutorial|Course|Automatic Gates")
 	int32 GetResolvedAutomaticGateCount() const;
+
+	/** 자동화와 Editor 도구가 현재 별도 Ring Handle 원본을 읽을 때 사용한다. */
+	const TArray<FVector>& GetAutomaticGateSplineHandles() const { return AutomaticGateSplineHandles; }
 
 	UFUNCTION(BlueprintPure, Category="Tutorial|Course|Gates")
 	UDroneTrainingGateSequenceComponent* GetGateSequenceComponent() const { return GateSequenceComponent; }
@@ -124,9 +127,19 @@ public:
 		const TArray<float>& SplineDistancesCentimeters,
 		const TArray<FVector>& LocalOffsets);
 
-	/** 켜면 Spline Point를 이동·추가·삭제하는 작업이 Ring 위치·개수에 직접 반영된다. */
-	UFUNCTION(CallInEditor, BlueprintCallable, Category="Tutorial|Course|Automatic Gates")
-	void ConfigureAutomaticGateSplinePointPlacement(bool bEnabled);
+	/** 현재 숫자/수동 Gate 배치를 복사해 Spline과 분리된 Ring 전용 Handle 배열을 만든다. */
+	UFUNCTION(CallInEditor, BlueprintCallable, Category="Tutorial|Course|Automatic Gates",
+		meta=(DisplayName="현재 배치에서 Ring Handle 만들기"))
+	void InitializeAutomaticGateSplineHandlesFromCurrentLayout();
+
+	/** Handle 위치 배열을 적용하고 각 점을 Spline의 가장 가까운 지점에 붙인다. */
+	UFUNCTION(BlueprintCallable, Category="Tutorial|Course|Automatic Gates")
+	void ConfigureAutomaticGateSplineHandles(const TArray<FVector>& HandleLocations);
+
+	/** Viewport에서 옮긴 모든 Ring Handle을 Spline 위로 다시 투영한다. */
+	UFUNCTION(CallInEditor, BlueprintCallable, Category="Tutorial|Course|Automatic Gates",
+		meta=(DisplayName="모든 Ring Handle을 Spline에 붙이기"))
+	void SnapAutomaticGateSplineHandlesToSpline();
 
 	/** 자동화와 후속 Gate 배치가 같은 이름 계약을 사용할 수 있게 공개한다. */
 	static FName GetGeneratedSegmentTag();
@@ -164,16 +177,24 @@ protected:
 	bool bUseAutomaticSplineGates = false;
 
 	/**
-	 * 켜면 Spline Point 1개를 Ring 1개로 사용한다. BP/Level Viewport에서 Point를 직접
-	 * 이동·추가·삭제하면 Ring 위치와 개수가 그대로 따라가며 아래 개수/간격/절대거리 값은 무시한다.
+	 * 켜면 CourseSpline을 바꾸지 않는 Ring 전용 3D Handle 배열을 사용한다. Handle을
+	 * Viewport에서 움직이면 가장 가까운 Spline 위치로 붙고 아래 개수/간격/절대거리 값은 무시한다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
-		meta=(EditCondition="bUseAutomaticSplineGates", DisplayName="Spline Point 1개당 Ring 1개", AllowPrivateAccess="true"))
-	bool bUseSplinePointsAsAutomaticGatePositions = false;
+		meta=(EditCondition="bUseAutomaticSplineGates", DisplayName="개별 Ring 위치 Handle 사용", AllowPrivateAccess="true"))
+	bool bUseIndependentAutomaticGateHandles = false;
+
+	/**
+	 * Ring별 독립 위치 Handle. 배열 항목 수가 Ring 수이며 MakeEditWidget으로 Level/BP Viewport에서
+	 * 각 점을 직접 잡아 이동한다. Construction 때 각 점은 CourseSpline의 가장 가까운 위치로 투영된다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
+		meta=(EditCondition="bUseAutomaticSplineGates && bUseIndependentAutomaticGateHandles", MakeEditWidget="", DisplayName="Ring별 Spline Handle", AllowPrivateAccess="true"))
+	TArray<FVector> AutomaticGateSplineHandles;
 
 	/** 생성할 Ring 수. Tutorial Lap은 시작 Gate와 종료 Gate가 필요하므로 최소 2개다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
-		meta=(EditCondition="bUseAutomaticSplineGates && !bUseSplinePointsAsAutomaticGatePositions", ClampMin="2", ClampMax="64", UIMin="2", UIMax="32", AllowPrivateAccess="true"))
+		meta=(EditCondition="bUseAutomaticSplineGates && !bUseIndependentAutomaticGateHandles", ClampMin="2", ClampMax="64", UIMin="2", UIMax="32", AllowPrivateAccess="true"))
 	int32 AutomaticGateCount = 4;
 
 	/** 기본 Native Gate 또는 외형을 교체한 BP_DroneTrainingGate 자식을 지정한다. */
@@ -183,22 +204,22 @@ protected:
 
 	/** 켜면 시작 거리부터 끝 여백 전까지 GateCount만큼 균등 배치한다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
-		meta=(EditCondition="bUseAutomaticSplineGates && !bUseSplinePointsAsAutomaticGatePositions", AllowPrivateAccess="true"))
+		meta=(EditCondition="bUseAutomaticSplineGates && !bUseIndependentAutomaticGateHandles", AllowPrivateAccess="true"))
 	bool bEvenlyDistributeAutomaticGates = true;
 
 	/** 첫 Gate의 기본 Spline 거리다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
-		meta=(EditCondition="bUseAutomaticSplineGates && !bUseSplinePointsAsAutomaticGatePositions", ClampMin="0.0", UIMin="0.0", Units="cm", AllowPrivateAccess="true"))
+		meta=(EditCondition="bUseAutomaticSplineGates && !bUseIndependentAutomaticGateHandles", ClampMin="0.0", UIMin="0.0", Units="cm", AllowPrivateAccess="true"))
 	float AutomaticGateStartDistanceCentimeters = 200.0f;
 
 	/** 균등 분배를 끈 경우 Gate 사이 고정 거리다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
-		meta=(EditCondition="bUseAutomaticSplineGates && !bUseSplinePointsAsAutomaticGatePositions && !bEvenlyDistributeAutomaticGates", ClampMin="1.0", UIMin="1.0", Units="cm", AllowPrivateAccess="true"))
+		meta=(EditCondition="bUseAutomaticSplineGates && !bUseIndependentAutomaticGateHandles && !bEvenlyDistributeAutomaticGates", ClampMin="1.0", UIMin="1.0", Units="cm", AllowPrivateAccess="true"))
 	float AutomaticGateSpacingCentimeters = 1200.0f;
 
 	/** 균등 분배 시 마지막 Gate와 Spline 끝 사이 여백이다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
-		meta=(EditCondition="bUseAutomaticSplineGates && !bUseSplinePointsAsAutomaticGatePositions && bEvenlyDistributeAutomaticGates", ClampMin="0.0", UIMin="0.0", Units="cm", AllowPrivateAccess="true"))
+		meta=(EditCondition="bUseAutomaticSplineGates && !bUseIndependentAutomaticGateHandles && bEvenlyDistributeAutomaticGates", ClampMin="0.0", UIMin="0.0", Units="cm", AllowPrivateAccess="true"))
 	float AutomaticGateEndPaddingCentimeters = 200.0f;
 
 	/** 모든 Gate를 Spline 앞/뒤로 함께 미는 거리다. */
@@ -216,7 +237,7 @@ protected:
 	 * 항목이 없거나 음수면 해당 Ring은 기존 자동 배치값을 사용한다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
-		meta=(EditCondition="bUseAutomaticSplineGates && !bUseSplinePointsAsAutomaticGatePositions", AllowPrivateAccess="true"))
+		meta=(EditCondition="bUseAutomaticSplineGates && !bUseIndependentAutomaticGateHandles", AllowPrivateAccess="true"))
 	TArray<float> AutomaticGateSplineDistancesCentimeters;
 
 	/** Spline 위치에서 Gate 로컬 축 기준으로 더하는 위치 보정이다. */
@@ -292,6 +313,9 @@ private:
 
 	/** 자동/수동 모드 중 하나를 ActiveOrderedGates 단일 실행 배열로 선택한다. */
 	void RefreshActiveOrderedGates();
+
+	/** Ring 전용 Handle을 가장 가까운 Spline 위치로 붙이되 CourseSpline 제어점은 바꾸지 않는다. */
+	void SnapAutomaticGateSplineHandlesToSplineInternal();
 
 	/** OnConstruction/BeginPlay에서 같은 안전 규칙으로 Segment를 재생성한다. */
 	void RebuildCourseLineSegments();

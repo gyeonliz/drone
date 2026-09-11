@@ -245,63 +245,73 @@ bool FDroneTrainingCourseTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Repeated automatic rebuild does not duplicate Rings"), Course->GetGeneratedAutomaticGateCount(), 5);
 	TestEqual(TEXT("Repeated automatic rebuild preserves sequence count"), Course->GetOrderedGates().Num(), 5);
 
-	// 6) 직접 편집 모드에서는 Spline Point 1개가 Ring 1개이며 Point 편집 결과를 즉시 따라야 한다.
+	// 6) 독립 Handle 모드는 Course Spline을 바꾸지 않고 Ring별 위치만 곡선 위에서 조정해야 한다.
 	Course->ConfigureAutomaticGateOverrides({}, {});
-	Course->ConfigureAutomaticGateSplinePointPlacement(true);
+	Course->InitializeAutomaticGateSplineHandlesFromCurrentLayout();
 	USplineComponent* PointDrivenSpline = Course->GetCourseSpline();
-	TestNotNull(TEXT("Point-driven Ring mode keeps an editable Spline"), PointDrivenSpline);
+	TestNotNull(TEXT("Handle-driven Ring mode keeps an editable Course Spline"), PointDrivenSpline);
 	if (PointDrivenSpline)
 	{
 		const int32 InitialPointCount = PointDrivenSpline->GetNumberOfSplinePoints();
-		TestTrue(TEXT("Point-driven Ring mode is enabled"), Course->IsUsingSplinePointsAsAutomaticGatePositions());
-		TestEqual(TEXT("Resolved Ring count equals Spline Point count"), Course->GetResolvedAutomaticGateCount(), InitialPointCount);
-		TestEqual(TEXT("One Ring is generated for every Spline Point"), Course->GetGeneratedAutomaticGateCount(), InitialPointCount);
-		TestEqual(TEXT("Point-driven Rings become the active ordered sequence"), Course->GetOrderedGates().Num(), InitialPointCount);
-
+		TArray<FVector> OriginalSplinePointLocations;
+		OriginalSplinePointLocations.Reserve(InitialPointCount);
 		for (int32 PointIndex = 0; PointIndex < InitialPointCount; ++PointIndex)
 		{
-			const float PointDistance = PointDrivenSpline->GetDistanceAlongSplineAtSplinePoint(PointIndex);
-			TestTrue(
-				*FString::Printf(TEXT("Ring %d uses its matching Spline Point distance"), PointIndex),
-				FMath::IsNearlyEqual(Course->GetAutomaticGateDistanceAlongSpline(PointIndex), PointDistance, 0.1f));
+			OriginalSplinePointLocations.Add(PointDrivenSpline->GetLocationAtSplinePoint(
+				PointIndex,
+				ESplineCoordinateSpace::Local));
 		}
+		TestTrue(TEXT("Independent Ring Handle mode is enabled"), Course->IsUsingIndependentAutomaticGateHandles());
+		TestEqual(TEXT("Current five-Ring layout creates five independent Handles"), Course->GetResolvedAutomaticGateCount(), 5);
+		TestEqual(TEXT("Handle count drives generated Ring count"), Course->GetGeneratedAutomaticGateCount(), 5);
+		TestEqual(TEXT("Handle-driven Rings become the active ordered sequence"), Course->GetOrderedGates().Num(), 5);
 
-		const int32 MovedPointIndex = FMath::Min(1, InitialPointCount - 1);
-		const FVector MovedPointLocation = PointDrivenSpline->GetLocationAtSplinePoint(
-			MovedPointIndex,
-			ESplineCoordinateSpace::Local) + FVector(125.0f, -80.0f, 55.0f);
-		PointDrivenSpline->SetLocationAtSplinePoint(
-			MovedPointIndex,
-			MovedPointLocation,
-			ESplineCoordinateSpace::Local,
-			true);
-		Course->RebuildAutomaticGates();
-		const ADroneTrainingGate* MovedGate = Course->GetOrderedGates().IsValidIndex(MovedPointIndex)
-			? Course->GetOrderedGates()[MovedPointIndex]
+		const TArray<FVector> InitialHandleLocations = Course->GetAutomaticGateSplineHandles();
+		TestEqual(TEXT("Handle array has one entry per generated Ring"), InitialHandleLocations.Num(), 5);
+
+		const int32 MovedHandleIndex = 1;
+		TArray<FVector> EditedHandles = InitialHandleLocations;
+		const FVector UnsnappedHandleLocation = EditedHandles[MovedHandleIndex] + FVector(260.0f, 430.0f, 170.0f);
+		const FVector UnsnappedHandleWorldLocation = Course->GetActorTransform().TransformPosition(UnsnappedHandleLocation);
+		const float ExpectedInputKey = PointDrivenSpline->FindInputKeyClosestToWorldLocation(UnsnappedHandleWorldLocation);
+		const FVector ExpectedSnappedWorldLocation = PointDrivenSpline->GetLocationAtSplineInputKey(
+			ExpectedInputKey,
+			ESplineCoordinateSpace::World);
+		EditedHandles[MovedHandleIndex] = UnsnappedHandleLocation;
+		Course->ConfigureAutomaticGateSplineHandles(EditedHandles);
+		const ADroneTrainingGate* MovedGate = Course->GetOrderedGates().IsValidIndex(MovedHandleIndex)
+			? Course->GetOrderedGates()[MovedHandleIndex]
 			: nullptr;
-		TestNotNull(TEXT("Moving a Spline Point keeps its matching Ring"), MovedGate);
+		TestNotNull(TEXT("Moving an independent Handle keeps its matching Ring"), MovedGate);
 		if (MovedGate)
 		{
-			const FVector ExpectedMovedWorldLocation = PointDrivenSpline->GetLocationAtSplinePoint(
-				MovedPointIndex,
-				ESplineCoordinateSpace::World);
 			TestTrue(
-				TEXT("Moving a Spline Point moves its matching Ring"),
-				MovedGate->GetActorLocation().Equals(ExpectedMovedWorldLocation, 1.0f));
+				TEXT("Moving a Handle snaps its matching Ring to the closest Spline location"),
+				MovedGate->GetActorLocation().Equals(ExpectedSnappedWorldLocation, 1.0f));
 		}
 
-		const FVector AddedPointLocation = PointDrivenSpline->GetLocationAtSplinePoint(
-			InitialPointCount - 1,
-			ESplineCoordinateSpace::Local) + FVector(900.0f, 250.0f, 100.0f);
-		PointDrivenSpline->AddSplinePoint(AddedPointLocation, ESplineCoordinateSpace::Local, true);
-		Course->RebuildAutomaticGates();
-		TestEqual(TEXT("Adding a Spline Point adds one Ring"), Course->GetGeneratedAutomaticGateCount(), InitialPointCount + 1);
-		TestEqual(TEXT("Added Point Ring joins the ordered sequence"), Course->GetOrderedGates().Num(), InitialPointCount + 1);
+		const FVector AddedHandleWorldLocation = PointDrivenSpline->GetLocationAtDistanceAlongSpline(
+			PointDrivenSpline->GetSplineLength() * 0.83f,
+			ESplineCoordinateSpace::World);
+		EditedHandles = Course->GetAutomaticGateSplineHandles();
+		EditedHandles.Add(Course->GetActorTransform().InverseTransformPosition(AddedHandleWorldLocation));
+		Course->ConfigureAutomaticGateSplineHandles(EditedHandles);
+		TestEqual(TEXT("Adding one independent Handle adds one Ring"), Course->GetGeneratedAutomaticGateCount(), 6);
+		TestEqual(TEXT("Added Handle Ring joins the ordered sequence"), Course->GetOrderedGates().Num(), 6);
 
-		PointDrivenSpline->RemoveSplinePoint(InitialPointCount, true);
-		Course->RebuildAutomaticGates();
-		TestEqual(TEXT("Removing a Spline Point removes its Ring"), Course->GetGeneratedAutomaticGateCount(), InitialPointCount);
-		TestEqual(TEXT("Removing a Point restores the sequence count"), Course->GetOrderedGates().Num(), InitialPointCount);
+		EditedHandles.Pop();
+		Course->ConfigureAutomaticGateSplineHandles(EditedHandles);
+		TestEqual(TEXT("Removing one independent Handle removes its Ring"), Course->GetGeneratedAutomaticGateCount(), 5);
+		TestEqual(TEXT("Removing a Handle restores the sequence count"), Course->GetOrderedGates().Num(), 5);
+
+		TestEqual(TEXT("Ring Handle edits do not change Course Spline Point count"), PointDrivenSpline->GetNumberOfSplinePoints(), InitialPointCount);
+		for (int32 PointIndex = 0; PointIndex < InitialPointCount; ++PointIndex)
+		{
+			TestTrue(
+				*FString::Printf(TEXT("Ring Handle edits preserve Course Spline Point %d"), PointIndex),
+				PointDrivenSpline->GetLocationAtSplinePoint(PointIndex, ESplineCoordinateSpace::Local)
+					.Equals(OriginalSplinePointLocations[PointIndex], 0.1f));
+		}
 	}
 
 	Course->ConfigureAutomaticGateLayout(false, 5, true, 100.0f, 900.0f, 150.0f);

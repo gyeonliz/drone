@@ -82,6 +82,7 @@ ADroneTrainingCourse::ADroneTrainingCourse()
 void ADroneTrainingCourse::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
+	SnapAutomaticGateSplineHandlesToSplineInternal();
 	RebuildAutomaticGateComponents();
 	ApplyNonInterferenceRules();
 	RebuildCourseLineSegments();
@@ -146,6 +147,7 @@ void ADroneTrainingCourse::SynchronizeGateDefinitions()
 
 void ADroneTrainingCourse::RebuildAutomaticGates()
 {
+	SnapAutomaticGateSplineHandlesToSplineInternal();
 	RebuildAutomaticGateComponents();
 	ConfigureGateSequence();
 }
@@ -159,8 +161,8 @@ void ADroneTrainingCourse::ConfigureAutomaticGateLayout(
 	const float EndPaddingCentimeters)
 {
 	bUseAutomaticSplineGates = bEnabled;
-	// 이 API는 개수/간격 기반 배치를 명시하므로 Point 직접 편집 모드를 해제한다.
-	bUseSplinePointsAsAutomaticGatePositions = false;
+	// 이 API는 개수/간격 기반 배치를 명시하므로 독립 Handle 편집 모드를 해제한다.
+	bUseIndependentAutomaticGateHandles = false;
 	AutomaticGateCount = FMath::Clamp(GateCount, 2, DroneTrainingCourse::MaximumGeneratedGateCount);
 	bEvenlyDistributeAutomaticGates = bEvenlyDistribute;
 	AutomaticGateStartDistanceCentimeters = FMath::Max(StartDistanceCentimeters, 0.0f);
@@ -178,23 +180,79 @@ void ADroneTrainingCourse::ConfigureAutomaticGateOverrides(
 	RebuildAutomaticGates();
 }
 
-void ADroneTrainingCourse::ConfigureAutomaticGateSplinePointPlacement(const bool bEnabled)
+void ADroneTrainingCourse::InitializeAutomaticGateSplineHandlesFromCurrentLayout()
 {
-	bUseSplinePointsAsAutomaticGatePositions = bEnabled;
-	if (bEnabled)
+	if (!CourseSpline)
 	{
-		bUseAutomaticSplineGates = true;
+		return;
 	}
+
+	if (bUseIndependentAutomaticGateHandles && AutomaticGateSplineHandles.Num() >= 2)
+	{
+		SnapAutomaticGateSplineHandlesToSpline();
+		return;
+	}
+
+	TArray<FVector> NewHandleLocations;
+	if (!bUseAutomaticSplineGates && OrderedGates.Num() >= 2)
+	{
+		NewHandleLocations.Reserve(OrderedGates.Num());
+		for (const ADroneTrainingGate* Gate : OrderedGates)
+		{
+			if (IsValid(Gate))
+			{
+				NewHandleLocations.Add(GetActorTransform().InverseTransformPosition(Gate->GetActorLocation()));
+			}
+		}
+	}
+
+	if (NewHandleLocations.Num() < 2)
+	{
+		// Handle 모드를 켜기 전에 기존 숫자 배치 결과를 독립 위치 원본으로 복사한다.
+		bUseIndependentAutomaticGateHandles = false;
+		const int32 SourceGateCount = bUseAutomaticSplineGates
+			? FMath::Clamp(AutomaticGateCount, 2, DroneTrainingCourse::MaximumGeneratedGateCount)
+			: FMath::Min(CourseSpline->GetNumberOfSplinePoints(), DroneTrainingCourse::MaximumGeneratedGateCount);
+		NewHandleLocations.Reset(SourceGateCount);
+		for (int32 GateIndex = 0; GateIndex < SourceGateCount; ++GateIndex)
+		{
+			const float DistanceAlongSpline = bUseAutomaticSplineGates
+				? GetAutomaticGateDistanceAlongSpline(GateIndex)
+				: CourseSpline->GetDistanceAlongSplineAtSplinePoint(GateIndex);
+			const FVector WorldLocation = CourseSpline->GetLocationAtDistanceAlongSpline(
+				DistanceAlongSpline,
+				ESplineCoordinateSpace::World);
+			NewHandleLocations.Add(GetActorTransform().InverseTransformPosition(WorldLocation));
+		}
+	}
+
+	ConfigureAutomaticGateSplineHandles(NewHandleLocations);
+}
+
+void ADroneTrainingCourse::ConfigureAutomaticGateSplineHandles(const TArray<FVector>& HandleLocations)
+{
+	AutomaticGateSplineHandles = HandleLocations;
+	if (AutomaticGateSplineHandles.Num() > DroneTrainingCourse::MaximumGeneratedGateCount)
+	{
+		AutomaticGateSplineHandles.SetNum(DroneTrainingCourse::MaximumGeneratedGateCount);
+	}
+	bUseAutomaticSplineGates = true;
+	bUseIndependentAutomaticGateHandles = true;
 	RebuildAutomaticGates();
+}
+
+void ADroneTrainingCourse::SnapAutomaticGateSplineHandlesToSpline()
+{
+	SnapAutomaticGateSplineHandlesToSplineInternal();
+	RebuildAutomaticGateComponents();
+	ConfigureGateSequence();
 }
 
 int32 ADroneTrainingCourse::GetResolvedAutomaticGateCount() const
 {
-	if (bUseSplinePointsAsAutomaticGatePositions)
+	if (bUseIndependentAutomaticGateHandles)
 	{
-		return CourseSpline
-			? FMath::Min(CourseSpline->GetNumberOfSplinePoints(), DroneTrainingCourse::MaximumGeneratedGateCount)
-			: 0;
+		return FMath::Min(AutomaticGateSplineHandles.Num(), DroneTrainingCourse::MaximumGeneratedGateCount);
 	}
 
 	return FMath::Clamp(
@@ -250,10 +308,16 @@ float ADroneTrainingCourse::GetAutomaticGateDistanceAlongSpline(const int32 Gate
 		&& AutomaticGateSplineDistancesCentimeters[SafeGateIndex] >= 0.0f;
 
 	float BaseDistance = SafeStartDistance;
-	if (bUseSplinePointsAsAutomaticGatePositions)
+	if (bUseIndependentAutomaticGateHandles)
 	{
-		// 제어점의 누적 Spline 거리를 사용해 Ring이 곡선 위에 정확히 놓이도록 한다.
-		BaseDistance = CourseSpline->GetDistanceAlongSplineAtSplinePoint(SafeGateIndex);
+		// Ring 전용 Handle을 Spline에 투영하므로 경로 제어점은 그대로 유지된다.
+		const FTransform LocalToWorld = GetRootComponent()
+			? GetRootComponent()->GetComponentTransform()
+			: GetActorTransform();
+		const FVector HandleWorldLocation = LocalToWorld.TransformPosition(
+			AutomaticGateSplineHandles[SafeGateIndex]);
+		const float ClosestInputKey = CourseSpline->FindInputKeyClosestToWorldLocation(HandleWorldLocation);
+		BaseDistance = CourseSpline->GetDistanceAlongSplineAtSplineInputKey(ClosestInputKey);
 	}
 	else if (bHasSplineDistanceOverride)
 	{
@@ -352,6 +416,32 @@ void ADroneTrainingCourse::ApplyNonInterferenceRules()
 		Primitive->SetGenerateOverlapEvents(false);
 		Primitive->SetSimulatePhysics(false);
 		Primitive->SetCanEverAffectNavigation(false);
+	}
+}
+
+void ADroneTrainingCourse::SnapAutomaticGateSplineHandlesToSplineInternal()
+{
+	if (!bUseIndependentAutomaticGateHandles || !CourseSpline)
+	{
+		return;
+	}
+
+	const FTransform LocalToWorld = GetRootComponent()
+		? GetRootComponent()->GetComponentTransform()
+		: GetActorTransform();
+	for (FVector& HandleLocation : AutomaticGateSplineHandles)
+	{
+		if (HandleLocation.ContainsNaN())
+		{
+			HandleLocation = FVector::ZeroVector;
+		}
+
+		const FVector HandleWorldLocation = LocalToWorld.TransformPosition(HandleLocation);
+		const float ClosestInputKey = CourseSpline->FindInputKeyClosestToWorldLocation(HandleWorldLocation);
+		const FVector SnappedWorldLocation = CourseSpline->GetLocationAtSplineInputKey(
+			ClosestInputKey,
+			ESplineCoordinateSpace::World);
+		HandleLocation = LocalToWorld.InverseTransformPosition(SnappedWorldLocation);
 	}
 }
 
