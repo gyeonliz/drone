@@ -174,7 +174,7 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Training Map has exactly one PlayerStart"), PlayerStartCount, 1);
 	TestEqual(TEXT("Training Map has no pre-placed Prototype Pawn"), PlacedPrototypePawnCount, 0);
 	TestEqual(TEXT("Training Map has exactly one Training Course"), CourseCount, 1);
-	TestEqual(TEXT("Training Map has exactly four Greybox Gates"), GateCount, 4);
+	TestTrue(TEXT("Training Map has at least a start and finish Gate"), GateCount >= 2);
 	TestEqual(TEXT("Training Map has one Recon role test target"), ReconRoleTargetCount, 1);
 	TestEqual(TEXT("Training Map has one Impact role test target"), ImpactRoleTargetCount, 1);
 	TestEqual(TEXT("Training Map has one Payload role test target"), PayloadRoleTargetCount, 1);
@@ -195,7 +195,16 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 
 		// TUT-02는 Level Actor 검색이 아니라 Course의 명시적 배열을 순서 기준으로 사용한다.
 		const TArray<TObjectPtr<ADroneTrainingGate>>& OrderedGates = PlacedCourse->GetOrderedGates();
-		TestEqual(TEXT("Placed Course explicitly references all four Gates"), OrderedGates.Num(), 4);
+		TestEqual(TEXT("Placed Course references every generated Gate"), OrderedGates.Num(), GateCount);
+		// Construction 재실행은 자동 Child Actor를 교체하므로 이후 검사는 새 활성 배열을 사용한다.
+		PlacedGates.Reset();
+		for (ADroneTrainingGate* Gate : OrderedGates)
+		{
+			if (IsValid(Gate))
+			{
+				PlacedGates.Add(Gate);
+			}
+		}
 		TSet<const ADroneTrainingGate*> UniqueOrderedGates;
 		for (int32 GatePosition = 0; GatePosition < OrderedGates.Num(); ++GatePosition)
 		{
@@ -211,8 +220,14 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 				!UniqueOrderedGates.Contains(Gate));
 			UniqueOrderedGates.Add(Gate);
 			TestTrue(
-				*FString::Printf(TEXT("Ordered Gate %d is placed in the loaded Map"), GatePosition),
-				PlacedGates.Contains(Gate));
+				*FString::Printf(TEXT("Ordered Gate %d belongs to the loaded Map World"), GatePosition),
+				Gate->GetWorld() == TrainingWorld);
+			if (PlacedCourse->IsUsingAutomaticSplineGates())
+			{
+				TestTrue(
+					*FString::Printf(TEXT("Automatic Gate %d is owned by the Course"), GatePosition),
+					Gate->GetOwner() == PlacedCourse);
+			}
 			if (GateClass)
 			{
 				TestTrue(
@@ -244,7 +259,10 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 		if (GateSequence)
 		{
 			TestTrue(TEXT("Placed Gate configuration is valid"), GateSequence->IsConfigurationValid());
-			TestEqual(TEXT("Placed Gate Sequence contains four Gates"), GateSequence->GetConfiguredGateCount(), 4);
+			TestEqual(
+				TEXT("Placed Gate Sequence contains every configured Gate"),
+				GateSequence->GetConfiguredGateCount(),
+				OrderedGates.Num());
 			TestEqual(TEXT("Placed Gate Sequence starts at Gate 0"), GateSequence->GetCurrentGateIndex(), 0);
 		}
 
