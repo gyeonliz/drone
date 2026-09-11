@@ -51,6 +51,17 @@ public:
 	UFUNCTION(BlueprintPure, Category="Tutorial|Gate")
 	EDroneTrainingGateVisualState GetGateVisualState() const { return GateVisualState; }
 
+	/** 통과 전/현재 목표/통과 후 상태에 실제 사용할 BP 설정 색을 반환한다. */
+	UFUNCTION(BlueprintPure, Category="Tutorial|Gate|Visual")
+	FLinearColor GetColorForVisualState(EDroneTrainingGateVisualState State) const;
+
+	/** Blueprint에서 세 상태 색을 한 번에 바꾸고 현재 표시 Material에 즉시 반영한다. */
+	UFUNCTION(BlueprintCallable, Category="Tutorial|Gate|Visual")
+	void SetGateStateColors(
+		FLinearColor BeforePassColor,
+		FLinearColor CurrentTargetColor,
+		FLinearColor AfterPassColor);
+
 	UFUNCTION(BlueprintPure, Category="Tutorial|Gate")
 	UBoxComponent* GetGateTrigger() const { return GateTrigger; }
 
@@ -146,13 +157,19 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Visual", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UMaterialInterface> RingMaterial;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Visual", meta=(AllowPrivateAccess="true"))
+	/** 아직 순서가 오지 않은 Gate의 색. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Tutorial|Gate|Visual",
+		meta=(DisplayName="통과 전 색상", AllowPrivateAccess="true"))
 	FLinearColor InactiveColor = FLinearColor(0.02f, 0.08f, 0.18f, 1.0f);
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Visual", meta=(AllowPrivateAccess="true"))
+	/** 지금 통과해야 하는 Gate의 강조 색. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Tutorial|Gate|Visual",
+		meta=(DisplayName="현재 목표 색상", AllowPrivateAccess="true"))
 	FLinearColor CurrentColor = FLinearColor(0.10f, 1.0f, 0.18f, 1.0f);
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Visual", meta=(AllowPrivateAccess="true"))
+	/** 정상 통과가 끝난 Gate의 색. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Tutorial|Gate|Visual",
+		meta=(DisplayName="통과 후 색상", AllowPrivateAccess="true"))
 	FLinearColor CompletedColor = FLinearColor(0.02f, 0.70f, 1.0f, 1.0f);
 
 	UPROPERTY(Transient)

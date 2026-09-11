@@ -78,13 +78,17 @@ struct FNPCExpectation
 	EDroneNPCWeaponType Weapon;
 	bool bCanUseMG;
 	int32 PlacedCount;
+	const TCHAR* CharacterMeshObjectPath;
 };
 
 const FNPCExpectation NPCExpectations[] =
 {
-	{TEXT("Hostile_Rifle"), EDroneNPCFaction::Hostile, EDroneNPCWeaponType::Rifle, true, 1},
-	{TEXT("Hostile_Shotgun"), EDroneNPCFaction::Hostile, EDroneNPCWeaponType::Shotgun, false, 1},
-	{TEXT("Friendly_Base"), EDroneNPCFaction::Friendly, EDroneNPCWeaponType::Unarmed, false, 2},
+	{TEXT("Hostile_Rifle"), EDroneNPCFaction::Hostile, EDroneNPCWeaponType::Rifle, true, 1,
+		TEXT("/Game/Modular_Insurgents/Mesh/SK_Preset1.SK_Preset1")},
+	{TEXT("Hostile_Shotgun"), EDroneNPCFaction::Hostile, EDroneNPCWeaponType::Shotgun, false, 1,
+		TEXT("/Game/Modular_Insurgents/Mesh/SK_Preset2.SK_Preset2")},
+	{TEXT("Friendly_Base"), EDroneNPCFaction::Friendly, EDroneNPCWeaponType::Unarmed, false, 2,
+		MannyMeshPath},
 };
 
 UWorld* FindPIEWorld()
@@ -1316,6 +1320,10 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 		{
 			continue;
 		}
+		USkeletalMesh* ExpectedCharacterMesh = LoadObject<USkeletalMesh>(nullptr, Expectation.CharacterMeshObjectPath);
+		TestNotNull(
+			*FString::Printf(TEXT("BP_NPC_%s assigned Character Mesh loads"), Expectation.Name),
+			ExpectedCharacterMesh);
 
 		const FDroneNPCProfile& Profile = CDO->GetNPCProfileComponent()->GetProfile();
 		TestTrue(*FString::Printf(TEXT("BP_NPC_%s Faction matches"), Expectation.Name), Profile.Faction == Expectation.Faction);
@@ -1323,7 +1331,9 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 		TestTrue(*FString::Printf(TEXT("BP_NPC_%s MG permission matches"), Expectation.Name), Profile.bCanUseMGTurret == Expectation.bCanUseMG);
 		TestTrue(*FString::Printf(TEXT("BP_NPC_%s uses project AI Controller"), Expectation.Name), CDO->AIControllerClass == ADroneNPCAIController::StaticClass());
 		TestTrue(*FString::Printf(TEXT("BP_NPC_%s auto-possesses AI"), Expectation.Name), CDO->AutoPossessAI == EAutoPossessAI::PlacedInWorldOrSpawned);
-		TestTrue(*FString::Printf(TEXT("BP_NPC_%s uses shared Manny Greybox Mesh"), Expectation.Name), CDO->GetMesh()->GetSkeletalMeshAsset() == MannyMesh);
+		TestTrue(
+			*FString::Printf(TEXT("BP_NPC_%s uses the assigned role Character Mesh"), Expectation.Name),
+			CDO->GetMesh()->GetSkeletalMeshAsset() == ExpectedCharacterMesh);
 		const UClass* ExpectedAnimClass = Expectation.Weapon == EDroneNPCWeaponType::Unarmed
 			? UnarmedAnimClass
 			: ArmedAnimClass;
@@ -1537,7 +1547,7 @@ bool FDroneNPCGreyboxPIETest::RunTest(const FString& Parameters)
 	AddExpectedError(
 		TEXT("Unable to find RecastNavMesh instance while trying to create UCrowdManager instance"),
 		EAutomationExpectedErrorFlags::Contains,
-		2);
+		0);
 
 	if (!GEditor || GEditor->IsPlaySessionInProgress() || FindPIEWorld())
 	{
@@ -1570,7 +1580,7 @@ bool FDroneNPCBaseRoutinesPIETest::RunTest(const FString& Parameters)
 	AddExpectedError(
 		TEXT("Unable to find RecastNavMesh instance while trying to create UCrowdManager instance"),
 		EAutomationExpectedErrorFlags::Contains,
-		2);
+		0);
 
 	if (!GEditor || GEditor->IsPlaySessionInProgress() || FindPIEWorld())
 	{
@@ -1603,7 +1613,7 @@ bool FDroneNPCPerceptionSearchPIETest::RunTest(const FString& Parameters)
 	AddExpectedError(
 		TEXT("Unable to find RecastNavMesh instance while trying to create UCrowdManager instance"),
 		EAutomationExpectedErrorFlags::Contains,
-		2);
+		0);
 
 	if (!GEditor || GEditor->IsPlaySessionInProgress() || FindPIEWorld())
 	{

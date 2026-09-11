@@ -4,6 +4,8 @@
 #include "Prototype/DronePrototypePawn.h"
 #include "Tests/AutomationCommon.h"
 #include "Tutorial/DroneTrainingCourse.h"
+#include "Tutorial/DroneTrainingGate.h"
+#include "Tutorial/DroneTrainingGateSequenceComponent.h"
 
 #include "Components/PrimitiveComponent.h"
 #include "Components/SplineComponent.h"
@@ -174,6 +176,136 @@ bool FDroneTrainingCourseTest::RunTest(const FString& Parameters)
 			TEXT("Guide line never reports itself as a sweep obstacle"),
 			SweepHit.GetActor() != Course);
 	}
+
+	// 5) 자동 Gate 모드는 개수와 거리 수치만으로 Ring을 만들고 Spline 접선에 정렬해야 한다.
+	Course->ConfigureAutomaticGateLayout(true, 5, true, 100.0f, 900.0f, 150.0f);
+	const float TestSplineLength = Course->GetCourseSpline() ? Course->GetCourseSpline()->GetSplineLength() : 0.0f;
+	const TArray<float> PerRingDistances = {
+		TestSplineLength * 0.05f,
+		TestSplineLength * 0.22f,
+		TestSplineLength * 0.47f,
+		TestSplineLength * 0.71f,
+		TestSplineLength * 0.94f,
+	};
+	const TArray<FVector> PerRingLocalOffsets = {
+		FVector(0.0f, -30.0f, 20.0f),
+		FVector(0.0f, 45.0f, 65.0f),
+		FVector(0.0f, 0.0f, -25.0f),
+		FVector(0.0f, -70.0f, 10.0f),
+		FVector(0.0f, 25.0f, 35.0f),
+	};
+	Course->ConfigureAutomaticGateOverrides(PerRingDistances, PerRingLocalOffsets);
+	TestTrue(TEXT("Automatic Spline Gate mode is enabled"), Course->IsUsingAutomaticSplineGates());
+	TestEqual(TEXT("Automatic mode creates requested Ring count"), Course->GetGeneratedAutomaticGateCount(), 5);
+	TestEqual(TEXT("Active Gate order uses all generated Rings"), Course->GetOrderedGates().Num(), 5);
+	if (UDroneTrainingGateSequenceComponent* Sequence = Course->GetGateSequenceComponent())
+	{
+		TestTrue(TEXT("Generated Ring sequence is valid"), Sequence->IsConfigurationValid());
+		TestEqual(TEXT("Generated Ring sequence has requested count"), Sequence->GetConfiguredGateCount(), 5);
+	}
+
+	for (int32 GateIndex = 0; GateIndex < Course->GetOrderedGates().Num(); ++GateIndex)
+	{
+		const ADroneTrainingGate* Gate = Course->GetOrderedGates()[GateIndex];
+		TestNotNull(*FString::Printf(TEXT("Generated Ring %d exists"), GateIndex), Gate);
+		if (!Gate || !Course->GetCourseSpline())
+		{
+			continue;
+		}
+
+		const float ExpectedDistance = Course->GetAutomaticGateDistanceAlongSpline(GateIndex);
+		const FVector ExpectedSplineLocation = Course->GetCourseSpline()->GetLocationAtDistanceAlongSpline(
+			ExpectedDistance,
+			ESplineCoordinateSpace::World);
+		const FQuat ExpectedSplineRotation = Course->GetCourseSpline()->GetQuaternionAtDistanceAlongSpline(
+			ExpectedDistance,
+			ESplineCoordinateSpace::World);
+		const FVector ExpectedLocation = ExpectedSplineLocation
+			+ ExpectedSplineRotation.RotateVector(PerRingLocalOffsets[GateIndex]);
+		const FVector ExpectedDirection = Course->GetCourseSpline()->GetDirectionAtDistanceAlongSpline(
+			ExpectedDistance,
+			ESplineCoordinateSpace::World);
+		TestEqual(*FString::Printf(TEXT("Generated Ring %d receives ordered index"), GateIndex), Gate->GetGateIndex(), GateIndex);
+		TestTrue(
+			*FString::Printf(TEXT("Generated Ring %d sits on Spline"), GateIndex),
+			Gate->GetActorLocation().Equals(ExpectedLocation, 1.0f));
+		TestTrue(
+			*FString::Printf(TEXT("Generated Ring %d follows Spline tangent"), GateIndex),
+			FVector::DotProduct(Gate->GetForwardDirectionWorld(), ExpectedDirection) > 0.999f);
+		TestTrue(
+			*FString::Printf(TEXT("Generated Ring %d stores Spline distance"), GateIndex),
+			FMath::IsNearlyEqual(Gate->GetSegmentDistance(), ExpectedDistance, 0.1f));
+		TestTrue(
+			*FString::Printf(TEXT("Generated Ring %d uses its absolute Spline distance override"), GateIndex),
+			FMath::IsNearlyEqual(ExpectedDistance, PerRingDistances[GateIndex], 0.1f));
+	}
+
+	Course->RebuildAutomaticGates();
+	Course->RebuildAutomaticGates();
+	TestEqual(TEXT("Repeated automatic rebuild does not duplicate Rings"), Course->GetGeneratedAutomaticGateCount(), 5);
+	TestEqual(TEXT("Repeated automatic rebuild preserves sequence count"), Course->GetOrderedGates().Num(), 5);
+
+	// 6) 직접 편집 모드에서는 Spline Point 1개가 Ring 1개이며 Point 편집 결과를 즉시 따라야 한다.
+	Course->ConfigureAutomaticGateOverrides({}, {});
+	Course->ConfigureAutomaticGateSplinePointPlacement(true);
+	USplineComponent* PointDrivenSpline = Course->GetCourseSpline();
+	TestNotNull(TEXT("Point-driven Ring mode keeps an editable Spline"), PointDrivenSpline);
+	if (PointDrivenSpline)
+	{
+		const int32 InitialPointCount = PointDrivenSpline->GetNumberOfSplinePoints();
+		TestTrue(TEXT("Point-driven Ring mode is enabled"), Course->IsUsingSplinePointsAsAutomaticGatePositions());
+		TestEqual(TEXT("Resolved Ring count equals Spline Point count"), Course->GetResolvedAutomaticGateCount(), InitialPointCount);
+		TestEqual(TEXT("One Ring is generated for every Spline Point"), Course->GetGeneratedAutomaticGateCount(), InitialPointCount);
+		TestEqual(TEXT("Point-driven Rings become the active ordered sequence"), Course->GetOrderedGates().Num(), InitialPointCount);
+
+		for (int32 PointIndex = 0; PointIndex < InitialPointCount; ++PointIndex)
+		{
+			const float PointDistance = PointDrivenSpline->GetDistanceAlongSplineAtSplinePoint(PointIndex);
+			TestTrue(
+				*FString::Printf(TEXT("Ring %d uses its matching Spline Point distance"), PointIndex),
+				FMath::IsNearlyEqual(Course->GetAutomaticGateDistanceAlongSpline(PointIndex), PointDistance, 0.1f));
+		}
+
+		const int32 MovedPointIndex = FMath::Min(1, InitialPointCount - 1);
+		const FVector MovedPointLocation = PointDrivenSpline->GetLocationAtSplinePoint(
+			MovedPointIndex,
+			ESplineCoordinateSpace::Local) + FVector(125.0f, -80.0f, 55.0f);
+		PointDrivenSpline->SetLocationAtSplinePoint(
+			MovedPointIndex,
+			MovedPointLocation,
+			ESplineCoordinateSpace::Local,
+			true);
+		Course->RebuildAutomaticGates();
+		const ADroneTrainingGate* MovedGate = Course->GetOrderedGates().IsValidIndex(MovedPointIndex)
+			? Course->GetOrderedGates()[MovedPointIndex]
+			: nullptr;
+		TestNotNull(TEXT("Moving a Spline Point keeps its matching Ring"), MovedGate);
+		if (MovedGate)
+		{
+			const FVector ExpectedMovedWorldLocation = PointDrivenSpline->GetLocationAtSplinePoint(
+				MovedPointIndex,
+				ESplineCoordinateSpace::World);
+			TestTrue(
+				TEXT("Moving a Spline Point moves its matching Ring"),
+				MovedGate->GetActorLocation().Equals(ExpectedMovedWorldLocation, 1.0f));
+		}
+
+		const FVector AddedPointLocation = PointDrivenSpline->GetLocationAtSplinePoint(
+			InitialPointCount - 1,
+			ESplineCoordinateSpace::Local) + FVector(900.0f, 250.0f, 100.0f);
+		PointDrivenSpline->AddSplinePoint(AddedPointLocation, ESplineCoordinateSpace::Local, true);
+		Course->RebuildAutomaticGates();
+		TestEqual(TEXT("Adding a Spline Point adds one Ring"), Course->GetGeneratedAutomaticGateCount(), InitialPointCount + 1);
+		TestEqual(TEXT("Added Point Ring joins the ordered sequence"), Course->GetOrderedGates().Num(), InitialPointCount + 1);
+
+		PointDrivenSpline->RemoveSplinePoint(InitialPointCount, true);
+		Course->RebuildAutomaticGates();
+		TestEqual(TEXT("Removing a Spline Point removes its Ring"), Course->GetGeneratedAutomaticGateCount(), InitialPointCount);
+		TestEqual(TEXT("Removing a Point restores the sequence count"), Course->GetOrderedGates().Num(), InitialPointCount);
+	}
+
+	Course->ConfigureAutomaticGateLayout(false, 5, true, 100.0f, 900.0f, 150.0f);
+	TestEqual(TEXT("Disabling automatic mode removes generated Rings"), Course->GetGeneratedAutomaticGateCount(), 0);
 
 	WorldWrapper.TickTestWorld();
 	WorldWrapper.ForwardErrorMessages(this);

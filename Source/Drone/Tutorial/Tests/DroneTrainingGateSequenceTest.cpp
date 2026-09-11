@@ -155,6 +155,20 @@ bool FDroneTrainingGateSequenceTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Gate 1 visual is Inactive"), Gates[1]->GetGateVisualState(), EDroneTrainingGateVisualState::Inactive);
 	TestEqual(TEXT("Gate 2 visual is Inactive"), Gates[2]->GetGateVisualState(), EDroneTrainingGateVisualState::Inactive);
 
+	const FLinearColor BeforePassColor(0.15f, 0.20f, 0.25f, 1.0f);
+	const FLinearColor CurrentTargetColor(1.0f, 0.65f, 0.05f, 1.0f);
+	const FLinearColor AfterPassColor(0.05f, 0.45f, 1.0f, 1.0f);
+	Gates[0]->SetGateStateColors(BeforePassColor, CurrentTargetColor, AfterPassColor);
+	TestTrue(
+		TEXT("Blueprint color API stores the before-pass color"),
+		Gates[0]->GetColorForVisualState(EDroneTrainingGateVisualState::Inactive).Equals(BeforePassColor));
+	TestTrue(
+		TEXT("Blueprint color API stores the current-target color"),
+		Gates[0]->GetColorForVisualState(EDroneTrainingGateVisualState::Current).Equals(CurrentTargetColor));
+	TestTrue(
+		TEXT("Blueprint color API stores the after-pass color"),
+		Gates[0]->GetColorForVisualState(EDroneTrainingGateVisualState::Completed).Equals(AfterPassColor));
+
 	ADronePrototypePawn* Drone = TestWorld->SpawnActor<ADronePrototypePawn>(
 		ADronePrototypePawn::StaticClass(),
 		FTransform(FVector(-300.0f, 0.0f, 0.0f)),

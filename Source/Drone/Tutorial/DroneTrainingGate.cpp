@@ -99,6 +99,30 @@ void ADroneTrainingGate::SetGateVisualState(const EDroneTrainingGateVisualState 
 	RefreshStateMaterial();
 }
 
+FLinearColor ADroneTrainingGate::GetColorForVisualState(const EDroneTrainingGateVisualState State) const
+{
+	if (State == EDroneTrainingGateVisualState::Current)
+	{
+		return CurrentColor;
+	}
+	if (State == EDroneTrainingGateVisualState::Completed)
+	{
+		return CompletedColor;
+	}
+	return InactiveColor;
+}
+
+void ADroneTrainingGate::SetGateStateColors(
+	const FLinearColor BeforePassColor,
+	const FLinearColor CurrentTargetColor,
+	const FLinearColor AfterPassColor)
+{
+	InactiveColor = BeforePassColor;
+	CurrentColor = CurrentTargetColor;
+	CompletedColor = AfterPassColor;
+	RefreshStateMaterial();
+}
+
 void ADroneTrainingGate::AssignGateSequence(UDroneTrainingGateSequenceComponent* InSequence)
 {
 	AssignedGateSequence = InSequence;
@@ -201,17 +225,7 @@ void ADroneTrainingGate::RefreshStateMaterial()
 		return;
 	}
 
-	FLinearColor StateColor = InactiveColor;
-	if (GateVisualState == EDroneTrainingGateVisualState::Current)
-	{
-		StateColor = CurrentColor;
-	}
-	else if (GateVisualState == EDroneTrainingGateVisualState::Completed)
-	{
-		StateColor = CompletedColor;
-	}
-
-	DynamicRingMaterial->SetVectorParameterValue(TEXT("Color"), StateColor);
+	DynamicRingMaterial->SetVectorParameterValue(TEXT("Color"), GetColorForVisualState(GateVisualState));
 	for (UStaticMeshComponent* Segment : RingVisualSegments)
 	{
 		if (Segment)
