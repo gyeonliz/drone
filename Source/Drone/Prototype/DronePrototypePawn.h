@@ -4,6 +4,7 @@
 #include "GameFramework/Pawn.h"
 #include "Mission/DroneDefinition.h"
 #include "Prototype/DroneFlightControlTypes.h"
+#include "Signal/DroneSignalTypes.h"
 #include "DronePrototypePawn.generated.h"
 
 class AController;
@@ -13,6 +14,8 @@ class UDroneHealthComponent;
 class UDroneImpactDetonationComponent;
 class UDronePayloadDropComponent;
 class UDroneReconScanComponent;
+class UDroneSignalComponent;
+class UDroneWeatherResponseComponent;
 class UEnhancedInputLocalPlayerSubsystem;
 class UFloatingPawnMovement;
 class UInputAction;
@@ -66,6 +69,13 @@ public:
 	UFloatingPawnMovement* GetPrototypeMovementComponent() const { return PrototypeMovementComponent; }
 	UDroneTelemetryComponent* GetTelemetryComponent() const { return TelemetryComponent; }
 	UDroneHealthComponent* GetHealthComponent() const { return HealthComponent; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Signal")
+	UDroneSignalComponent* GetSignalComponent() const { return SignalComponent; }
+
+	/** World Weather Snapshot을 현재 조작 모드에 맞는 기체 Drift로 변환한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Weather")
+	UDroneWeatherResponseComponent* GetWeatherResponseComponent() const { return WeatherResponseComponent; }
 	UDroneReconScanComponent* GetReconScanComponent() const { return ReconScanComponent; }
 	UDroneImpactDetonationComponent* GetImpactDetonationComponent() const { return ImpactDetonationComponent; }
 	UDronePayloadDropComponent* GetPayloadDropComponent() const { return PayloadDropComponent; }
@@ -95,7 +105,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Role Ability")
 	bool TriggerSecondaryRoleAbility();
 
-	/** 쉬운 조작과 실제 조작형 Greybox를 플레이 중에도 바꾼다. */
+	/** 쉬운 조작, 제한 자세 Greybox, FPV Rate/Acro를 플레이 중에도 바꾼다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control")
 	void SetControlMode(EDroneControlMode NewControlMode);
 
@@ -104,6 +114,26 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control")
 	EDroneControlMode GetControlMode() const { return CurrentControlMode; }
+
+	/** 현재 Data Asset에서 적용된 FPV Rate/Acro 감도와 속도 제한이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control|Acro")
+	FDroneAcroRateSettings GetAcroRateSettings() const { return ActiveAcroRateSettings; }
+
+	/** 현재 세 축 입력이 만드는 Body Pitch/Yaw/Roll 각속도 명령(deg/s)이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control|Acro")
+	FRotator GetCurrentAcroBodyRateSetpointDegreesPerSecond() const;
+
+	/** 자동화 테스트와 Blueprint 조종기 UI가 -1~+1 Rate 입력을 같은 경로로 공급한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control|Acro")
+	void SetAcroRateInputGreybox(float PitchInput, float RollInput, float YawInput);
+
+	/** Betaflight Actual Rates의 중앙 감도/최대 각속도/Expo 의미를 사용하는 단일 축 계산이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control|Acro")
+	static float CalculateActualRateDegreesPerSecond(
+		float NormalizedStickInput,
+		float CenterSensitivityDegreesPerSecond,
+		float MaximumRateDegreesPerSecond,
+		float Expo);
 
 	/** 안정/균형/고기동은 기체 종류가 아니라 독립된 반응성 프리셋이다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control")
@@ -223,6 +253,14 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UDroneHealthComponent> HealthComponent;
 
+	/** Jamming Volume이 overlap Event로 공급하는 신호 상태. 드론 역할에 관계없이 같은 계약을 사용한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UDroneSignalComponent> SignalComponent;
+
+	/** 전역 지속풍·돌풍을 드론별 응답값과 조작 모드에 맞춰 적용한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UDroneWeatherResponseComponent> WeatherResponseComponent;
+
 	/** Definition의 ImplementedCapabilities에 ReconScan이 있을 때만 활성화된다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UDroneReconScanComponent> ReconScanComponent;
@@ -292,6 +330,10 @@ protected:
 	/** 실제 조작형은 감속 보조가 적고 기체 Root 기울기 및 Local Up을 사용한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|ControlModes", meta=(AllowPrivateAccess="true"))
 	FDroneControlModeTuning ManualRealisticGreyboxTuning;
+
+	/** FPV Rate/Acro는 자동 수평 복귀 없이 기체 Body 각속도를 직접 누적한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|ControlModes", meta=(AllowPrivateAccess="true"))
+	FDroneControlModeTuning AcroRateRealisticGreyboxTuning;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|HandlingPresets", meta=(AllowPrivateAccess="true"))
 	FDroneHandlingPresetTuning StableHandlingTuning;
@@ -416,8 +458,10 @@ private:
 	void ResetMoveVisualInput(const FInputActionValue& Value);
 	void ChangeAltitude(const FInputActionValue& Value);
 	void ChangeYaw(const FInputActionValue& Value);
+	void ResetYawInput(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	void ChangeCameraPitch(const FInputActionValue& Value);
+	void ResetCameraPitchInput(const FInputActionValue& Value);
 	void ToggleViewFromInput(const FInputActionValue& Value);
 	void TriggerPrimaryRoleAbilityFromInput(const FInputActionValue& Value);
 	void TriggerSecondaryRoleAbilityFromInput(const FInputActionValue& Value);
@@ -425,7 +469,9 @@ private:
 	void ApplyCameraViewMode();
 	void RefreshVisualTiltAttachments();
 	void ApplyRuntimeFlightTuning();
+	const FDroneControlModeTuning& ResolveCurrentControlModeTuning() const;
 	void UpdateControlAttitude(float DeltaSeconds);
+	void LimitAcroVerticalSpeed();
 	void UpdateVisualBank(float DeltaSeconds);
 	void UpdateRotorVisuals(float DeltaSeconds);
 	void UpdateDamageShake(float DeltaSeconds);
@@ -436,6 +482,9 @@ private:
 
 	UFUNCTION()
 	void HandleDeath(AActor* DeadActor, AController* InstigatorController, AActor* DamageCauser);
+
+	UFUNCTION()
+	void HandleSignalSnapshotChanged(FDroneSignalSnapshot NewSnapshot);
 
 	UPROPERTY(Transient)
 	int32 DroneDestroyedEventCount = 0;
@@ -448,6 +497,7 @@ private:
 
 	float VisualBankLateralInput = 0.0f;
 	float VisualTiltForwardInput = 0.0f;
+	float AcroYawInput = 0.0f;
 	TArray<TWeakObjectPtr<UStaticMeshComponent>> RotorVisualComponents;
 	bool bFirstPersonViewEnabled = false;
 	bool bDropCameraViewEnabled = false;
@@ -468,6 +518,7 @@ private:
 	float BaseYawRateDegreesPerSecond = 90.0f;
 	float BaseMaximumVisualBankRollDegrees = 18.0f;
 	float BaseMaximumVisualTiltPitchDegrees = 14.0f;
+	FDroneAcroRateSettings ActiveAcroRateSettings;
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|Feedback|DamageShake")
 	float CurrentDamageShakeStrength = 0.0f;

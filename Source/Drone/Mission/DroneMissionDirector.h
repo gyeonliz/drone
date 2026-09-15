@@ -2,21 +2,27 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "TimerManager.h"
 #include "Mission/DroneMissionRuntimeTypes.h"
 #include "DroneMissionDirector.generated.h"
 
 class ADronePrototypePawn;
+class ADroneDroppedPayload;
+class ADroneJammingVolume;
+class AController;
 class UDroneGameFlowSubsystem;
 class UDroneHealthComponent;
 class UDroneMissionDefinition;
+class UDroneReconScanComponent;
+class UDronePayloadDropComponent;
 class UDroneTrainingLapRecorderComponent;
 struct FDroneTrainingLapRecord;
 
 /**
  * 선택된 Mission Definition에서 목표를 만들고 성공·실패를 Flow에 한 번만 보고한다.
  *
- * 첫 Greybox 규칙은 명시적 Blueprint 완료 호출, Training Course Lap 완료, 기체 사망이다.
- * 최종 정찰·드랍·귀환 규칙은 같은 공개 API/Event 경계에 단계적으로 추가한다.
+ * 기존 Training의 수동/Lap 계약은 유지하고, 새 Mission Rule은 사건 종류·수량·대상 Tag·제한 시간으로 진행한다.
+ * Return 지점은 맵/BP가 ReportObjectiveEvent를 호출하며 아직 최종 배치·트리거 방식은 정하지 않았다.
  */
 UCLASS(Blueprintable)
 class DRONE_API ADroneMissionDirector : public AActor
@@ -51,6 +57,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Mission")
 	bool SetCurrentObjectiveProgress(int32 NewProgress);
 
+	/** 사건 종류와 Actor Tags의 선택적 TargetId가 현재 Rule과 맞을 때만 1회 진행한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Mission")
+	bool ReportObjectiveEvent(EDroneMissionObjectiveEvent Event, AActor* EventActor);
+
+	UFUNCTION(BlueprintPure, Category="Drone|Mission")
+	float GetCurrentObjectiveTimeRemainingSeconds() const;
+
 	/** Crash, 제한 시간, 명시적 Rule Actor가 공통으로 사용하는 실패 경계다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Mission")
 	bool ReportMissionFailure();
@@ -71,8 +84,28 @@ private:
 	UFUNCTION()
 	void HandleTrainingLapCompleted(FDroneTrainingLapRecord LapRecord);
 
+	UFUNCTION()
+	void HandleReconScanCompleted(AActor* TargetActor);
+
+	UFUNCTION()
+	void HandlePayloadResolved(ADroneDroppedPayload* PayloadActor, AActor* HitActor, bool bHitIntendedTarget);
+
+	UFUNCTION()
+	void HandleObjectiveTargetDeath(AActor* DeadActor, AController* InstigatorController, AActor* DamageCauser);
+
+	UFUNCTION()
+	void HandleJammerDisabled(AActor* JammerActor);
+
+	UFUNCTION()
+	void HandleDroneExitedJamming(AActor* DroneActor, AActor* JammerActor);
+
+	UFUNCTION()
+	void HandleObjectiveTimeExpired();
+
 	bool FinishMission(EDroneMissionOutcome Outcome);
 	void BindOptionalTrainingCourse();
+	void BindObjectiveEvents();
+	void StartCurrentObjectiveTimeout();
 	void ClearRuntimeBindings();
 	void BroadcastSnapshot();
 
@@ -89,6 +122,13 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UDroneTrainingLapRecorderComponent> TrainingLapRecorder;
+
+	TWeakObjectPtr<UDroneReconScanComponent> ReconScan;
+	TWeakObjectPtr<UDronePayloadDropComponent> PayloadDrop;
+	TArray<TWeakObjectPtr<UDroneHealthComponent>> ObjectiveTargetHealthBindings;
+	TArray<TWeakObjectPtr<ADroneJammingVolume>> JammingVolumeBindings;
+	TSet<FName> CountedObjectiveActorNames;
+	FTimerHandle ObjectiveTimeoutHandle;
 
 	UPROPERTY(Transient)
 	FDroneMissionRuntimeSnapshot Snapshot;

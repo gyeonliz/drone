@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Flow/DroneGameFlowTypes.h"
+#include "Mission/DroneMissionObjectiveTypes.h"
 #include "DroneMissionRuntimeTypes.generated.h"
 
 /** Map 안의 Mission Director가 소유하는 실행 상태다. Front-end Flow 상태와 중복되지 않는다. */
@@ -24,6 +25,15 @@ struct DRONE_API FDroneMissionObjectiveSnapshot
 
 	UPROPERTY(BlueprintReadOnly, Category="Drone Mission")
 	FText Description;
+
+	UPROPERTY(BlueprintReadOnly, Category="Drone Mission")
+	EDroneMissionObjectiveEvent Event = EDroneMissionObjectiveEvent::Manual;
+
+	UPROPERTY(BlueprintReadOnly, Category="Drone Mission")
+	FName TargetId = NAME_None;
+
+	UPROPERTY(BlueprintReadOnly, Category="Drone Mission")
+	float TimeLimitSeconds = 0.0f;
 
 	UPROPERTY(BlueprintReadOnly, Category="Drone Mission")
 	int32 CurrentProgress = 0;

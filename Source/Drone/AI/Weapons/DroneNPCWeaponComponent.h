@@ -222,6 +222,17 @@ public:
 	/** 자동화가 한 Volley의 실제 Pellet 방향 분리를 확인하는 C++ 전용 조회다. */
 	const TArray<FVector>& GetLastShotgunPelletTraceEnds() const { return LastShotgunPelletTraceEnds; }
 
+	/** Blueprint HUD나 시험 장치가 직전 Volley의 원뿔 끝점을 복사해 읽는다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Shotgun|Debug")
+	TArray<FVector> GetLastShotgunPelletEndpoints() const { return LastShotgunPelletTraceEnds; }
+
+	/** 투사체 모드와 즉시 Trace 모드가 공유하는 산탄 원뿔 디버그 표시를 런타임에 켜고 끈다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Shotgun|Debug")
+	void SetShotgunDebugTraceEnabled(bool bEnabled) { bDrawShotgunDebugTrace = bEnabled; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Shotgun|Debug")
+	bool IsShotgunDebugTraceEnabled() const { return bDrawShotgunDebugTrace; }
+
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 

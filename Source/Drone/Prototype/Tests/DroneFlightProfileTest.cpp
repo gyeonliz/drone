@@ -9,6 +9,7 @@
 #include "Health/DroneHealthComponent.h"
 #include "Mission/DroneDefinition.h"
 #include "Prototype/DronePrototypePawn.h"
+#include "Signal/DroneSignalComponent.h"
 #include "Tests/AutomationEditorCommon.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -57,6 +58,24 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("FPV marks Impact Detonation implemented"), FPVStrikeDefinition->ImplementedCapabilities.Contains(EDroneGameplayCapability::ImpactDetonation));
 	TestTrue(TEXT("Drop marks Payload Drop implemented"), DropDefinition->ImplementedCapabilities.Contains(EDroneGameplayCapability::PayloadDrop));
 	TestTrue(TEXT("FPV Strike profile starts in FPV"), FPVStrikeDefinition->FlightProfile.bStartInFirstPersonView);
+	TestEqual(TEXT("FPV Strike starts in Rate/Acro control"),
+		FPVStrikeDefinition->FlightProfile.DefaultControlMode,
+		EDroneControlMode::AcroRateRealisticGreybox);
+	TestEqual(TEXT("FPV Strike uses the high-mobility handling preset"),
+		FPVStrikeDefinition->FlightProfile.DefaultHandlingPreset,
+		EDroneHandlingPreset::Agile);
+	TestTrue(TEXT("FPV Strike uses the 650 deg/s pitch rate reference"), FMath::IsNearlyEqual(
+		FPVStrikeDefinition->FlightProfile.AcroRateSettings.MaximumPitchRateDegreesPerSecond,
+		650.0f));
+	TestTrue(TEXT("FPV Strike uses the 650 deg/s roll rate reference"), FMath::IsNearlyEqual(
+		FPVStrikeDefinition->FlightProfile.AcroRateSettings.MaximumRollRateDegreesPerSecond,
+		650.0f));
+	TestTrue(TEXT("FPV Strike uses the 400 deg/s yaw rate reference"), FMath::IsNearlyEqual(
+		FPVStrikeDefinition->FlightProfile.AcroRateSettings.MaximumYawRateDegreesPerSecond,
+		400.0f));
+	TestTrue(TEXT("FPV Strike caps world vertical speed at 9 m/s"), FMath::IsNearlyEqual(
+		FPVStrikeDefinition->FlightProfile.AcroRateSettings.MaximumWorldVerticalSpeedCentimetersPerSecond,
+		900.0f));
 	TestFalse(TEXT("Scout profile starts in third person"), ScoutDefinition->FlightProfile.bStartInFirstPersonView);
 	TestFalse(TEXT("Drop profile starts in third person"), DropDefinition->FlightProfile.bStartInFirstPersonView);
 	UClass* ScoutPawnClass = LoadClass<ADronePrototypePawn>(nullptr,
@@ -116,6 +135,12 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Applied Drone ID is preserved"), Pawn->GetAppliedDroneId(), Definition->DroneId);
 		TestEqual(TEXT("Default control mode applies"), Pawn->GetControlMode(), Definition->FlightProfile.DefaultControlMode);
 		TestEqual(TEXT("Default handling preset applies"), Pawn->GetHandlingPreset(), Definition->FlightProfile.DefaultHandlingPreset);
+		if (Definition == FPVStrikeDefinition)
+		{
+			TestTrue(TEXT("FPV Agile runtime max speed reaches the 27 m/s reference"), FMath::IsNearlyEqual(
+				Pawn->GetPrototypeMovementComponent()->MaxSpeed,
+				2700.0f));
+		}
 		TestEqual(TEXT("Only the Definition's Recon feature state applies"),
 			Pawn->GetReconScanComponent()->IsFeatureEnabled(),
 			Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::ReconScan));
@@ -125,6 +150,9 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Only the Definition's Drop feature state applies"),
 			Pawn->GetPayloadDropComponent()->IsFeatureEnabled(),
 			Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::PayloadDrop));
+		TestEqual(TEXT("Only the Definition's implemented immunity applies"),
+			Pawn->GetSignalComponent()->IsJammingImmune(),
+			Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::JammingImmunity));
 
 		// 두 축을 명시적으로 바꿔 기체 역할과 무관하게 같은 API로 동작하는지 확인한다.
 		Pawn->SetControlMode(EDroneControlMode::AssistedEasy);
@@ -155,7 +183,13 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Manual mode preserves more inertia than Assisted Easy"),
 			Pawn->GetPrototypeMovementComponent()->Deceleration < AssistedDeceleration);
 		Pawn->ToggleControlMode();
-		TestEqual(TEXT("Control mode toggles back to Assisted Easy"), Pawn->GetControlMode(), EDroneControlMode::AssistedEasy);
+		TestEqual(TEXT("Control mode cycles from limited attitude to Rate/Acro"),
+			Pawn->GetControlMode(),
+			EDroneControlMode::AcroRateRealisticGreybox);
+		Pawn->ToggleControlMode();
+		TestEqual(TEXT("Control mode cycles from Rate/Acro to Assisted Easy"),
+			Pawn->GetControlMode(),
+			EDroneControlMode::AssistedEasy);
 
 		if (Definition == ScoutDefinition)
 		{
@@ -172,6 +206,7 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 
 			// 실제 조작형은 같은 입력을 Root 자세에 반영하고 쉬운 조작 복귀 시 다시 수평화한다.
 			Pawn->SetControlMode(EDroneControlMode::ManualRealisticGreybox);
+			Pawn->SetVisualTiltInputGreybox(1.0f, 1.0f);
 			Pawn->Tick(0.1f);
 			TestTrue(TEXT("Manual Greybox tilts the collision Root"),
 				!FMath::IsNearlyZero(Pawn->GetActorRotation().Pitch)
@@ -185,6 +220,27 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("Returning to Assisted Easy levels the collision Root"),
 				FMath::Abs(Pawn->GetActorRotation().Pitch) < 0.25f
 				&& FMath::Abs(Pawn->GetActorRotation().Roll) < 0.25f);
+
+			// Rate/Acro는 Stick 끝에서 Profile 최대 각속도를 내고 Stick을 놓으면 자동 수평 복귀하지 않는다.
+			Pawn->SetActorRotation(FRotator::ZeroRotator);
+			Pawn->SetControlMode(EDroneControlMode::AcroRateRealisticGreybox);
+			Pawn->SetAcroRateInputGreybox(1.0f, 1.0f, 1.0f);
+			const FRotator FullStickRates = Pawn->GetCurrentAcroBodyRateSetpointDegreesPerSecond();
+			TestTrue(TEXT("Full forward stick commands maximum nose-down pitch rate"), FMath::IsNearlyEqual(
+				FullStickRates.Pitch,
+				-Definition->FlightProfile.AcroRateSettings.MaximumPitchRateDegreesPerSecond));
+			TestTrue(TEXT("Full lateral stick commands maximum roll rate"), FMath::IsNearlyEqual(
+				FullStickRates.Roll,
+				Definition->FlightProfile.AcroRateSettings.MaximumRollRateDegreesPerSecond));
+			TestTrue(TEXT("Full yaw stick commands maximum yaw rate"), FMath::IsNearlyEqual(
+				FullStickRates.Yaw,
+				Definition->FlightProfile.AcroRateSettings.MaximumYawRateDegreesPerSecond));
+			Pawn->Tick(0.1f);
+			const FQuat RotationBeforeCenteredStick = Pawn->GetActorQuat();
+			Pawn->SetAcroRateInputGreybox(0.0f, 0.0f, 0.0f);
+			Pawn->Tick(0.1f);
+			TestTrue(TEXT("Centered Rate/Acro sticks retain the current attitude"),
+				FQuat::ErrorAutoNormalize(RotationBeforeCenteredStick, Pawn->GetActorQuat()) < 0.001f);
 		}
 		TestTrue(
 			TEXT("Maximum health matches the Definition"),

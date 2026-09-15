@@ -51,9 +51,9 @@
 
 namespace DroneNPCGreybox
 {
-constexpr const TCHAR* MapPackage = TEXT("/Game/Drone/Maps/Lvl_NPCSmartObjectGreybox");
+constexpr const TCHAR* MapPackage = TEXT("/Game/Drone/Maps/TestMap/Lvl_NPCSmartObjectGreybox");
 constexpr const TCHAR* MapObjectPath =
-	TEXT("/Game/Drone/Maps/Lvl_NPCSmartObjectGreybox.Lvl_NPCSmartObjectGreybox");
+	TEXT("/Game/Drone/Maps/TestMap/Lvl_NPCSmartObjectGreybox.Lvl_NPCSmartObjectGreybox");
 constexpr const TCHAR* GameModeClassPath =
 	TEXT("/Game/Drone/Prototype/Blueprints/BP_DronePrototypeGameMode.BP_DronePrototypeGameMode_C");
 constexpr const TCHAR* MannyMeshPath =

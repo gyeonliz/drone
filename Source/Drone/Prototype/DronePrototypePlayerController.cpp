@@ -9,6 +9,7 @@
 #include "Tutorial/DroneTrainingCourse.h"
 #include "Tutorial/DroneTrainingLapRecorderComponent.h"
 #include "UI/DroneFlightHUDWidget.h"
+#include "Signal/DroneSignalComponent.h"
 
 ADronePrototypePlayerController::ADronePrototypePlayerController()
 {
@@ -46,6 +47,7 @@ void ADronePrototypePlayerController::EndPlay(const EEndPlayReason::Type EndPlay
 	{
 		FlightHUDWidget->ClearTrainingRecordSource();
 		FlightHUDWidget->ClearHealthSource();
+		FlightHUDWidget->ClearSignalSource();
 		FlightHUDWidget->ClearTelemetrySource();
 		FlightHUDWidget->RemoveFromParent();
 		FlightHUDWidget = nullptr;
@@ -97,8 +99,12 @@ void ADronePrototypePlayerController::SyncFlightHUDToPawn(APawn* NewPawn)
 	UDroneHealthComponent* Health = NewPawn
 		? NewPawn->FindComponentByClass<UDroneHealthComponent>()
 		: nullptr;
+	UDroneSignalComponent* Signal = NewPawn
+		? NewPawn->FindComponentByClass<UDroneSignalComponent>()
+		: nullptr;
 	FlightHUDWidget->SetTelemetrySource(Telemetry);
 	FlightHUDWidget->SetHealthSource(Health);
+	FlightHUDWidget->SetSignalSource(Signal);
 }
 
 void ADronePrototypePlayerController::SyncTrainingHUDToWorld()

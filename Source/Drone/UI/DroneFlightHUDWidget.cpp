@@ -9,6 +9,7 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Drone.h"
 #include "Health/DroneHealthComponent.h"
+#include "Signal/DroneSignalComponent.h"
 #include "Styling/CoreStyle.h"
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Tutorial/DroneTrainingLapRecorderComponent.h"
@@ -31,6 +32,7 @@ void UDroneFlightHUDWidget::NativeOnInitialized()
 	// WBP가 계약을 만족하면 Designer 위젯을 쓰고, 아니면 C++ 기본 UI를 만든다.
 	BuildDefaultLayout();
 	BuildHealthLayout();
+	BuildSignalLayout();
 	BuildTrainingLayout();
 	if (UDroneTelemetryComponent* CurrentSource = TelemetrySource.Get())
 	{
@@ -49,6 +51,7 @@ void UDroneFlightHUDWidget::NativeDestruct()
 	// Weak Pointer만 비우는 것으로는 Dynamic Delegate가 자동 해제된다고 가정하지 않는다.
 	ClearTrainingRecordSource();
 	ClearHealthSource();
+	ClearSignalSource();
 	ClearTelemetrySource();
 	Super::NativeDestruct();
 }
@@ -116,6 +119,41 @@ void UDroneFlightHUDWidget::SetHealthSource(UDroneHealthComponent* InHealthSourc
 void UDroneFlightHUDWidget::ClearHealthSource()
 {
 	SetHealthSource(nullptr);
+}
+
+void UDroneFlightHUDWidget::SetSignalSource(UDroneSignalComponent* InSignalSource)
+{
+	UDroneSignalComponent* CurrentSource = SignalSource.Get();
+	if (CurrentSource && CurrentSource != InSignalSource)
+	{
+		CurrentSource->OnSignalSnapshotChanged.RemoveDynamic(
+			this, &UDroneFlightHUDWidget::HandleSignalSnapshotChanged);
+	}
+	SignalSource = InSignalSource;
+	if (InSignalSource)
+	{
+		InSignalSource->OnSignalSnapshotChanged.AddUniqueDynamic(
+			this, &UDroneFlightHUDWidget::HandleSignalSnapshotChanged);
+		ApplySignalSnapshot(InSignalSource->GetSnapshot());
+	}
+	else
+	{
+		ApplySignalSnapshot(FDroneSignalSnapshot());
+		if (SignalReadoutPanel)
+		{
+			SignalReadoutPanel->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+}
+
+void UDroneFlightHUDWidget::ClearSignalSource()
+{
+	SetSignalSource(nullptr);
+}
+
+void UDroneFlightHUDWidget::HandleSignalSnapshotChanged(const FDroneSignalSnapshot Snapshot)
+{
+	ApplySignalSnapshot(Snapshot);
 }
 
 void UDroneFlightHUDWidget::HandleHealthChanged(
@@ -355,6 +393,75 @@ void UDroneFlightHUDWidget::BuildHealthLayout()
 	HealthValueText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18.0f));
 	HealthReadoutPanel->SetContent(HealthValueText);
 	RefreshHealthDisplay();
+}
+
+void UDroneFlightHUDWidget::BuildSignalLayout()
+{
+	if (!WidgetTree || SignalReadoutPanel)
+	{
+		return;
+	}
+	UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree->RootWidget);
+	if (!RootCanvas)
+	{
+		UE_LOG(LogDrone, Warning, TEXT("Flight HUD '%s' needs a CanvasPanel root for Signal readout."), *GetNameSafe(GetClass()));
+		return;
+	}
+	SignalReadoutPanel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("SignalReadoutPanel"));
+	SignalReadoutPanel->SetBrushColor(FLinearColor(0.02f, 0.07f, 0.10f, 0.84f));
+	SignalReadoutPanel->SetPadding(FMargin(14.0f, 9.0f));
+	SignalReadoutPanel->SetVisibility(ESlateVisibility::Collapsed);
+	UCanvasPanelSlot* SignalSlot = RootCanvas->AddChildToCanvas(SignalReadoutPanel);
+	SignalSlot->SetAnchors(FAnchors(1.0f, 0.0f));
+	SignalSlot->SetAlignment(FVector2D(1.0f, 0.0f));
+	SignalSlot->SetPosition(FVector2D(-24.0f, 76.0f));
+	SignalSlot->SetAutoSize(true);
+	SignalValueText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("SignalValueText"));
+	SignalValueText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 16.0f));
+	SignalValueText->SetColorAndOpacity(FSlateColor(FLinearColor(0.74f, 0.94f, 1.0f, 1.0f)));
+	SignalReadoutPanel->SetContent(SignalValueText);
+	ApplySignalSnapshot(DisplayedSignalSnapshot);
+}
+
+void UDroneFlightHUDWidget::ApplySignalSnapshot(const FDroneSignalSnapshot& Snapshot)
+{
+	DisplayedSignalSnapshot = Snapshot;
+	const TCHAR* StageText = TEXT("정상");
+	FLinearColor PanelColor(0.02f, 0.07f, 0.10f, 0.84f);
+	switch (Snapshot.Stage)
+	{
+	case EDroneSignalInterferenceStage::Weak:
+		StageText = TEXT("약한 방해");
+		PanelColor = FLinearColor(0.12f, 0.10f, 0.02f, 0.86f);
+		break;
+	case EDroneSignalInterferenceStage::Moderate:
+		StageText = TEXT("영상 불안정");
+		PanelColor = FLinearColor(0.18f, 0.09f, 0.01f, 0.88f);
+		break;
+	case EDroneSignalInterferenceStage::Strong:
+		StageText = TEXT("강한 방해 · 조작 둔화");
+		PanelColor = FLinearColor(0.21f, 0.025f, 0.025f, 0.90f);
+		break;
+	case EDroneSignalInterferenceStage::None:
+	default:
+		break;
+	}
+	SignalDisplayText = FText::FromString(FString::Printf(
+		TEXT("신호 %.0f%%  |  %s"),
+		FMath::Clamp(Snapshot.NormalizedSignalQuality, 0.0f, 1.0f) * 100.0f,
+		StageText));
+	if (SignalValueText)
+	{
+		SignalValueText->SetText(SignalDisplayText);
+	}
+	if (SignalReadoutPanel)
+	{
+		SignalReadoutPanel->SetBrushColor(PanelColor);
+		SignalReadoutPanel->SetVisibility(SignalSource.IsValid()
+			? ESlateVisibility::HitTestInvisible
+			: ESlateVisibility::Collapsed);
+	}
+	ReceiveSignalSnapshotDisplayed(Snapshot);
 }
 
 void UDroneFlightHUDWidget::RefreshHealthDisplay()

@@ -38,9 +38,16 @@ FName GetDroneButtonTextName(const int32 Index)
 
 FText GetControlModeText(const EDroneControlMode Mode)
 {
-	return Mode == EDroneControlMode::AssistedEasy
-		? FText::FromString(TEXT("조작: 쉬운 조작"))
-		: FText::FromString(TEXT("조작: 실제 조작형 (그레이박스)"));
+	switch (Mode)
+	{
+	case EDroneControlMode::ManualRealisticGreybox:
+		return FText::FromString(TEXT("조작: 실제 조작형 (제한 자세)"));
+	case EDroneControlMode::AcroRateRealisticGreybox:
+		return FText::FromString(TEXT("조작: FPV Rate/Acro (그레이박스)"));
+	case EDroneControlMode::AssistedEasy:
+	default:
+		return FText::FromString(TEXT("조작: 쉬운 조작"));
+	}
 }
 
 FText GetHandlingText(const EDroneHandlingPreset Preset)
@@ -145,9 +152,19 @@ bool UDroneSelectionWidget::SelectDrone(const FName DroneId)
 
 void UDroneSelectionWidget::ToggleControlMode()
 {
-	SelectedControlMode = SelectedControlMode == EDroneControlMode::AssistedEasy
-		? EDroneControlMode::ManualRealisticGreybox
-		: EDroneControlMode::AssistedEasy;
+	switch (SelectedControlMode)
+	{
+	case EDroneControlMode::AssistedEasy:
+		SelectedControlMode = EDroneControlMode::ManualRealisticGreybox;
+		break;
+	case EDroneControlMode::ManualRealisticGreybox:
+		SelectedControlMode = EDroneControlMode::AcroRateRealisticGreybox;
+		break;
+	case EDroneControlMode::AcroRateRealisticGreybox:
+	default:
+		SelectedControlMode = EDroneControlMode::AssistedEasy;
+		break;
+	}
 	RefreshControlLabels();
 }
 

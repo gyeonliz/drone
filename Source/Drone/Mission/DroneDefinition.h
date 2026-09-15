@@ -47,6 +47,10 @@ struct DRONE_API FDroneFlightProfile
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Control")
 	EDroneHandlingPreset DefaultHandlingPreset = EDroneHandlingPreset::Balanced;
 
+	/** FPV Rate/Acro 모드에서 사용하는 각속도 곡선과 수직 속도 제한이다. 다른 조작 모드에는 영향이 없다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Control", meta=(ShowOnlyInnerProperties))
+	FDroneAcroRateSettings AcroRateSettings;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Movement", meta=(ClampMin="1.0", ForceUnits="cm/s"))
 	float MaxSpeedCentimetersPerSecond = 1200.0f;
 

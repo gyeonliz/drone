@@ -2,6 +2,34 @@
 
 bool FDroneFlightProfile::ValidateProfile(FString& OutError) const
 {
+	const bool bValidPitchRollRates = FMath::IsFinite(AcroRateSettings.PitchRollCenterSensitivityDegreesPerSecond)
+		&& FMath::IsFinite(AcroRateSettings.MaximumPitchRateDegreesPerSecond)
+		&& FMath::IsFinite(AcroRateSettings.MaximumRollRateDegreesPerSecond)
+		&& AcroRateSettings.PitchRollCenterSensitivityDegreesPerSecond > 0.0f
+		&& AcroRateSettings.MaximumPitchRateDegreesPerSecond >= AcroRateSettings.PitchRollCenterSensitivityDegreesPerSecond
+		&& AcroRateSettings.MaximumRollRateDegreesPerSecond >= AcroRateSettings.PitchRollCenterSensitivityDegreesPerSecond;
+	const bool bValidYawRates = FMath::IsFinite(AcroRateSettings.YawCenterSensitivityDegreesPerSecond)
+		&& FMath::IsFinite(AcroRateSettings.MaximumYawRateDegreesPerSecond)
+		&& AcroRateSettings.YawCenterSensitivityDegreesPerSecond > 0.0f
+		&& AcroRateSettings.MaximumYawRateDegreesPerSecond >= AcroRateSettings.YawCenterSensitivityDegreesPerSecond;
+	if (!bValidPitchRollRates || !bValidYawRates)
+	{
+		OutError = TEXT("Acro 최대 각속도는 0보다 크고 해당 중앙 감도 이상이어야 합니다.");
+		return false;
+	}
+	if (!FMath::IsWithinInclusive(AcroRateSettings.PitchRollExpo, 0.0f, 1.0f)
+		|| !FMath::IsWithinInclusive(AcroRateSettings.YawExpo, 0.0f, 1.0f))
+	{
+		OutError = TEXT("Acro Expo는 0~1 범위여야 합니다.");
+		return false;
+	}
+	if (!FMath::IsFinite(AcroRateSettings.MaximumWorldVerticalSpeedCentimetersPerSecond)
+		|| AcroRateSettings.MaximumWorldVerticalSpeedCentimetersPerSecond <= 0.0f)
+	{
+		OutError = TEXT("Acro 최대 수직 속도는 0보다 커야 합니다.");
+		return false;
+	}
+
 	if (!FMath::IsFinite(MaxSpeedCentimetersPerSecond) || MaxSpeedCentimetersPerSecond <= 0.0f)
 	{
 		OutError = TEXT("최대 속도는 0보다 커야 합니다.");

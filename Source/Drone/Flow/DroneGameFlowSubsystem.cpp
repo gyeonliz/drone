@@ -310,16 +310,49 @@ bool UDroneGameFlowSubsystem::ConsumeMissionStartRequest()
 }
 
 bool UDroneGameFlowSubsystem::CompleteMission(const EDroneMissionOutcome Outcome)
+
+{
+	static const TArray<FName> NoFacts;
+	return CompleteMissionWithStoryFacts(Outcome, NoFacts, NoFacts);
+}
+
+bool UDroneGameFlowSubsystem::CompleteMissionWithStoryFacts(
+	const EDroneMissionOutcome Outcome,
+	const TArray<FName>& GrantedFacts,
+	const TArray<FName>& RemovedFacts)
 {
 	if (Snapshot.State != EDroneGameFlowState::InMission
 		|| Outcome == EDroneMissionOutcome::None)
 	{
 		return Reject(LOCTEXT("MissionCompleteInvalid", "진행 중 Mission에는 Success 또는 Failure 결과가 필요합니다."));
 	}
+	if (Outcome == EDroneMissionOutcome::Success)
+	{
+		for (const FName FactId : RemovedFacts)
+		{
+			Snapshot.StoryFacts.Remove(FactId);
+		}
+		for (const FName FactId : GrantedFacts)
+		{
+			if (!FactId.IsNone())
+			{
+				Snapshot.StoryFacts.AddUnique(FactId);
+			}
+		}
+		Snapshot.StoryFacts.Sort([](const FName Left, const FName Right)
+		{
+			return Left.LexicalLess(Right);
+		});
+	}
 
 	Snapshot.bMissionStartRequested = false;
 	Snapshot.LastMissionOutcome = Outcome;
 	return ChangeState(EDroneGameFlowState::InMission, EDroneGameFlowState::MissionResult);
+}
+
+bool UDroneGameFlowSubsystem::HasStoryFact(const FName FactId) const
+{
+	return !FactId.IsNone() && Snapshot.StoryFacts.Contains(FactId);
 }
 
 bool UDroneGameFlowSubsystem::RequestRetry()

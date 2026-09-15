@@ -110,6 +110,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Flow")
 	bool CompleteMission(EDroneMissionOutcome Outcome);
 
+	/** Director가 성공과 Story Fact 변경을 한 Snapshot 전환으로 확정하는 C++ 경계다. */
+	bool CompleteMissionWithStoryFacts(
+		EDroneMissionOutcome Outcome,
+		const TArray<FName>& GrantedFacts,
+		const TArray<FName>& RemovedFacts);
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flow|Story")
+	bool HasStoryFact(FName FactId) const;
+
 	UFUNCTION(BlueprintCallable, Category="Drone|Flow")
 	bool RequestRetry();
 

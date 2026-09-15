@@ -17,7 +17,7 @@ import unreal
 PREFIX = "DRONE_AUTO_TURRET"
 BLUEPRINT_FOLDER = "/Game/Drone/AI/AutomaticTurrets/Blueprints"
 VEHICLE_BLUEPRINT_FOLDER = "/Game/Drone/Vehicles/Blueprints"
-MAP_PATH = "/Game/Drone/Maps/Lvl_NPCSmartObjectGreybox"
+MAP_PATH = "/Game/Drone/Maps/TestMap/Lvl_NPCSmartObjectGreybox"
 CUBE_PATH = "/Engine/BasicShapes/Cube"
 
 SPECS = (

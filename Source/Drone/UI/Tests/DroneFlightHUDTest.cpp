@@ -1,7 +1,9 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Misc/AutomationTest.h"
+#include "GameFramework/Actor.h"
 #include "Health/DroneHealthComponent.h"
+#include "Signal/DroneSignalComponent.h"
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Tutorial/DroneTrainingLapRecorderComponent.h"
 #include "UI/DroneFlightHUDWidget.h"
@@ -86,6 +88,30 @@ bool FDroneFlightHUDTelemetryBindingTest::RunTest(const FString& Parameters)
 		TestFalse(
 			TEXT("Clearing Health source removes its event binding"),
 			HealthSource->OnHealthChanged.Contains(Widget, FName(TEXT("HandleHealthChanged"))));
+	}
+
+	// 재밍 Source는 선택 Drone의 Signal만 구독한다. 강한 방해 경고와 Source 해제도 Event로 검증한다.
+	UDroneSignalComponent* SignalSource = NewObject<UDroneSignalComponent>();
+	AActor* SignalZone = NewObject<AActor>();
+	TestNotNull(TEXT("Signal source can be created"), SignalSource);
+	TestNotNull(TEXT("Signal zone can be created"), SignalZone);
+	if (SignalSource && SignalZone)
+	{
+		Widget->SetSignalSource(SignalSource);
+		Widget->SetSignalSource(SignalSource);
+		TestTrue(TEXT("HUD binds the selected Signal source once"),
+			SignalSource->OnSignalSnapshotChanged.Contains(Widget, FName(TEXT("HandleSignalSnapshotChanged"))));
+		TestTrue(TEXT("Greybox Signal source accepts strong interference"), SignalSource->SetJammingSource(SignalZone, 0.85f));
+		TestEqual(TEXT("HUD shows strong jamming warning in Korean"),
+			Widget->GetSignalDisplayText().ToString(), FString(TEXT("신호 15%  |  강한 방해 · 조작 둔화")));
+		TestEqual(TEXT("HUD passes video noise intensity to Blueprint"),
+			Widget->GetDisplayedSignalSnapshot().VideoNoiseIntensity, 0.70f);
+		SignalSource->RemoveJammingSource(SignalZone);
+		TestEqual(TEXT("HUD restores normal Signal readout on exit"),
+			Widget->GetSignalDisplayText().ToString(), FString(TEXT("신호 100%  |  정상")));
+		Widget->ClearSignalSource();
+		TestFalse(TEXT("Clearing Signal source removes its HUD binding"),
+			SignalSource->OnSignalSnapshotChanged.Contains(Widget, FName(TEXT("HandleSignalSnapshotChanged"))));
 	}
 
 	// Tutorial 기록 Source는 Gate Event마다 방금 구간과 완료 구간 평균을 한국어로 갱신한다.

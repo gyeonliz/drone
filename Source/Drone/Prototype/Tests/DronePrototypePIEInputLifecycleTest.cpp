@@ -967,19 +967,21 @@ private:
 				return EAcquireResult::Wait;
 			}
 
-			const bool bIsMoveAction = Action == Move;
+			const bool bNeedsAxisReleaseReset = Action == Move
+				|| Action == Yaw
+				|| Action == CameraPitchRate;
 			const bool bIsStartedAction = Action == ToggleView
 				|| Action == PrimaryAbility
 				|| Action == SecondaryAbility;
-			const int32 ExpectedActionBindingCount = bIsMoveAction ? 3 : 1;
+			const int32 ExpectedActionBindingCount = bNeedsAxisReleaseReset ? 3 : 1;
 			const int32 ExpectedTriggeredBindingCount = bIsStartedAction ? 0 : 1;
 			const int32 ExpectedStartedBindingCount = bIsStartedAction ? 1 : 0;
-			const bool bMoveReleaseBindingsAreValid = !bIsMoveAction
+			const bool bAxisReleaseBindingsAreValid = !bNeedsAxisReleaseReset
 				|| (CompletedBindingCount == 1 && CanceledBindingCount == 1);
 			if (ActionBindingCount != ExpectedActionBindingCount
 				|| TriggeredBindingCount != ExpectedTriggeredBindingCount
 				|| StartedBindingCount != ExpectedStartedBindingCount
-				|| !bMoveReleaseBindingsAreValid
+				|| !bAxisReleaseBindingsAreValid
 				|| !bAllBindingsOwnedByPawn)
 			{
 				OutReason = FString::Printf(
@@ -993,8 +995,8 @@ private:
 					ExpectedActionBindingCount,
 					ExpectedStartedBindingCount,
 					ExpectedTriggeredBindingCount,
-					bIsMoveAction ? 1 : 0,
-					bIsMoveAction ? 1 : 0);
+					bNeedsAxisReleaseReset ? 1 : 0,
+					bNeedsAxisReleaseReset ? 1 : 0);
 				return EAcquireResult::Fatal;
 			}
 		}

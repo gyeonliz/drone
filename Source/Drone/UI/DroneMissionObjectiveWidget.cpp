@@ -300,6 +300,14 @@ void UDroneMissionObjectiveWidget::ApplySnapshot(const FDroneMissionRuntimeSnaps
 			FText::AsNumber(Snapshot.Objectives.Num()),
 			FText::AsNumber(Objective.CurrentProgress),
 			FText::AsNumber(Objective.RequiredProgress));
+		if (Objective.TimeLimitSeconds > 0.0f)
+		{
+			// 남은 시간 실시간 표현은 BP에서 Director getter를 사용할 수 있다. 기본 HUD는 규칙의 제한값만 표시한다.
+			ProgressDisplayText = FText::Format(
+				FText::FromString(TEXT("{0}  |  제한 {1}초")),
+				ProgressDisplayText,
+				FText::AsNumber(FMath::CeilToInt(Objective.TimeLimitSeconds)));
+		}
 	}
 	else if (Snapshot.State == EDroneMissionRuntimeState::Finished)
 	{

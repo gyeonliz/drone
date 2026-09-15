@@ -3,11 +3,13 @@
 #include "Blueprint/UserWidget.h"
 #include "CoreMinimal.h"
 #include "Telemetry/DroneTelemetryTypes.h"
+#include "Signal/DroneSignalTypes.h"
 #include "Tutorial/DroneTrainingRecordTypes.h"
 #include "DroneFlightHUDWidget.generated.h"
 
 class UBorder;
 class UDroneHealthComponent;
+class UDroneSignalComponent;
 class UDroneTelemetryComponent;
 class UDroneTrainingLapRecorderComponent;
 class UTextBlock;
@@ -72,6 +74,23 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|HUD|Health")
 	FText GetHealthDisplayText() const { return HealthDisplayText; }
 
+	/** 신호 Source의 Event만 받는다. 체력/Telemetry Source와 별도로 Pawn 교체 때 정리한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|HUD|Signal")
+	void SetSignalSource(UDroneSignalComponent* InSignalSource);
+
+	UFUNCTION(BlueprintCallable, Category="Drone|HUD|Signal")
+	void ClearSignalSource();
+
+	UFUNCTION(BlueprintPure, Category="Drone|HUD|Signal")
+	FDroneSignalSnapshot GetDisplayedSignalSnapshot() const { return DisplayedSignalSnapshot; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|HUD|Signal")
+	FText GetSignalDisplayText() const { return SignalDisplayText; }
+
+	/** WBP에서 Noise Material의 불투명도 등을 조절할 때 사용한다. Native HUD는 신호 경고 Text를 제공한다. */
+	UFUNCTION(BlueprintImplementableEvent, Category="Drone|HUD|Signal")
+	void ReceiveSignalSnapshotDisplayed(FDroneSignalSnapshot Snapshot);
+
 	/** Tutorial Course의 구간 기록 Event를 연결해 Tick 없이 결과 패널을 갱신한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|HUD|Training")
 	void SetTrainingRecordSource(UDroneTrainingLapRecorderComponent* InTrainingRecordSource);
@@ -132,6 +151,9 @@ private:
 	void HandleHealthChanged(float PreviousHealth, float CurrentHealth, float MaxHealth, float AppliedDamage);
 
 	UFUNCTION()
+	void HandleSignalSnapshotChanged(FDroneSignalSnapshot Snapshot);
+
+	UFUNCTION()
 	void HandleTrainingLapStarted();
 
 	UFUNCTION()
@@ -155,6 +177,8 @@ private:
 	/** Designer 구조를 깨지 않고 우측 상단에 체력 표시를 동적으로 추가한다. */
 	void BuildHealthLayout();
 	void RefreshHealthDisplay();
+	void BuildSignalLayout();
+	void ApplySignalSnapshot(const FDroneSignalSnapshot& Snapshot);
 
 	/** Snapshot 값 자체를 다시 계산하지 않고 표시 문자열만 만든다. */
 	void ApplySnapshot(const FDroneTelemetrySnapshot& Snapshot);
@@ -178,6 +202,8 @@ private:
 
 	TWeakObjectPtr<UDroneHealthComponent> HealthSource;
 
+	TWeakObjectPtr<UDroneSignalComponent> SignalSource;
+
 	TWeakObjectPtr<UDroneTrainingLapRecorderComponent> TrainingRecordSource;
 
 	/** 테스트와 Blueprint 디버깅에서 마지막으로 받은 원본 Snapshot을 확인한다. */
@@ -198,6 +224,12 @@ private:
 
 	UPROPERTY(Transient)
 	FText HealthDisplayText;
+
+	UPROPERTY(Transient)
+	FDroneSignalSnapshot DisplayedSignalSnapshot;
+
+	UPROPERTY(Transient)
+	FText SignalDisplayText;
 
 	UPROPERTY(Transient)
 	TArray<FDroneTrainingSegmentRecord> DisplayedTrainingSegments;
@@ -260,6 +292,12 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> HealthValueText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBorder> SignalReadoutPanel;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> SignalValueText;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UBorder> TrainingReadoutPanel;

@@ -47,12 +47,14 @@ def make_profile(
     bank_roll,
     tilt_pitch,
     start_in_first_person,
+    acro_rate_settings,
     highlights,
 ):
     # EditDefaultsOnly UStruct 필드는 생성자 인수로 완성한 뒤 Data Asset에 통째로 대입한다.
     return unreal.DroneFlightProfile(
         default_control_mode=default_control_mode,
         default_handling_preset=default_handling_preset,
+        acro_rate_settings=acro_rate_settings,
         max_speed_centimeters_per_second=max_speed,
         acceleration_centimeters_per_second_squared=acceleration,
         deceleration_centimeters_per_second_squared=deceleration,
@@ -63,6 +65,29 @@ def make_profile(
         start_in_first_person_view=start_in_first_person,
         max_health=100.0,
         feature_highlights=highlights,
+    )
+
+
+def make_acro_rates(
+    pitch_roll_center=180.0,
+    maximum_pitch=650.0,
+    maximum_roll=650.0,
+    yaw_center=140.0,
+    maximum_yaw=400.0,
+    pitch_roll_expo=0.30,
+    yaw_expo=0.20,
+    maximum_vertical_speed=900.0,
+):
+    """Betaflight Actual Rates 의미를 쓰는 프로젝트 조정값을 만든다."""
+    return unreal.DroneAcroRateSettings(
+        pitch_roll_center_sensitivity_degrees_per_second=pitch_roll_center,
+        maximum_pitch_rate_degrees_per_second=maximum_pitch,
+        maximum_roll_rate_degrees_per_second=maximum_roll,
+        yaw_center_sensitivity_degrees_per_second=yaw_center,
+        maximum_yaw_rate_degrees_per_second=maximum_yaw,
+        pitch_roll_expo=pitch_roll_expo,
+        yaw_expo=yaw_expo,
+        maximum_world_vertical_speed_centimeters_per_second=maximum_vertical_speed,
     )
 
 
@@ -125,6 +150,7 @@ configure_definition(
         18.0,
         14.0,
         False,
+        make_acro_rates(),
         ["쉬운/실제 조작형 전환 가능", "안정/균형/고기동 전환 가능", "거리/화각/시야 유지형 스캔"],
     ),
 )
@@ -139,17 +165,18 @@ configure_definition(
     [unreal.DroneGameplayCapability.IMPACT_DETONATION],
     [unreal.DroneGameplayCapability.IMPACT_DETONATION],
     make_profile(
-        unreal.DroneControlMode.ASSISTED_EASY,
+        unreal.DroneControlMode.ACRO_RATE_REALISTIC_GREYBOX,
         unreal.DroneHandlingPreset.AGILE,
-        1350.0,
-        3000.0,
-        3200.0,
+        2160.0,
+        4200.0,
+        1750.0,
         9.0,
         105.0,
         24.0,
         20.0,
         True,
-        ["FPV 기본 시점", "고기동 기본 프리셋", "Arm 뒤 속도 조건 충돌 자폭"],
+        make_acro_rates(),
+        ["FPV Rate/Acro 기본 조작", "고기동 27 m/s 기준 속도", "Arm 뒤 속도 조건 충돌 자폭"],
     ),
 )
 
@@ -173,6 +200,7 @@ configure_definition(
         14.0,
         11.0,
         False,
+        make_acro_rates(),
         ["3인칭 이륙 검증", "안정 기본 프리셋", "탑뷰/1회 Payload/목표 접촉"],
     ),
 )

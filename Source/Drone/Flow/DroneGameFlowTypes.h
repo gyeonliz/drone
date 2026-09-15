@@ -57,8 +57,11 @@ struct FDroneGameFlowSnapshot
 	UPROPERTY(BlueprintReadOnly, Category="Drone Flow")
 	EDroneMissionOutcome LastMissionOutcome = EDroneMissionOutcome::None;
 
+	/** Mission 성공이 남긴 분기 상태. Map 전환·로비 복귀·재도전 뒤에도 GameInstance 동안 유지한다. */
+	UPROPERTY(BlueprintReadOnly, Category="Drone Flow")
+	TArray<FName> StoryFacts;
+
 	/** Front-end 계층이 한 번 소비할 수 있는 로비 복귀 요청이다. */
 	UPROPERTY(BlueprintReadOnly, Category="Drone Flow")
 	bool bLobbyReturnRequested = false;
 };
-

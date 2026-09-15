@@ -25,6 +25,8 @@
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "Telemetry/DroneTelemetryComponent.h"
+#include "Signal/DroneSignalComponent.h"
+#include "Weather/DroneWeatherResponseComponent.h"
 
 ADronePrototypePawn::ADronePrototypePawn()
 {
@@ -81,6 +83,15 @@ ADronePrototypePawn::ADronePrototypePawn()
 	ManualRealisticGreyboxTuning.bUseLocalAltitudeAxis = true;
 	ManualRealisticGreyboxTuning.bTiltCollisionRoot = true;
 
+	// Rate/Acro는 자세 제한·자동 수평 복귀를 사용하지 않는다. UFloatingPawnMovement 기반이라
+	// 감속을 완전히 끄지는 않되 관성이 남도록 보조 감속과 TurningBoost를 크게 낮춘다.
+	AcroRateRealisticGreyboxTuning.AccelerationMultiplier = 1.15f;
+	AcroRateRealisticGreyboxTuning.DecelerationMultiplier = 0.08f;
+	AcroRateRealisticGreyboxTuning.TurningBoostMultiplier = 0.0f;
+	AcroRateRealisticGreyboxTuning.YawRateMultiplier = 1.0f;
+	AcroRateRealisticGreyboxTuning.bUseLocalAltitudeAxis = true;
+	AcroRateRealisticGreyboxTuning.bTiltCollisionRoot = true;
+
 	StableHandlingTuning.MaxSpeedMultiplier = 0.80f;
 	StableHandlingTuning.AccelerationMultiplier = 0.75f;
 	StableHandlingTuning.YawRateMultiplier = 0.75f;
@@ -94,6 +105,8 @@ ADronePrototypePawn::ADronePrototypePawn()
 	// HUD가 Pawn을 직접 계산하지 않도록 공용 데이터 공급 Component를 기본 부착한다.
 	TelemetryComponent = CreateDefaultSubobject<UDroneTelemetryComponent>(TEXT("TelemetryComponent"));
 	HealthComponent = CreateDefaultSubobject<UDroneHealthComponent>(TEXT("HealthComponent"));
+	SignalComponent = CreateDefaultSubobject<UDroneSignalComponent>(TEXT("SignalComponent"));
+	WeatherResponseComponent = CreateDefaultSubobject<UDroneWeatherResponseComponent>(TEXT("WeatherResponseComponent"));
 	ReconScanComponent = CreateDefaultSubobject<UDroneReconScanComponent>(TEXT("ReconScanComponent"));
 	ImpactDetonationComponent = CreateDefaultSubobject<UDroneImpactDetonationComponent>(TEXT("ImpactDetonationComponent"));
 	PayloadDropComponent = CreateDefaultSubobject<UDronePayloadDropComponent>(TEXT("PayloadDropComponent"));
@@ -137,6 +150,7 @@ bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definitio
 	BaseYawRateDegreesPerSecond = Profile.YawRateDegreesPerSecond;
 	BaseMaximumVisualBankRollDegrees = Profile.MaximumVisualBankRollDegrees;
 	BaseMaximumVisualTiltPitchDegrees = Profile.MaximumVisualTiltPitchDegrees;
+	ActiveAcroRateSettings = Profile.AcroRateSettings;
 	CurrentControlMode = Profile.DefaultControlMode;
 	CurrentHandlingPreset = Profile.DefaultHandlingPreset;
 	ApplyRuntimeFlightTuning();
@@ -151,6 +165,8 @@ bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definitio
 		Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::ImpactDetonation));
 	PayloadDropComponent->ConfigureFeatureEnabled(
 		Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::PayloadDrop));
+	SignalComponent->ConfigureJammingImmunity(
+		Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::JammingImmunity));
 	AppliedDroneId = Definition->DroneId;
 
 	UE_LOG(
@@ -221,6 +237,13 @@ bool ADronePrototypePawn::TriggerSecondaryRoleAbility()
 void ADronePrototypePawn::SetControlMode(const EDroneControlMode NewControlMode)
 {
 	const bool bChanged = CurrentControlMode != NewControlMode;
+	if (bChanged)
+	{
+		// 서로 의미가 다른 Action 축의 이전 프레임 값을 새 모드로 넘기지 않는다.
+		VisualTiltForwardInput = 0.0f;
+		VisualBankLateralInput = 0.0f;
+		AcroYawInput = 0.0f;
+	}
 	CurrentControlMode = NewControlMode;
 	ApplyRuntimeFlightTuning();
 	if (bChanged)
@@ -231,9 +254,19 @@ void ADronePrototypePawn::SetControlMode(const EDroneControlMode NewControlMode)
 
 void ADronePrototypePawn::ToggleControlMode()
 {
-	SetControlMode(CurrentControlMode == EDroneControlMode::AssistedEasy
-		? EDroneControlMode::ManualRealisticGreybox
-		: EDroneControlMode::AssistedEasy);
+	switch (CurrentControlMode)
+	{
+	case EDroneControlMode::AssistedEasy:
+		SetControlMode(EDroneControlMode::ManualRealisticGreybox);
+		break;
+	case EDroneControlMode::ManualRealisticGreybox:
+		SetControlMode(EDroneControlMode::AcroRateRealisticGreybox);
+		break;
+	case EDroneControlMode::AcroRateRealisticGreybox:
+	default:
+		SetControlMode(EDroneControlMode::AssistedEasy);
+		break;
+	}
 }
 
 void ADronePrototypePawn::SetHandlingPreset(const EDroneHandlingPreset NewHandlingPreset)
@@ -271,9 +304,7 @@ void ADronePrototypePawn::ApplyRuntimeFlightTuning()
 		return;
 	}
 
-	const FDroneControlModeTuning& ControlTuning = CurrentControlMode == EDroneControlMode::ManualRealisticGreybox
-		? ManualRealisticGreyboxTuning
-		: AssistedEasyTuning;
+	const FDroneControlModeTuning& ControlTuning = ResolveCurrentControlModeTuning();
 
 	const FDroneHandlingPresetTuning* HandlingTuning = &BalancedHandlingTuning;
 	switch (CurrentHandlingPreset)
@@ -291,11 +322,13 @@ void ADronePrototypePawn::ApplyRuntimeFlightTuning()
 
 	// 항상 Data Asset의 원본값에서 다시 계산하므로 모드를 반복 전환해도 배율이 누적되지 않는다.
 	PrototypeMovementComponent->MaxSpeed =
-		BaseMaxSpeedCentimetersPerSecond * HandlingTuning->MaxSpeedMultiplier;
+		BaseMaxSpeedCentimetersPerSecond * HandlingTuning->MaxSpeedMultiplier
+		* (SignalComponent ? SignalComponent->GetSnapshot().ControlResponseMultiplier : 1.0f);
 	PrototypeMovementComponent->Acceleration =
 		BaseAccelerationCentimetersPerSecondSquared
 		* ControlTuning.AccelerationMultiplier
-		* HandlingTuning->AccelerationMultiplier;
+		* HandlingTuning->AccelerationMultiplier
+		* (SignalComponent ? SignalComponent->GetSnapshot().ControlResponseMultiplier : 1.0f);
 	PrototypeMovementComponent->Deceleration =
 		BaseDecelerationCentimetersPerSecondSquared * ControlTuning.DecelerationMultiplier;
 	PrototypeMovementComponent->TurningBoost =
@@ -310,6 +343,20 @@ void ADronePrototypePawn::ApplyRuntimeFlightTuning()
 		BaseMaximumVisualTiltPitchDegrees * HandlingTuning->AttitudeLimitMultiplier;
 }
 
+const FDroneControlModeTuning& ADronePrototypePawn::ResolveCurrentControlModeTuning() const
+{
+	switch (CurrentControlMode)
+	{
+	case EDroneControlMode::ManualRealisticGreybox:
+		return ManualRealisticGreyboxTuning;
+	case EDroneControlMode::AcroRateRealisticGreybox:
+		return AcroRateRealisticGreyboxTuning;
+	case EDroneControlMode::AssistedEasy:
+	default:
+		return AssistedEasyTuning;
+	}
+}
+
 void ADronePrototypePawn::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
@@ -321,6 +368,12 @@ void ADronePrototypePawn::OnConstruction(const FTransform& Transform)
 void ADronePrototypePawn::BeginPlay()
 {
 	Super::BeginPlay();
+	if (SignalComponent)
+	{
+		SignalComponent->OnSignalSnapshotChanged.AddUniqueDynamic(
+			this, &ADronePrototypePawn::HandleSignalSnapshotChanged);
+		ApplyRuntimeFlightTuning();
+	}
 	RefreshVisualTiltAttachments();
 	RefreshRotorVisualComponents();
 	EnsureHealthFeedbackBindings();
@@ -354,6 +407,7 @@ void ADronePrototypePawn::Tick(const float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	UpdateDamageShake(DeltaSeconds);
 	UpdateControlAttitude(DeltaSeconds);
+	LimitAcroVerticalSpeed();
 	UpdateVisualBank(DeltaSeconds);
 	UpdateRotorVisuals(DeltaSeconds);
 }
@@ -387,6 +441,11 @@ UPawnMovementComponent* ADronePrototypePawn::GetMovementComponent() const
 void ADronePrototypePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	RemovePrototypeMappingContext();
+	if (SignalComponent)
+	{
+		SignalComponent->OnSignalSnapshotChanged.RemoveDynamic(
+			this, &ADronePrototypePawn::HandleSignalSnapshotChanged);
+	}
 	ResetDamageShakePresentation();
 	if (HealthComponent)
 	{
@@ -394,6 +453,12 @@ void ADronePrototypePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		HealthComponent->OnDeath.RemoveDynamic(this, &ADronePrototypePawn::HandleDeath);
 	}
 	Super::EndPlay(EndPlayReason);
+}
+
+void ADronePrototypePawn::HandleSignalSnapshotChanged(FDroneSignalSnapshot /*NewSnapshot*/)
+{
+	// 신호 변화 때 원본 Flight Profile에서 재계산한다. 반복 진입·이탈 시 감속 배율이 누적되지 않는다.
+	ApplyRuntimeFlightTuning();
 }
 
 void ADronePrototypePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -423,6 +488,8 @@ void ADronePrototypePawn::SetupPlayerInputComponent(UInputComponent* PlayerInput
 	if (YawAction)
 	{
 		EnhancedInputComponent->BindAction(YawAction, ETriggerEvent::Triggered, this, &ADronePrototypePawn::ChangeYaw);
+		EnhancedInputComponent->BindAction(YawAction, ETriggerEvent::Completed, this, &ADronePrototypePawn::ResetYawInput);
+		EnhancedInputComponent->BindAction(YawAction, ETriggerEvent::Canceled, this, &ADronePrototypePawn::ResetYawInput);
 	}
 
 	if (LookAction)
@@ -437,6 +504,16 @@ void ADronePrototypePawn::SetupPlayerInputComponent(UInputComponent* PlayerInput
 			ETriggerEvent::Triggered,
 			this,
 			&ADronePrototypePawn::ChangeCameraPitch);
+		EnhancedInputComponent->BindAction(
+			CameraPitchRateAction,
+			ETriggerEvent::Completed,
+			this,
+			&ADronePrototypePawn::ResetCameraPitchInput);
+		EnhancedInputComponent->BindAction(
+			CameraPitchRateAction,
+			ETriggerEvent::Canceled,
+			this,
+			&ADronePrototypePawn::ResetCameraPitchInput);
 	}
 
 	if (ToggleViewAction)
@@ -560,8 +637,16 @@ void ADronePrototypePawn::Move(const FInputActionValue& Value)
 		return;
 	}
 
-	// Y=전후, X=좌우이며 Actor의 현재 Yaw를 기준으로 이동한다.
 	const FVector2D MovementValue = Value.Get<FVector2D>();
+	if (CurrentControlMode == EDroneControlMode::AcroRateRealisticGreybox)
+	{
+		// 기존 IA_Move의 Gamepad Left Stick을 Acro에서만 Mode 2 Throttle/Yaw로 재해석한다.
+		AcroYawInput = FMath::Clamp(MovementValue.X, -1.0f, 1.0f);
+		AddMovementInput(GetActorUpVector(), MovementValue.Y);
+		return;
+	}
+
+	// 쉬운/제한 자세에서는 Y=전후, X=좌우이며 Actor 축을 기준으로 직접 이동한다.
 	SetVisualTiltInputGreybox(MovementValue.Y, MovementValue.X);
 	AddMovementInput(GetActorForwardVector(), MovementValue.Y);
 	AddMovementInput(GetActorRightVector(), MovementValue.X);
@@ -569,6 +654,11 @@ void ADronePrototypePawn::Move(const FInputActionValue& Value)
 
 void ADronePrototypePawn::ResetMoveVisualInput(const FInputActionValue&)
 {
+	if (CurrentControlMode == EDroneControlMode::AcroRateRealisticGreybox)
+	{
+		AcroYawInput = 0.0f;
+		return;
+	}
 	SetVisualTiltInputGreybox(0.0f, 0.0f);
 }
 
@@ -583,6 +673,53 @@ void ADronePrototypePawn::SetVisualTiltInputGreybox(
 {
 	VisualTiltForwardInput = FMath::Clamp(NormalizedForwardInput, -1.0f, 1.0f);
 	VisualBankLateralInput = FMath::Clamp(NormalizedLateralInput, -1.0f, 1.0f);
+}
+
+void ADronePrototypePawn::SetAcroRateInputGreybox(
+	const float PitchInput,
+	const float RollInput,
+	const float YawInput)
+{
+	VisualTiltForwardInput = FMath::Clamp(PitchInput, -1.0f, 1.0f);
+	VisualBankLateralInput = FMath::Clamp(RollInput, -1.0f, 1.0f);
+	AcroYawInput = FMath::Clamp(YawInput, -1.0f, 1.0f);
+}
+
+float ADronePrototypePawn::CalculateActualRateDegreesPerSecond(
+	const float NormalizedStickInput,
+	const float CenterSensitivityDegreesPerSecond,
+	const float MaximumRateDegreesPerSecond,
+	const float Expo)
+{
+	const float Stick = FMath::Clamp(NormalizedStickInput, -1.0f, 1.0f);
+	const float AbsoluteStick = FMath::Abs(Stick);
+	const float SafeCenterSensitivity = FMath::Max(0.0f, CenterSensitivityDegreesPerSecond);
+	const float SafeMaximumRate = FMath::Max(SafeCenterSensitivity, MaximumRateDegreesPerSecond);
+	const float SafeExpo = FMath::Clamp(Expo, 0.0f, 1.0f);
+	const float ExpoCurve = AbsoluteStick
+		* (FMath::Pow(AbsoluteStick, 5.0f) * SafeExpo + AbsoluteStick * (1.0f - SafeExpo));
+	const float AdditionalRate = SafeMaximumRate - SafeCenterSensitivity;
+	return Stick * SafeCenterSensitivity + FMath::Sign(Stick) * AdditionalRate * ExpoCurve;
+}
+
+FRotator ADronePrototypePawn::GetCurrentAcroBodyRateSetpointDegreesPerSecond() const
+{
+	const float PitchRate = -CalculateActualRateDegreesPerSecond(
+		VisualTiltForwardInput,
+		ActiveAcroRateSettings.PitchRollCenterSensitivityDegreesPerSecond,
+		ActiveAcroRateSettings.MaximumPitchRateDegreesPerSecond,
+		ActiveAcroRateSettings.PitchRollExpo);
+	const float RollRate = CalculateActualRateDegreesPerSecond(
+		VisualBankLateralInput,
+		ActiveAcroRateSettings.PitchRollCenterSensitivityDegreesPerSecond,
+		ActiveAcroRateSettings.MaximumRollRateDegreesPerSecond,
+		ActiveAcroRateSettings.PitchRollExpo);
+	const float YawRate = CalculateActualRateDegreesPerSecond(
+		AcroYawInput,
+		ActiveAcroRateSettings.YawCenterSensitivityDegreesPerSecond,
+		ActiveAcroRateSettings.MaximumYawRateDegreesPerSecond,
+		ActiveAcroRateSettings.YawExpo);
+	return FRotator(PitchRate, YawRate, RollRate);
 }
 
 void ADronePrototypePawn::SetFirstPersonViewEnabled(const bool bEnabled)
@@ -776,9 +913,20 @@ void ADronePrototypePawn::UpdateRotorVisuals(const float DeltaSeconds)
 
 void ADronePrototypePawn::UpdateControlAttitude(const float DeltaSeconds)
 {
-	const FDroneControlModeTuning& ControlTuning = CurrentControlMode == EDroneControlMode::ManualRealisticGreybox
-		? ManualRealisticGreyboxTuning
-		: AssistedEasyTuning;
+	if (CurrentControlMode == EDroneControlMode::AcroRateRealisticGreybox)
+	{
+		// Rate/Acro의 핵심 계약: 각 Stick은 Body 각속도이며 Stick 중앙은 현재 자세를 유지한다.
+		// Local Rotation을 누적하므로 제한 자세 모드와 달리 90도 이상의 Roll/Loop가 가능하다.
+		const FRotator BodyRate = GetCurrentAcroBodyRateSetpointDegreesPerSecond();
+		const float SafeDeltaSeconds = FMath::Max(0.0f, DeltaSeconds);
+		AddActorLocalRotation(FRotator(
+			BodyRate.Pitch * SafeDeltaSeconds,
+			BodyRate.Yaw * SafeDeltaSeconds,
+			BodyRate.Roll * SafeDeltaSeconds));
+		return;
+	}
+
+	const FDroneControlModeTuning& ControlTuning = ResolveCurrentControlModeTuning();
 	const bool bUseRootAttitude = ControlTuning.bTiltCollisionRoot;
 
 	// 쉬운 조작에서는 Root를 자동으로 수평 복귀시킨다. 실제 조작형에서는 이동 입력이
@@ -809,6 +957,22 @@ void ADronePrototypePawn::UpdateControlAttitude(const float DeltaSeconds)
 	SetActorRotation(ActorRotation);
 }
 
+void ADronePrototypePawn::LimitAcroVerticalSpeed()
+{
+	if (CurrentControlMode != EDroneControlMode::AcroRateRealisticGreybox || !PrototypeMovementComponent)
+	{
+		return;
+	}
+
+	// 수평 최대 속도는 Movement MaxSpeed, 공개 FPV 기준 상승/하강은 World Z 성분이 담당한다.
+	FVector Velocity = PrototypeMovementComponent->Velocity;
+	Velocity.Z = FMath::Clamp(
+		Velocity.Z,
+		-ActiveAcroRateSettings.MaximumWorldVerticalSpeedCentimetersPerSecond,
+		ActiveAcroRateSettings.MaximumWorldVerticalSpeedCentimetersPerSecond);
+	PrototypeMovementComponent->Velocity = Velocity;
+}
+
 void ADronePrototypePawn::UpdateVisualBank(const float DeltaSeconds)
 {
 	if (!VisualTiltPivot)
@@ -816,9 +980,7 @@ void ADronePrototypePawn::UpdateVisualBank(const float DeltaSeconds)
 		return;
 	}
 
-	const FDroneControlModeTuning& ControlTuning = CurrentControlMode == EDroneControlMode::ManualRealisticGreybox
-		? ManualRealisticGreyboxTuning
-		: AssistedEasyTuning;
+	const FDroneControlModeTuning& ControlTuning = ResolveCurrentControlModeTuning();
 	// 실제 조작형은 Root가 이미 기울어지므로 외형 Pivot에는 중복 기울기를 적용하지 않는다.
 	const float TargetPitch = ControlTuning.bTiltCollisionRoot
 		? 0.0f
@@ -959,9 +1121,7 @@ void ADronePrototypePawn::ChangeAltitude(const FInputActionValue& Value)
 		return;
 	}
 
-	const FDroneControlModeTuning& ControlTuning = CurrentControlMode == EDroneControlMode::ManualRealisticGreybox
-		? ManualRealisticGreyboxTuning
-		: AssistedEasyTuning;
+	const FDroneControlModeTuning& ControlTuning = ResolveCurrentControlModeTuning();
 	// 쉬운 조작은 World Up, 실제 조작형은 현재 기체의 Local Up을 사용한다.
 	const FVector AltitudeAxis = ControlTuning.bUseLocalAltitudeAxis
 		? GetActorUpVector()
@@ -976,6 +1136,13 @@ void ADronePrototypePawn::ChangeYaw(const FInputActionValue& Value)
 		return;
 	}
 
+	if (CurrentControlMode == EDroneControlMode::AcroRateRealisticGreybox)
+	{
+		// 기존 IA_Yaw의 Gamepad Right X를 Acro에서만 Mode 2 Roll Rate로 재해석한다.
+		VisualBankLateralInput = FMath::Clamp(Value.Get<float>(), -1.0f, 1.0f);
+		return;
+	}
+
 	const UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -985,6 +1152,14 @@ void ADronePrototypePawn::ChangeYaw(const FInputActionValue& Value)
 	// 키·Gamepad 축은 프레임률에 무관하도록 초당 회전량에 DeltaSeconds를 곱한다.
 	const float YawDelta = Value.Get<float>() * PrototypeYawRateDegreesPerSecond * World->GetDeltaSeconds();
 	AddActorLocalRotation(FRotator(0.0f, YawDelta, 0.0f));
+}
+
+void ADronePrototypePawn::ResetYawInput(const FInputActionValue&)
+{
+	if (CurrentControlMode == EDroneControlMode::AcroRateRealisticGreybox)
+	{
+		VisualBankLateralInput = 0.0f;
+	}
 }
 
 void ADronePrototypePawn::Look(const FInputActionValue& Value)
@@ -1007,6 +1182,13 @@ void ADronePrototypePawn::ChangeCameraPitch(const FInputActionValue& Value)
 		return;
 	}
 
+	if (CurrentControlMode == EDroneControlMode::AcroRateRealisticGreybox)
+	{
+		// 기존 Gamepad Right Y를 Acro에서만 Mode 2 Pitch Rate로 재해석한다.
+		VisualTiltForwardInput = FMath::Clamp(Value.Get<float>(), -1.0f, 1.0f);
+		return;
+	}
+
 	const UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -1016,6 +1198,14 @@ void ADronePrototypePawn::ChangeCameraPitch(const FInputActionValue& Value)
 	const float PitchDelta =
 		Value.Get<float>() * PrototypeGamepadPitchRateDegreesPerSecond * World->GetDeltaSeconds();
 	AdjustCameraPitch(PitchDelta);
+}
+
+void ADronePrototypePawn::ResetCameraPitchInput(const FInputActionValue&)
+{
+	if (CurrentControlMode == EDroneControlMode::AcroRateRealisticGreybox)
+	{
+		VisualTiltForwardInput = 0.0f;
+	}
 }
 
 void ADronePrototypePawn::AdjustCameraPitch(const float PitchDeltaDegrees)

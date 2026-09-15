@@ -497,7 +497,22 @@ bool UDroneNPCWeaponComponent::TryFireShotgunProjectileVolley()
 			CenterDirection,
 			ShotgunSpreadHalfAngleDegrees);
 
-		LastShotgunPelletTraceEnds.Add(SpawnLocation + PelletDirection * ShotgunRange);
+		const FVector ProjectileEnd = SpawnLocation + PelletDirection * ShotgunRange;
+		LastShotgunPelletTraceEnds.Add(ProjectileEnd);
+		// 기본 Projectile 모드에서도 Pellet 원뿔을 바로 판독할 수 있게 예상 비행선을 표시한다.
+		// 실제 충돌·피해는 아래에서 생성되는 이동 Projectile이 그대로 담당한다.
+		if (bDrawShotgunDebugTrace)
+		{
+			DrawDebugLine(
+				World,
+				SpawnLocation,
+				ProjectileEnd,
+				FColor::Cyan,
+				false,
+				FMath::Max(0.05f, ShotgunCooldownSeconds * 0.8f),
+				0,
+				1.0f);
+		}
 		if (SpawnProjectile(
 			ProjectileClass,
 			EDroneNPCProjectileSource::Shotgun,

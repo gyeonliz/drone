@@ -117,7 +117,7 @@ bool ADroneMissionPlayerController::StartSelectedDrone(
 		|| Flow->GetSnapshot().State != EDroneGameFlowState::DroneSelect
 		|| !Definition
 		|| !SelectedMission
-		|| SelectedMission->InitialObjectives.IsEmpty()
+		|| !SelectedMission->HasUsableObjectives()
 		|| IsValid(SpawnedDrone)
 		|| SuccessfulDroneSpawnCount > 0)
 	{
