@@ -44,6 +44,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Role Test|Presentation", meta=(MultiLine="true"))
 	FText InstructionMessage;
 
+	/** 기본 Font에서 깨질 수 있는 World Text는 숨긴다. 필요할 때 BP/배치 Instance에서만 켠다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Role Test|Presentation")
+	bool bShowInstructionText = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Role Test|Presentation")
 	FColor InstructionColor = FColor::White;
 

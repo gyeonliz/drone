@@ -85,6 +85,7 @@ void ADroneNPCAIController::RefreshDroneSightTuning()
 void ADroneNPCAIController::Tick(const float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	UpdateMGTurretReassignmentRetry(DeltaSeconds);
 	// StateTree의 MG 진입 Task는 한 번만 호출될 수 있다. 이미 시선 보간을 위해
 	// 동작하는 Controller Tick에서 실제 점유자 한 명의 포탑 조준만 계속 갱신한다.
 	if (ResponseState == EDroneNPCAIResponseState::UseMGTurret)
@@ -117,6 +118,7 @@ void ADroneNPCAIController::OnPossess(APawn* InPawn)
 	MGTurretArrivalCount = 0;
 	MGTurretUseCount = 0;
 	ActiveMGTurretStation.Reset();
+	ClearMGTurretReassignmentRetry();
 	CoverClaimCount = 0;
 	CoverUseCount = 0;
 	SmoothedDroneLookRotation = FRotator::ZeroRotator;
@@ -178,6 +180,7 @@ void ADroneNPCAIController::OnUnPossess()
 {
 	ClearDroneGameplayFocus();
 	CancelPendingDroneLost();
+	ClearMGTurretReassignmentRetry();
 	StopPersonalWeaponFire();
 	StopMovement();
 	StopMGTurretOperation();
@@ -339,6 +342,7 @@ void ADroneNPCAIController::HandlePossessedPawnDeath()
 
 	// Slot을 먼저 Free로 돌려놓은 뒤 대기 중인 다른 MG 가능 NPC에게 재시도 Event를 보낸다.
 	CancelPendingDroneLost();
+	ClearMGTurretReassignmentRetry();
 	ClearDroneGameplayFocus();
 	StopPersonalWeaponFire();
 	StopMovement();
@@ -376,11 +380,7 @@ void ADroneNPCAIController::HandlePossessedPawnDeath()
 			continue;
 		}
 
-		OtherController->StopPersonalWeaponFire();
-		if (UStateTreeAIComponent* OtherStateTree = OtherController->GetStateTreeAIComponent())
-		{
-			OtherStateTree->SendStateTreeEvent(DroneAITags::Event_DroneDetected);
-		}
+		OtherController->BeginMGTurretReassignmentRetry();
 	}
 }
 
@@ -396,6 +396,7 @@ void ADroneNPCAIController::HandleDetectedDroneDestroyed(AActor* DestroyedDrone)
 	// DroneLost와 달리 파괴된 표적의 마지막 위치를 Search하지 않는다. 전투 자원을
 	// 즉시 정리한 뒤 기존 DroneLost 전환을 사용해 Search 실패 -> Patrol로 복귀시킨다.
 	CancelPendingDroneLost();
+	ClearMGTurretReassignmentRetry();
 	ClearDroneGameplayFocus();
 	StopPersonalWeaponFire();
 	StopMovement();
@@ -915,6 +916,7 @@ void ADroneNPCAIController::ConfirmPendingDroneLost()
 	// 성공 Sight Callback은 이 Timer보다 먼저/나중 어느 순서로 오더라도
 	// HandleTargetPerceptionUpdated에서 Timer를 취소하므로 여기서는 보류된 대상만 확정한다.
 	CancelPendingDroneLost();
+	ClearMGTurretReassignmentRetry();
 	LastKnownDroneLocation = LostActor->GetActorLocation();
 	bHasLastKnownDroneLocation = true;
 	StopPersonalWeaponFire();
@@ -1095,6 +1097,71 @@ void ADroneNPCAIController::UpdateDroneGaze(const float DeltaSeconds)
 void ADroneNPCAIController::ClearDroneGameplayFocus()
 {
 	ClearFocus(EAIFocusPriority::Gameplay);
+}
+
+void ADroneNPCAIController::BeginMGTurretReassignmentRetry()
+{
+	if (ResponseState == EDroneNPCAIResponseState::Dead
+		|| !CanUseMGTurret()
+		|| !HasDetectedDrone())
+	{
+		return;
+	}
+
+	bMGTurretReassignmentRetryPending = true;
+	MGTurretReassignmentRetryElapsedSeconds = 0.0f;
+	MGTurretReassignmentRetryRemainingSeconds = 0.0f;
+	StopPersonalWeaponFire();
+}
+
+void ADroneNPCAIController::UpdateMGTurretReassignmentRetry(const float DeltaSeconds)
+{
+	if (!bMGTurretReassignmentRetryPending)
+	{
+		return;
+	}
+
+	MGTurretReassignmentRetryElapsedSeconds += FMath::Max(0.0f, DeltaSeconds);
+	if (ResponseState == EDroneNPCAIResponseState::UseMGTurret)
+	{
+		ClearMGTurretReassignmentRetry();
+		return;
+	}
+	if (ResponseState == EDroneNPCAIResponseState::Dead
+		|| !CanUseMGTurret()
+		|| !HasDetectedDrone()
+		|| MGTurretReassignmentRetryElapsedSeconds > FMath::Max(0.1f, MGTurretReassignmentRetryWindowSeconds))
+	{
+		ClearMGTurretReassignmentRetry();
+		return;
+	}
+
+	MGTurretReassignmentRetryRemainingSeconds -= FMath::Max(0.0f, DeltaSeconds);
+	if (MGTurretReassignmentRetryRemainingSeconds > 0.0f)
+	{
+		return;
+	}
+
+	const bool bCanInterruptForRetry = ResponseState == EDroneNPCAIResponseState::DroneDetected
+		|| ResponseState == EDroneNPCAIResponseState::MoveToCover
+		|| ResponseState == EDroneNPCAIResponseState::UseCover;
+	if (!bCanInterruptForRetry || !StateTreeAIComponent || !StateTreeAIComponent->IsRunning())
+	{
+		return;
+	}
+
+	// Event 처리와 Claim/Move 실패는 같은 프레임에 끝날 수 있다. 다음 Tick부터 간격을
+	// 두고 다시 Event를 보내 Slot 해제 직후 한 번의 경합으로 재점유가 영구 중단되지 않게 한다.
+	StopPersonalWeaponFire();
+	StateTreeAIComponent->SendStateTreeEvent(DroneAITags::Event_DroneDetected);
+	MGTurretReassignmentRetryRemainingSeconds = FMath::Max(0.1f, MGTurretReassignmentRetryIntervalSeconds);
+}
+
+void ADroneNPCAIController::ClearMGTurretReassignmentRetry()
+{
+	bMGTurretReassignmentRetryPending = false;
+	MGTurretReassignmentRetryElapsedSeconds = 0.0f;
+	MGTurretReassignmentRetryRemainingSeconds = 0.0f;
 }
 
 UDroneNPCProfileComponent* ADroneNPCAIController::GetPossessedProfile() const

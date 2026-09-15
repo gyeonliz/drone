@@ -14,7 +14,7 @@ class UStaticMesh;
 class UStaticMeshComponent;
 
 /**
- * Tutorial의 원형 Greybox Visual과 판정용 Box Trigger를 분리한 Gate Actor.
+ * Tutorial의 사각 Greybox Frame과 판정용 Box Trigger를 분리한 Gate Actor.
  *
  * 이 Actor는 Overlap의 진입/이탈 위치를 Sequence Component에 전달할 뿐,
  * 현재 Gate가 무엇인지 직접 결정하지 않는다. Visual은 항상 비충돌이고
@@ -44,7 +44,11 @@ public:
 	UFUNCTION(BlueprintPure, Category="Tutorial|Gate")
 	FVector GetForwardDirectionWorld() const;
 
-	/** Box 모서리가 아니라 실제 원형 통과 영역을 판정할 때 사용하는 반지름이다. */
+	/** 화면 Frame과 Box Trigger가 공유하는 정사각형 통과 영역의 반쪽 크기다. */
+	UFUNCTION(BlueprintPure, Category="Tutorial|Gate")
+	float GetTriggerApertureHalfSizeCentimeters() const { return FMath::Max(TriggerHalfSizeCentimeters, 1.0f); }
+
+	/** 기존 Blueprint 호출 호환용 별칭. 신규 로직은 HalfSize 명칭을 사용한다. */
 	UFUNCTION(BlueprintPure, Category="Tutorial|Gate")
 	float GetTriggerApertureRadiusCentimeters() const { return FMath::Max(TriggerHalfSizeCentimeters, 1.0f); }
 
@@ -94,7 +98,7 @@ private:
 	/** BP 직렬화 뒤에도 Visual과 Trigger의 서로 다른 Collision 계약을 복원한다. */
 	void ApplyComponentRules();
 
-	/** Engine Cube 조각을 원 둘레에 배치해 구매 에셋 없는 Greybox Ring을 만든다. */
+	/** Engine Cube 네 변을 Box Trigger 안쪽 경계에 맞춰 구매 에셋 없는 Greybox Frame을 만든다. */
 	void RefreshRingVisual();
 
 	/** 상태별 색을 프로젝트 Material의 Color Parameter에 적용한다. */
@@ -119,11 +123,11 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USceneComponent> GateRoot;
 
-	/** 실제 판정 전용. 화면 Ring과 별개이며 Pawn만 Overlap한다. */
+	/** 실제 판정 전용. 화면 Frame과 별개이며 Pawn만 Overlap한다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UBoxComponent> GateTrigger;
 
-	/** 원을 근사하는 비충돌 Cube 조각들이다. */
+	/** 기존 Blueprint 직렬화 호환을 위해 16개를 보존하며 앞의 4개만 Frame으로 표시한다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Components", meta=(AllowPrivateAccess="true"))
 	TArray<TObjectPtr<UStaticMeshComponent>> RingVisualSegments;
 
@@ -139,16 +143,19 @@ private:
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category="Tutorial|Gate|Definition", meta=(ClampMin="0.0", Units="cm", AllowPrivateAccess="true"))
 	float SegmentDistance = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Visual", meta=(ClampMin="50.0", Units="cm", AllowPrivateAccess="true"))
+	/** 이전 16각형 Ring 설정 호환용이며 현재 사각 Frame 크기에는 사용하지 않는다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Legacy", meta=(ClampMin="50.0", Units="cm", DisplayName="Legacy 원형 반지름 (미사용)", AllowPrivateAccess="true"))
 	float GateRadiusCentimeters = 220.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Visual", meta=(ClampMin="2.0", Units="cm", AllowPrivateAccess="true"))
+	/** Frame 네 변의 굵기와 앞뒤 깊이. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Visual", meta=(ClampMin="2.0", Units="cm", DisplayName="프레임 굵기", AllowPrivateAccess="true"))
 	float RingThicknessCentimeters = 24.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Trigger", meta=(ClampMin="1.0", Units="cm", AllowPrivateAccess="true"))
 	float TriggerHalfDepthCentimeters = 60.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Trigger", meta=(ClampMin="1.0", Units="cm", AllowPrivateAccess="true"))
+	/** Frame 안쪽과 실제 통과 판정이 공유하는 정사각형 반쪽 크기. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Trigger", meta=(ClampMin="1.0", Units="cm", DisplayName="통과 영역 반쪽 크기", AllowPrivateAccess="true"))
 	float TriggerHalfSizeCentimeters = 175.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Gate|Visual", meta=(AllowPrivateAccess="true"))

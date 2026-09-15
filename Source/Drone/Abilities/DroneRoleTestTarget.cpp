@@ -35,6 +35,7 @@ ADroneRoleTestTarget::ADroneRoleTestTarget()
 	InstructionText->SetRelativeRotation(FRotator(0.0f, 0.0f, 0.0f));
 	InstructionText->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	InstructionText->SetCanEverAffectNavigation(false);
+	InstructionText->SetVisibility(false, true);
 	RefreshPresentation();
 }
 
@@ -53,6 +54,7 @@ void ADroneRoleTestTarget::RefreshPresentation()
 	InstructionText->SetWorldSize(FMath::Max(1.0f, InstructionWorldSize));
 	InstructionText->SetRelativeLocation(InstructionRelativeLocation);
 	InstructionText->SetRelativeRotation(InstructionRelativeRotation);
+	InstructionText->SetVisibility(bShowInstructionText, true);
 }
 
 void ADroneRoleTestTarget::ConfigurePresentation(
@@ -70,7 +72,7 @@ ADroneReconRoleTestTarget::ADroneReconRoleTestTarget()
 {
 	ReconTargetComponent = CreateDefaultSubobject<UDroneReconScanTargetComponent>(TEXT("ReconTargetComponent"));
 	ConfigurePresentation(
-		FText::FromString(TEXT("정찰 스캔 표적\n좌클릭/RB 유지 · 우클릭/LB 취소")),
+		FText::FromString(TEXT("SCAN")),
 		FColor(30, 225, 255),
 		FVector(1.2f, 1.2f, 2.0f));
 }
@@ -79,7 +81,7 @@ ADroneImpactRoleTestTarget::ADroneImpactRoleTestTarget()
 {
 	HealthComponent = CreateDefaultSubobject<UDroneHealthComponent>(TEXT("HealthComponent"));
 	ConfigurePresentation(
-		FText::FromString(TEXT("FPV 자폭 충돌 표적\n좌클릭/RB 무장 후 고속 충돌")),
+		FText::FromString(TEXT("IMPACT")),
 		FColor(255, 55, 40),
 		FVector(2.0f, 2.0f, 2.0f));
 }
@@ -88,7 +90,7 @@ ADronePayloadRoleTestTarget::ADronePayloadRoleTestTarget()
 {
 	PayloadTargetComponent = CreateDefaultSubobject<UDronePayloadTargetComponent>(TEXT("PayloadTargetComponent"));
 	ConfigurePresentation(
-		FText::FromString(TEXT("드랍 투하지점\n우클릭/LB 탑뷰 · 좌클릭/RB 투하")),
+		FText::FromString(TEXT("DROP")),
 		FColor(255, 205, 30),
 		FVector(2.5f, 2.5f, 0.15f));
 }

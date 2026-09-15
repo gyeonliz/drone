@@ -265,8 +265,7 @@ bool UDroneTrainingGateSequenceComponent::IsForwardTraversal(
 		return false;
 	}
 
-	// Box는 Overlap 수집용이므로 모서리가 원 바깥으로 튀어나온다. 실제 승인 시에는
-	// 이동 선분과 Gate 평면의 교차점이 원형 aperture 안에 있는지 다시 검사한다.
+	// 이동 선분과 Gate 평면의 교차점을 구한 뒤 화면 Frame과 같은 정사각형 aperture를 검사한다.
 	const float CrossingAlpha = -EntrySide / SideDelta;
 	if (!FMath::IsWithinInclusive(CrossingAlpha, 0.0f, 1.0f))
 	{
@@ -274,10 +273,9 @@ bool UDroneTrainingGateSequenceComponent::IsForwardTraversal(
 	}
 
 	const FVector CrossingPoint = FMath::Lerp(EntryWorldLocation, ExitWorldLocation, CrossingAlpha);
-	// Actor Scale을 포함한 역변환 뒤 로컬 YZ 반경을 비교해야 화면 Ring/Trigger와 판정 크기가 같다.
+	// Actor Scale을 포함한 역변환 뒤 로컬 YZ 범위를 비교해야 화면 Frame/Trigger와 판정 크기가 같다.
 	const FVector CrossingPointLocal = Gate->GetActorTransform().InverseTransformPosition(CrossingPoint);
-	const float LocalRadialDistanceSquared = FMath::Square(CrossingPointLocal.Y)
-		+ FMath::Square(CrossingPointLocal.Z);
-	return LocalRadialDistanceSquared
-		<= FMath::Square(Gate->GetTriggerApertureRadiusCentimeters());
+	const float ApertureHalfSize = Gate->GetTriggerApertureHalfSizeCentimeters();
+	return FMath::Abs(CrossingPointLocal.Y) <= ApertureHalfSize
+		&& FMath::Abs(CrossingPointLocal.Z) <= ApertureHalfSize;
 }

@@ -29,7 +29,7 @@ bool FDroneTrainingGateSequenceTest::RunTest(const FString& Parameters)
 	{
 		TestFalse(TEXT("Training Gate avoids per-frame ticking"), GateDefaults->PrimaryActorTick.bCanEverTick);
 		TestEqual(
-			TEXT("Training Gate builds the fixed Greybox ring segment count"),
+			TEXT("Training Gate preserves the serialized Greybox segment pool"),
 			GateDefaults->GetRingVisualSegmentCount(),
 			16);
 	}
@@ -120,7 +120,8 @@ bool FDroneTrainingGateSequenceTest::RunTest(const FString& Parameters)
 
 		TInlineComponentArray<UStaticMeshComponent*> VisualSegments;
 		Gate->GetComponents(VisualSegments);
-		TestEqual(TEXT("Gate owns sixteen visible Ring segments"), VisualSegments.Num(), 16);
+		TestEqual(TEXT("Gate preserves sixteen serialized visual segments"), VisualSegments.Num(), 16);
+		TArray<UStaticMeshComponent*> VisibleFrameSegments;
 		for (UStaticMeshComponent* Segment : VisualSegments)
 		{
 			if (!Segment)
@@ -128,12 +129,55 @@ bool FDroneTrainingGateSequenceTest::RunTest(const FString& Parameters)
 				continue;
 			}
 
-			TestNotNull(TEXT("Ring segment has a Greybox Mesh"), Segment->GetStaticMesh().Get());
-			TestEqual(TEXT("Ring segment has no collision"), Segment->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
-			TestFalse(TEXT("Ring segment creates no overlaps"), Segment->GetGenerateOverlapEvents());
-			TestFalse(TEXT("Ring segment does not simulate physics"), Segment->IsSimulatingPhysics());
-			TestFalse(TEXT("Ring segment cannot affect Navigation"), Segment->CanEverAffectNavigation());
-			TestTrue(TEXT("Ring segment is visible in game"), Segment->IsVisible() && !Segment->bHiddenInGame);
+			TestEqual(TEXT("Gate visual segment has no collision"), Segment->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+			TestFalse(TEXT("Gate visual segment creates no overlaps"), Segment->GetGenerateOverlapEvents());
+			TestFalse(TEXT("Gate visual segment does not simulate physics"), Segment->IsSimulatingPhysics());
+			TestFalse(TEXT("Gate visual segment cannot affect Navigation"), Segment->CanEverAffectNavigation());
+			if (Segment->IsVisible() && !Segment->bHiddenInGame)
+			{
+				TestNotNull(TEXT("Visible Gate frame segment has a Greybox Mesh"), Segment->GetStaticMesh().Get());
+				VisibleFrameSegments.Add(Segment);
+			}
+		}
+
+		TestEqual(TEXT("Gate renders one clean four-sided frame"), VisibleFrameSegments.Num(), 4);
+		if (Trigger && VisibleFrameSegments.Num() == 4)
+		{
+			const FVector TriggerExtent = Trigger->GetUnscaledBoxExtent();
+			int32 HorizontalBarCount = 0;
+			int32 VerticalBarCount = 0;
+			for (const UStaticMeshComponent* Segment : VisibleFrameSegments)
+			{
+				TestTrue(
+					TEXT("Frame bars stay axis-aligned with the recognition Box"),
+					Segment->GetRelativeRotation().IsNearlyZero());
+
+				const FVector HalfSize = Segment->GetRelativeScale3D().GetAbs()
+					* (100.0f * 0.5f);
+				const FVector Position = Segment->GetRelativeLocation();
+				if (HalfSize.Y > HalfSize.Z)
+				{
+					++HorizontalBarCount;
+					TestTrue(
+						TEXT("Horizontal frame inner edge matches the Box aperture"),
+						FMath::IsNearlyEqual(FMath::Abs(Position.Z) - HalfSize.Z, TriggerExtent.Z, 0.1f));
+					TestTrue(
+						TEXT("Horizontal frame covers both Box corners"),
+						HalfSize.Y >= TriggerExtent.Y + HalfSize.Z - 0.1f);
+				}
+				else
+				{
+					++VerticalBarCount;
+					TestTrue(
+						TEXT("Vertical frame inner edge matches the Box aperture"),
+						FMath::IsNearlyEqual(FMath::Abs(Position.Y) - HalfSize.Y, TriggerExtent.Y, 0.1f));
+					TestTrue(
+						TEXT("Vertical frame spans the full Box opening"),
+						HalfSize.Z >= TriggerExtent.Z - 0.1f);
+				}
+			}
+			TestEqual(TEXT("Gate frame has two horizontal bars"), HorizontalBarCount, 2);
+			TestEqual(TEXT("Gate frame has two vertical bars"), VerticalBarCount, 2);
 		}
 	}
 
@@ -211,15 +255,25 @@ bool FDroneTrainingGateSequenceTest::RunTest(const FString& Parameters)
 		TEXT("Zero-distance traversal is rejected"),
 		Sequence->TryAcceptTraversal(Gates[0], Drone, Gates[0]->GetActorLocation(), Gates[0]->GetActorLocation()),
 		EDroneTrainingGatePassResult::WrongDirection);
-	const FVector OutsideCircularAperture =
+	const FVector InsideSquareCorner =
 		Gates[0]->GetActorRightVector() * 170.0f + Gates[0]->GetActorUpVector() * 170.0f;
 	TestEqual(
-		TEXT("Box corner outside the circular aperture is rejected"),
+		TEXT("A point inside the visible square corner is accepted"),
 		Sequence->TryAcceptTraversal(
 			Gates[0],
 			Drone,
-			ForwardEntry(Gates[0]) + OutsideCircularAperture,
-			ForwardExit(Gates[0]) + OutsideCircularAperture),
+			ForwardEntry(Gates[0]) + InsideSquareCorner,
+			ForwardExit(Gates[0]) + InsideSquareCorner),
+		EDroneTrainingGatePassResult::Accepted);
+	Sequence->ResetSequence();
+	const FVector OutsideSquareAperture = Gates[0]->GetActorRightVector() * 190.0f;
+	TestEqual(
+		TEXT("A point outside the visible square aperture is rejected"),
+		Sequence->TryAcceptTraversal(
+			Gates[0],
+			Drone,
+			ForwardEntry(Gates[0]) + OutsideSquareAperture,
+			ForwardExit(Gates[0]) + OutsideSquareAperture),
 		EDroneTrainingGatePassResult::WrongDirection);
 	TestEqual(TEXT("Rejected attempts do not advance"), Sequence->GetAcceptedGateCount(), 0);
 
@@ -227,7 +281,7 @@ bool FDroneTrainingGateSequenceTest::RunTest(const FString& Parameters)
 	Gates[0]->SetActorScale3D(FVector(2.0f));
 	const FVector ScaledInsideAperture = Gates[0]->GetActorRightVector() * 250.0f;
 	TestEqual(
-		TEXT("Scaled Gate accepts a point inside its scaled circular aperture"),
+		TEXT("Scaled Gate accepts a point inside its scaled square aperture"),
 		Sequence->TryAcceptTraversal(
 			Gates[0],
 			Drone,
@@ -301,8 +355,12 @@ bool FDroneTrainingGateSequenceTest::RunTest(const FString& Parameters)
 	TraverseActualTrigger(Drone, Gates[0], false, FVector::ZeroVector);
 	TestEqual(TEXT("Actual reverse Gate overlap does not advance"), Sequence->GetAcceptedGateCount(), 0);
 
-	TraverseActualTrigger(Drone, Gates[0], true, OutsideCircularAperture);
-	TestEqual(TEXT("Actual Box corner overlap outside the Ring does not advance"), Sequence->GetAcceptedGateCount(), 0);
+	TraverseActualTrigger(Drone, Gates[0], true, InsideSquareCorner);
+	TestEqual(TEXT("Actual overlap inside the visible square corner advances"), Sequence->GetAcceptedGateCount(), 1);
+	Sequence->ResetSequence();
+
+	TraverseActualTrigger(Drone, Gates[0], true, OutsideSquareAperture);
+	TestEqual(TEXT("Actual overlap outside the visible square does not advance"), Sequence->GetAcceptedGateCount(), 0);
 
 	// BeginOverlap 뒤 Reset하면 이전 시도의 EndOverlap이 새 시도로 승인되면 안 된다.
 	Drone->SetActorLocation(ForwardEntry(Gates[0]), false);

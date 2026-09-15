@@ -60,6 +60,9 @@ EStateTreeRunStatus FDroneStateTreeMoveToMGTurretTask::EnterState(
 	}
 
 	InstanceData.Destination = SlotTransform.GetLocation();
+	InstanceData.LastObservedLocation = Controller->GetPawn()->GetActorLocation();
+	InstanceData.StalledSeconds = 0.0f;
+	InstanceData.RepathAttempts = 0;
 	const EPathFollowingRequestResult::Type MoveResult = Controller->MoveToLocation(
 		InstanceData.Destination,
 		FMath::Max(10.0f, InstanceData.AcceptanceRadius),
@@ -88,7 +91,7 @@ EStateTreeRunStatus FDroneStateTreeMoveToMGTurretTask::Tick(
 	FStateTreeExecutionContext& Context,
 	const float DeltaTime) const
 {
-	const FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	ADroneNPCAIController* Controller = GetMGTurretDroneController(Context);
 	if (!Controller || !Controller->HasDetectedDrone())
 	{
@@ -105,19 +108,82 @@ EStateTreeRunStatus FDroneStateTreeMoveToMGTurretTask::Tick(
 		Controller->AbortMGTurretResponse();
 		return EStateTreeRunStatus::Failed;
 	}
-	if (Controller->GetMoveStatus() == EPathFollowingStatus::Moving
-		|| Controller->GetMoveStatus() == EPathFollowingStatus::Paused)
-	{
-		return EStateTreeRunStatus::Running;
-	}
-
 	const APawn* Pawn = Controller->GetPawn();
-	const float ReachRadius = FMath::Max(10.0f, InstanceData.AcceptanceRadius) + 100.0f;
-	if (Pawn && FVector::DistSquared2D(Pawn->GetActorLocation(), InstanceData.Destination) <= FMath::Square(ReachRadius))
+	const float OperatorSnapRadius = FMath::Max(
+		FMath::Max(10.0f, InstanceData.AcceptanceRadius),
+		InstanceData.OperatorSnapRadius);
+	// 포탑 주변 Mesh/엄폐물 모서리에서 PathFollowing이 Moving으로 남아도 충분히 가까우면
+	// 정확한 Operator Anchor로 한 번 정렬한다. 최종 위치와 회전은 Controller가 보장한다.
+	if (Pawn && FVector::DistSquared2D(Pawn->GetActorLocation(), InstanceData.Destination)
+		<= FMath::Square(OperatorSnapRadius))
 	{
 		return Controller->CompleteMGTurretMove()
 			? EStateTreeRunStatus::Succeeded
 			: EStateTreeRunStatus::Failed;
+	}
+	if (Controller->GetMoveStatus() == EPathFollowingStatus::Moving
+		|| Controller->GetMoveStatus() == EPathFollowingStatus::Paused)
+	{
+		if (!Pawn)
+		{
+			Controller->AbortMGTurretResponse();
+			return EStateTreeRunStatus::Failed;
+		}
+
+		const float MinimumProgressDistance = FMath::Max(1.0f, InstanceData.MinimumProgressDistance);
+		if (FVector::DistSquared2D(Pawn->GetActorLocation(), InstanceData.LastObservedLocation)
+			>= FMath::Square(MinimumProgressDistance))
+		{
+			InstanceData.LastObservedLocation = Pawn->GetActorLocation();
+			InstanceData.StalledSeconds = 0.0f;
+			return EStateTreeRunStatus::Running;
+		}
+
+		InstanceData.StalledSeconds += FMath::Max(0.0f, DeltaTime);
+		if (InstanceData.StalledSeconds < FMath::Max(0.25f, InstanceData.StallTimeoutSeconds))
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		if (InstanceData.RepathAttempts >= FMath::Clamp(InstanceData.MaxRepathAttempts, 0, 5))
+		{
+			Controller->AbortMGTurretResponse();
+			return EStateTreeRunStatus::Failed;
+		}
+
+		FTransform CurrentOperatorTransform;
+		if (!Controller->GetReservedMGTurretOperatorTransform(CurrentOperatorTransform))
+		{
+			Controller->AbortMGTurretResponse();
+			return EStateTreeRunStatus::Failed;
+		}
+
+		++InstanceData.RepathAttempts;
+		InstanceData.Destination = CurrentOperatorTransform.GetLocation();
+		InstanceData.LastObservedLocation = Pawn->GetActorLocation();
+		InstanceData.StalledSeconds = 0.0f;
+		Controller->StopMovement();
+		const EPathFollowingRequestResult::Type RetryResult = Controller->MoveToLocation(
+			InstanceData.Destination,
+			FMath::Max(10.0f, InstanceData.AcceptanceRadius),
+			true,
+			true,
+			true,
+			true,
+			nullptr,
+			false);
+		if (RetryResult == EPathFollowingRequestResult::AlreadyAtGoal)
+		{
+			return Controller->CompleteMGTurretMove()
+				? EStateTreeRunStatus::Succeeded
+				: EStateTreeRunStatus::Failed;
+		}
+		if (RetryResult != EPathFollowingRequestResult::RequestSuccessful)
+		{
+			Controller->AbortMGTurretResponse();
+			return EStateTreeRunStatus::Failed;
+		}
+		return EStateTreeRunStatus::Running;
 	}
 
 	Controller->AbortMGTurretResponse();

@@ -316,6 +316,14 @@ protected:
 	/** 남아 있을 수 있는 Gameplay Focus를 정리한다. 머리 시선은 감지/Search 상태에서 별도로 계산한다. */
 	void ClearDroneGameplayFocus();
 
+	/** 기존 MG 사망 직후 다른 적이 빈 포탑을 일정 시간 재검색하도록 예약한다. */
+	void BeginMGTurretReassignmentRetry();
+
+	/** 단발 StateTree Event가 이동 실패와 겹쳐도 재점유 기회를 잃지 않게 제한 시간 동안 재시도한다. */
+	void UpdateMGTurretReassignmentRetry(float DeltaSeconds);
+
+	void ClearMGTurretReassignmentRetry();
+
 	UDroneNPCProfileComponent* GetPossessedProfile() const;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Components")
@@ -431,6 +439,23 @@ protected:
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|MG")
 	TWeakObjectPtr<ADroneSmartObjectStation> ActiveMGTurretStation;
+
+	/** MG 운용자 사망 뒤 다른 적이 빈 Slot을 다시 확인하는 간격이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|MG|Reassignment", meta=(ClampMin="0.1", ForceUnits="s"))
+	float MGTurretReassignmentRetryIntervalSeconds = 0.75f;
+
+	/** 이동 실패·일시적인 StateTree 전환 경합을 허용하되 무한 재시도를 막는 시간이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|MG|Reassignment", meta=(ClampMin="0.1", ForceUnits="s"))
+	float MGTurretReassignmentRetryWindowSeconds = 15.0f;
+
+	UPROPERTY(Transient)
+	bool bMGTurretReassignmentRetryPending = false;
+
+	UPROPERTY(Transient)
+	float MGTurretReassignmentRetryElapsedSeconds = 0.0f;
+
+	UPROPERTY(Transient)
+	float MGTurretReassignmentRetryRemainingSeconds = 0.0f;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Cover")
 	int32 CoverClaimCount = 0;

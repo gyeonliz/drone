@@ -96,6 +96,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|Drop|Payload|Pickup")
 	bool bStartsAsCarryablePickup = false;
 
+	/** 기본 Font에서 깨질 수 있는 World Text는 숨긴다. 필요할 때 Payload BP에서만 켠다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|Drop|Payload|Pickup")
+	bool bShowPickupLabel = false;
+
 	/** 일반 1회용 Payload의 자동 제거 시간이다. Carryable로 활성화된 Actor에는 적용하지 않는다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|Drop|Payload", meta=(ClampMin="0.1", ForceUnits="s"))
 	float DroppedPayloadLifetimeSeconds = 15.0f;

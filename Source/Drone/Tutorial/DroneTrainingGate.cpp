@@ -13,7 +13,8 @@
 
 namespace DroneTrainingGate
 {
-constexpr int32 RingSegmentCount = 16;
+constexpr int32 SerializedVisualSegmentCount = 16;
+constexpr int32 VisibleFrameSegmentCount = 4;
 constexpr float EngineCubeSizeCentimeters = 100.0f;
 }
 
@@ -49,8 +50,8 @@ ADroneTrainingGate::ADroneTrainingGate()
 		RingMaterial = GuideMaterialFinder.Object;
 	}
 
-	RingVisualSegments.Reserve(DroneTrainingGate::RingSegmentCount);
-	for (int32 SegmentIndex = 0; SegmentIndex < DroneTrainingGate::RingSegmentCount; ++SegmentIndex)
+	RingVisualSegments.Reserve(DroneTrainingGate::SerializedVisualSegmentCount);
+	for (int32 SegmentIndex = 0; SegmentIndex < DroneTrainingGate::SerializedVisualSegmentCount; ++SegmentIndex)
 	{
 		const FName SegmentName(*FString::Printf(TEXT("RingVisualSegment_%02d"), SegmentIndex));
 		UStaticMeshComponent* Segment = CreateDefaultSubobject<UStaticMeshComponent>(SegmentName);
@@ -174,13 +175,28 @@ void ADroneTrainingGate::ApplyComponentRules()
 
 void ADroneTrainingGate::RefreshRingVisual()
 {
-	const float Radius = FMath::Max(GateRadiusCentimeters, 50.0f);
+	const float ApertureHalfSize = GetTriggerApertureHalfSizeCentimeters();
 	const float Thickness = FMath::Max(RingThicknessCentimeters, 2.0f);
-	const float ChordLength = 2.0f * Radius * FMath::Sin(PI / DroneTrainingGate::RingSegmentCount);
-	const FVector SegmentScale(
-		ChordLength / DroneTrainingGate::EngineCubeSizeCentimeters,
-		Thickness / DroneTrainingGate::EngineCubeSizeCentimeters,
-		Thickness / DroneTrainingGate::EngineCubeSizeCentimeters);
+	const float OuterHalfSize = ApertureHalfSize + Thickness;
+	const float BarCenterOffset = ApertureHalfSize + Thickness * 0.5f;
+	const float CubeSize = DroneTrainingGate::EngineCubeSizeCentimeters;
+
+	const FVector HorizontalBarScale(
+		Thickness / CubeSize,
+		(OuterHalfSize * 2.0f) / CubeSize,
+		Thickness / CubeSize);
+	const FVector VerticalBarScale(
+		Thickness / CubeSize,
+		Thickness / CubeSize,
+		(ApertureHalfSize * 2.0f) / CubeSize);
+
+	const FVector FramePositions[DroneTrainingGate::VisibleFrameSegmentCount] =
+	{
+		FVector(0.0f, 0.0f, BarCenterOffset),
+		FVector(0.0f, 0.0f, -BarCenterOffset),
+		FVector(0.0f, BarCenterOffset, 0.0f),
+		FVector(0.0f, -BarCenterOffset, 0.0f)
+	};
 
 	for (int32 SegmentIndex = 0; SegmentIndex < RingVisualSegments.Num(); ++SegmentIndex)
 	{
@@ -190,16 +206,22 @@ void ADroneTrainingGate::RefreshRingVisual()
 			continue;
 		}
 
-		const float Angle = (2.0f * PI * SegmentIndex) / DroneTrainingGate::RingSegmentCount;
-		const FVector RingPosition(0.0f, Radius * FMath::Cos(Angle), Radius * FMath::Sin(Angle));
-		const FVector RingTangent(0.0f, -FMath::Sin(Angle), FMath::Cos(Angle));
-		const FQuat RingRotation = FQuat::FindBetweenNormals(FVector::ForwardVector, RingTangent);
-
 		Segment->SetStaticMesh(RingSegmentMesh);
-		Segment->SetRelativeLocationAndRotation(RingPosition, RingRotation);
-		Segment->SetRelativeScale3D(SegmentScale);
-		Segment->SetVisibility(true);
-		Segment->SetHiddenInGame(false);
+		if (SegmentIndex < DroneTrainingGate::VisibleFrameSegmentCount)
+		{
+			Segment->SetRelativeLocationAndRotation(
+				FramePositions[SegmentIndex],
+				FRotator::ZeroRotator);
+			Segment->SetRelativeScale3D(SegmentIndex < 2 ? HorizontalBarScale : VerticalBarScale);
+			Segment->SetVisibility(true);
+			Segment->SetHiddenInGame(false);
+		}
+		else
+		{
+			Segment->SetRelativeTransform(FTransform::Identity);
+			Segment->SetVisibility(false);
+			Segment->SetHiddenInGame(true);
+		}
 	}
 
 	if (GateTrigger)

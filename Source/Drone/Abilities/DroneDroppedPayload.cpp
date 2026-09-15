@@ -44,7 +44,7 @@ ADroneDroppedPayload::ADroneDroppedPayload()
 	PickupLabel->SetRelativeLocation(FVector(0.0f, 0.0f, 65.0f));
 	PickupLabel->SetHorizontalAlignment(EHTA_Center);
 	PickupLabel->SetWorldSize(28.0f);
-	PickupLabel->SetText(FText::FromString(TEXT("드랍 화물\n가까이서 좌클릭/RB 적재")));
+	PickupLabel->SetText(FText::FromString(TEXT("PICKUP")));
 	PickupLabel->SetTextRenderColor(FColor(255, 205, 30));
 	PickupLabel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	PickupLabel->SetCanEverAffectNavigation(false);
@@ -94,7 +94,7 @@ void ADroneDroppedPayload::ActivateCarryablePickup()
 	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	SetActorHiddenInGame(false);
 	PayloadVisual->SetVisibility(true, true);
-	PickupLabel->SetVisibility(true, true);
+	PickupLabel->SetVisibility(bShowPickupLabel, true);
 	SetLifeSpan(0.0f);
 }
 
@@ -189,7 +189,7 @@ bool ADroneDroppedPayload::ResolveImpactGreybox(AActor* HitActor)
 		bAvailableForPickup = true;
 		bCarried = false;
 		CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-		PickupLabel->SetVisibility(true, true);
+		PickupLabel->SetVisibility(bShowPickupLabel, true);
 		SetLifeSpan(0.0f);
 		return true;
 	}

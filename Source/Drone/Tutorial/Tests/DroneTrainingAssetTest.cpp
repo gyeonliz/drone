@@ -331,7 +331,8 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 
 		TInlineComponentArray<UStaticMeshComponent*> RingSegments;
 		Gate->GetComponents(RingSegments);
-		TestEqual(TEXT("Placed Gate has sixteen Ring segments"), RingSegments.Num(), 16);
+		TestEqual(TEXT("Placed Gate preserves sixteen serialized visual segments"), RingSegments.Num(), 16);
+		int32 VisibleFrameSegmentCount = 0;
 		for (UStaticMeshComponent* Segment : RingSegments)
 		{
 			if (!Segment)
@@ -339,12 +340,16 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 				continue;
 			}
 
-			TestNotNull(TEXT("Placed Ring segment has a Mesh"), Segment->GetStaticMesh().Get());
-			TestEqual(TEXT("Placed Ring segment has no collision"), Segment->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
-			TestFalse(TEXT("Placed Ring segment creates no overlaps"), Segment->GetGenerateOverlapEvents());
-			TestFalse(TEXT("Placed Ring segment cannot affect Navigation"), Segment->CanEverAffectNavigation());
-			TestTrue(TEXT("Placed Ring segment is visible"), Segment->IsVisible() && !Segment->bHiddenInGame);
+			TestEqual(TEXT("Placed Gate visual segment has no collision"), Segment->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+			TestFalse(TEXT("Placed Gate visual segment creates no overlaps"), Segment->GetGenerateOverlapEvents());
+			TestFalse(TEXT("Placed Gate visual segment cannot affect Navigation"), Segment->CanEverAffectNavigation());
+			if (Segment->IsVisible() && !Segment->bHiddenInGame)
+			{
+				TestNotNull(TEXT("Placed visible frame segment has a Mesh"), Segment->GetStaticMesh().Get());
+				++VisibleFrameSegmentCount;
+			}
 		}
+		TestEqual(TEXT("Placed Gate renders four clean frame bars"), VisibleFrameSegmentCount, 4);
 	}
 
 	return !HasAnyErrors();
