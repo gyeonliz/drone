@@ -333,8 +333,11 @@ void ADroneGroundConformingVehicle::UpdateWheelRollingVisuals(
 	CurrentWheelRotationDegrees += FMath::RadiansToDegrees(
 		SignedForwardDistance / FMath::Max(WheelRadius, 1.0f));
 
-	const FQuat LocalSpin(
-		FVector::UpVector,
+	const FVector VehicleSpaceSpinAxis = WheelVisualSpinAxisInVehicleSpace.GetSafeNormal(
+		SMALL_NUMBER,
+		FVector::RightVector);
+	const FQuat ParentSpaceSpin(
+		VehicleSpaceSpinAxis,
 		FMath::DegreesToRadians(CurrentWheelRotationDegrees * WheelVisualSpinDirectionMultiplier));
 	UStaticMeshComponent* Wheels[4] = {
 		FrontLeftWheel,
@@ -346,8 +349,10 @@ void ADroneGroundConformingVehicle::UpdateWheelRollingVisuals(
 	{
 		if (Wheels[Index])
 		{
-			// 기본 Mesh 축 정렬 뒤 로컬 Cylinder 축 회전을 합성해 Suspension Z는 그대로 유지한다.
-			Wheels[Index]->SetRelativeRotation(WheelVisualBaseRotations[Index] * LocalSpin);
+			// 실제 Tire Mesh와 Greybox Cylinder의 원본축이 달라도 차량의 좌우 차축을
+			// 기준으로 굴린다. 부모 공간 Spin을 기본 Mesh 정렬 뒤에 적용하므로 좌우별
+			// 180도 장착 회전과 Suspension Z는 그대로 보존된다.
+			Wheels[Index]->SetRelativeRotation(ParentSpaceSpin * WheelVisualBaseRotations[Index]);
 		}
 	}
 }

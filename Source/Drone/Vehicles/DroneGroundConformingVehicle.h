@@ -41,6 +41,9 @@ public:
 	float GetRideHeight() const { return RideHeight; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|Vehicle|GroundConforming")
+	float GetWheelRadius() const { return WheelRadius; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Vehicle|GroundConforming")
 	float GetMaximumGroundAngleDegrees() const { return MaximumGroundAngleDegrees; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|Vehicle|GroundConforming")
@@ -56,6 +59,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|Vehicle|GroundConforming")
 	float GetWheelVisualSpinDirectionMultiplier() const { return WheelVisualSpinDirectionMultiplier; }
+
+	/** 바퀴 회전에 사용하는 차량 부모 공간 축이다. 기본 +Y는 +X 전진 차량의 좌우 차축이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Vehicle|GroundConforming")
+	FVector GetWheelVisualSpinAxisInVehicleSpace() const { return WheelVisualSpinAxisInVehicleSpace; }
 
 	/** Throttle/Steering은 각각 -1~1이다. Auto Drive가 켜진 동안에는 수동값을 무시한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Vehicle|GroundConforming")
@@ -110,7 +117,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|Suspension", meta=(ClampMin="1.0", ForceUnits="cm"))
 	float RideHeight = 72.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|Suspension", meta=(ClampMin="1.0", ForceUnits="cm"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|Suspension", meta=(ClampMin="1.0", ClampMax="500.0", UIMin="1.0", UIMax="200.0", ForceUnits="cm"))
 	float WheelRadius = 30.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|Suspension", meta=(ClampMin="0.0", ClampMax="60.0", ForceUnits="deg"))
@@ -128,9 +135,16 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|Drive", meta=(ClampMin="0.0", ForceUnits="deg/s"))
 	float MaximumTurnRateDegreesPerSecond = 45.0f;
 
-	/** Wheel Mesh의 로컬 회전축 부호다. 현재 Greybox Cylinder는 수동 화면 확인 결과 +1이 전진 구름 방향이다. */
+	/** 차량 부모 공간 회전축에 적용하는 부호다. 현재 +X 전진 차량은 +1을 사용한다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|Drive", meta=(ClampMin="-1.0", ClampMax="1.0"))
 	float WheelVisualSpinDirectionMultiplier = 1.0f;
+
+	/**
+	 * Mesh 원본 축이 아니라 VehicleCollision 부모 공간에서 사용할 구름 회전축이다.
+	 * 프로젝트 차량은 +X 전진, +Y 차축이므로 기본값은 RightVector다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|Drive")
+	FVector WheelVisualSpinAxisInVehicleSpace = FVector::RightVector;
 
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category="Drone|Vehicle|Greybox")
 	bool bGreyboxAutoDriveEnabled = false;

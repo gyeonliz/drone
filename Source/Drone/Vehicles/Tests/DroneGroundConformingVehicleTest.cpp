@@ -73,7 +73,10 @@ bool FDroneGroundConformingVehicleTest::RunTest(const FString& Parameters)
 			&& FMath::Abs(Vehicle->GetActorRotation().Roll) <= Vehicle->GetMaximumGroundAngleDegrees() + 0.1f);
 	TestFalse(TEXT("Greybox vehicle does not simulate full rigid-body physics"), Vehicle->GetVehicleCollision()->IsSimulatingPhysics());
 	TestEqual(TEXT("Greybox vehicle exposes four separate wheel visuals"), Vehicle->GetWheelMeshes().Num(), 4);
-	TestEqual(TEXT("Greybox Cylinder uses the manually verified forward spin direction"), Vehicle->GetWheelVisualSpinDirectionMultiplier(), 1.0f);
+	TestEqual(TEXT("Vehicle uses the manually verified forward spin direction"), Vehicle->GetWheelVisualSpinDirectionMultiplier(), 1.0f);
+	TestTrue(
+		TEXT("Vehicle exposes its lateral wheel spin axis"),
+		Vehicle->GetWheelVisualSpinAxisInVehicleSpace().Equals(FVector::RightVector, KINDA_SMALL_NUMBER));
 	for (const UStaticMeshComponent* Wheel : Vehicle->GetWheelMeshes())
 	{
 		TestNotNull(TEXT("Wheel visual exists"), Wheel);
@@ -117,6 +120,83 @@ bool FDroneGroundConformingVehicleTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Reverse travel reports negative vehicle speed"), Vehicle->GetCurrentForwardSpeedCentimetersPerSecond() < 0.0f);
 	TestTrue(TEXT("Reverse travel rotates wheels in the opposite direction"),
 		Vehicle->GetCurrentWheelRotationDegrees() < RotationBeforeReverse);
+
+	// 실제 Smart Object Greybox 차량은 Cylinder 대신 MilitaryBase Tire Mesh와 좌우별
+	// 기본 회전을 사용한다. 진행 후 회전 Delta가 Mesh 원본축이 아니라 차량의 +Y
+	// 차축을 따라야 바퀴가 옆으로 빙글지 않고 X/Z 평면에서 구른다.
+	Vehicle->Destroy();
+	AActor* FlatGround = World->SpawnActor<AActor>();
+	TestNotNull(TEXT("Saved vehicle flat-ground fixture spawns"), FlatGround);
+	if (FlatGround)
+	{
+		UBoxComponent* FlatGroundCollision = NewObject<UBoxComponent>(FlatGround);
+		FlatGroundCollision->InitBoxExtent(FVector(400.0f, 300.0f, 10.0f));
+		FlatGroundCollision->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		FlatGroundCollision->SetCollisionResponseToAllChannels(ECR_Block);
+		FlatGround->SetRootComponent(FlatGroundCollision);
+		FlatGroundCollision->RegisterComponent();
+		FlatGround->SetActorLocation(FVector(1000.0f, 0.0f, -10.0f));
+	}
+	UClass* SavedVehicleClass = LoadClass<ADroneGroundConformingVehicle>(
+		nullptr,
+		TEXT("/Game/Drone/Vehicles/Blueprints/BP_GroundConformingVehicle_Greybox.BP_GroundConformingVehicle_Greybox_C"));
+	TestNotNull(TEXT("Saved Smart Object Greybox vehicle Blueprint loads"), SavedVehicleClass);
+	if (SavedVehicleClass)
+	{
+		ADroneGroundConformingVehicle* SavedVehicle = World->SpawnActor<ADroneGroundConformingVehicle>(
+			SavedVehicleClass,
+			FVector(1000.0f, 0.0f, 180.0f),
+			FRotator::ZeroRotator);
+		TestNotNull(TEXT("Saved Smart Object Greybox vehicle spawns"), SavedVehicle);
+		if (SavedVehicle)
+		{
+			SavedVehicle->SetGreyboxAutoDriveEnabled(false);
+			TestTrue(TEXT("Saved vehicle reaches the four contact platforms"), SavedVehicle->RefreshGroundConformNow(true));
+			for (UStaticMeshComponent* Wheel : SavedVehicle->GetWheelMeshes())
+			{
+				if (!Wheel)
+				{
+					continue;
+				}
+				Wheel->UpdateBounds();
+				const float VisualHalfHeight = Wheel->Bounds.BoxExtent.Z;
+				const float WheelBottomZ = Wheel->Bounds.GetBox().Min.Z;
+				TestTrue(
+					TEXT("Saved tire radius covers the visual wheel half-height"),
+					SavedVehicle->GetWheelRadius() + 0.5f >= VisualHalfHeight);
+				TestTrue(
+					TEXT("Saved tire sits on flat ground instead of sinking through it"),
+					WheelBottomZ >= -1.0f && WheelBottomZ <= 5.0f);
+			}
+			TArray<FQuat> SavedInitialWheelRotations;
+			for (const UStaticMeshComponent* Wheel : SavedVehicle->GetWheelMeshes())
+			{
+				SavedInitialWheelRotations.Add(Wheel ? Wheel->GetRelativeRotation().Quaternion() : FQuat::Identity);
+			}
+
+			SavedVehicle->SetDriveInput(1.0f, 0.0f);
+			SavedVehicle->Tick(0.05f);
+			const TArray<UStaticMeshComponent*> SavedWheelsAfterTravel = SavedVehicle->GetWheelMeshes();
+			for (int32 Index = 0; Index < SavedWheelsAfterTravel.Num(); ++Index)
+			{
+				FQuat ParentSpaceDelta = SavedWheelsAfterTravel[Index]->GetRelativeRotation().Quaternion()
+					* SavedInitialWheelRotations[Index].Inverse();
+				ParentSpaceDelta.Normalize();
+				FVector DeltaAxis = FVector::ZeroVector;
+				float DeltaAngle = 0.0f;
+				ParentSpaceDelta.ToAxisAndAngle(DeltaAxis, DeltaAngle);
+				if (DeltaAngle > PI)
+				{
+					DeltaAxis *= -1.0f;
+					DeltaAngle = 2.0f * PI - DeltaAngle;
+				}
+				TestTrue(
+					*FString::Printf(TEXT("Saved wheel %d rolls around the vehicle lateral axis"), Index),
+					DeltaAngle > KINDA_SMALL_NUMBER
+						&& FVector::DotProduct(DeltaAxis.GetSafeNormal(), FVector::RightVector) > 0.99f);
+			}
+		}
+	}
 	return !HasAnyErrors();
 }
 

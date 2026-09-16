@@ -106,6 +106,22 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
 	EDroneNPCAIResponseState GetResponseState() const { return ResponseState; }
 
+	/** 현재 대응 상태에 진입한 뒤 지난 시간이다. StateTree 상태 왕복 진단에도 사용한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|State Stability")
+	float GetResponseStateElapsedSeconds() const;
+
+	/** 일시 실패 뒤 다른 상태로 넘어가기 전에 현재 행동을 재확인할 최소 시간이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|State Stability")
+	float GetMinimumResponseStateDurationSeconds() const { return MinimumResponseStateDurationSeconds; }
+
+	/** 현재 상태의 최소 유지시간이 지났는지 확인한다. 사망 등 강제 정리는 이 조건을 사용하지 않는다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|State Stability")
+	bool HasSatisfiedMinimumResponseStateDuration() const;
+
+	/** 최소 유지시간 중이라면 현재 상태의 사격·점유·이동 조건을 한 번 더 점검한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|State Stability")
+	bool MaintainCurrentResponseStateAction();
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
 	bool HasLastKnownDroneLocation() const { return bHasLastKnownDroneLocation; }
 
@@ -327,6 +343,9 @@ protected:
 
 	void ClearMGTurretReassignmentRetry();
 
+	/** 상태 진입 시각을 한 곳에서 기록해 모든 태스크가 같은 최소 유지시간을 사용하게 한다. */
+	void SetResponseState(EDroneNPCAIResponseState NewState, bool bRestartDuration = false);
+
 	UDroneNPCProfileComponent* GetPossessedProfile() const;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Components")
@@ -367,6 +386,17 @@ protected:
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
 	EDroneNPCAIResponseState ResponseState = EDroneNPCAIResponseState::Patrol;
+
+	/**
+	 * 사격·엄폐·MG 동작이 한 프레임 실패했을 때 StateTree가 즉시 왕복하지 않도록 하는 공통 안정화 시간이다.
+	 * 유지 중에는 현재 행동을 계속 점검하고, 시간이 지난 뒤에도 실패일 때만 기존 실패 전환을 허용한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|State Stability",
+		meta=(ClampMin="0.0", ClampMax="10.0", UIMin="0.0", UIMax="5.0", ForceUnits="s"))
+	float MinimumResponseStateDurationSeconds = 1.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|State Stability")
+	float ResponseStateEnteredWorldTimeSeconds = 0.0f;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
 	FVector LastKnownDroneLocation = FVector::ZeroVector;

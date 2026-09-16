@@ -25,6 +25,7 @@
 #include "SmartObjectComponent.h"
 #include "SmartObjectDefinition.h"
 #include "SmartObjectUserComponent.h"
+#include "UObject/UnrealType.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FDroneSmartObjectFoundationTest,
@@ -57,6 +58,21 @@ bool FDroneSmartObjectFoundationTest::RunTest(const FString& Parameters)
 		TestNotNull(TEXT("Controller owns AI Perception"), ControllerDefaults->GetDronePerceptionComponent());
 		TestNotNull(TEXT("Controller owns reservation lifecycle"), ControllerDefaults->GetReservationComponent());
 		TestFalse(TEXT("Controller starts without a fake detected Drone"), ControllerDefaults->HasDetectedDrone());
+
+		const FFloatProperty* MinimumStateDurationProperty = FindFProperty<FFloatProperty>(
+			ADroneNPCAIController::StaticClass(),
+			TEXT("MinimumResponseStateDurationSeconds"));
+		TestNotNull(TEXT("Controller exposes a Blueprint-tunable minimum response-state duration"), MinimumStateDurationProperty);
+		if (MinimumStateDurationProperty)
+		{
+			TestTrue(
+				TEXT("Minimum response-state duration is editable on Controller Blueprints"),
+				MinimumStateDurationProperty->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible));
+			const float MinimumStateDuration = MinimumStateDurationProperty->GetPropertyValue_InContainer(ControllerDefaults);
+			TestTrue(
+				TEXT("Default minimum response-state duration prevents one-frame state churn"),
+				MinimumStateDuration >= 0.5f);
+		}
 	}
 
 	const ADroneSmartObjectStation* StationDefaults = GetDefault<ADroneSmartObjectStation>();

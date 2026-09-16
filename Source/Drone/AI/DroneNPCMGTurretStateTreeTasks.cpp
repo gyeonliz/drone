@@ -11,6 +11,35 @@ namespace
 	{
 		return Cast<ADroneNPCAIController>(Context.GetOwner());
 	}
+
+	bool HoldMGTurretStateWhileRecovering(
+		ADroneNPCAIController* Controller,
+		const EDroneNPCAIResponseState ExpectedState)
+	{
+		if (!Controller
+			|| Controller->GetResponseState() != ExpectedState
+			|| Controller->HasSatisfiedMinimumResponseStateDuration())
+		{
+			return false;
+		}
+
+		Controller->MaintainCurrentResponseStateAction();
+		return true;
+	}
+
+	bool UpdateOrBeginMGTurretOperation(ADroneNPCAIController* Controller)
+	{
+		if (!Controller)
+		{
+			return false;
+		}
+		if (Controller->GetResponseState() == EDroneNPCAIResponseState::HoldMGTurret)
+		{
+			// Enter 프레임에 점유 전환이 일시 실패했으면 유지시간 동안 다시 시도한다.
+			return Controller->BeginMGTurretOperation();
+		}
+		return Controller->UpdateMGTurretOperation();
+	}
 }
 
 const UStruct* FDroneStateTreeClaimMGTurretTask::GetInstanceDataType() const
@@ -49,12 +78,20 @@ EStateTreeRunStatus FDroneStateTreeMoveToMGTurretTask::EnterState(
 		|| !Controller->HasDetectedDrone()
 		|| Controller->GetResponseState() != EDroneNPCAIResponseState::MoveToMGTurret)
 	{
+		if (HoldMGTurretStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToMGTurret))
+		{
+			return EStateTreeRunStatus::Running;
+		}
 		return EStateTreeRunStatus::Failed;
 	}
 
 	FTransform SlotTransform;
 	if (!Controller->GetReservedMGTurretOperatorTransform(SlotTransform))
 	{
+		if (HoldMGTurretStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToMGTurret))
+		{
+			return EStateTreeRunStatus::Running;
+		}
 		Controller->AbortMGTurretResponse();
 		return EStateTreeRunStatus::Failed;
 	}
@@ -74,8 +111,12 @@ EStateTreeRunStatus FDroneStateTreeMoveToMGTurretTask::EnterState(
 		false);
 	if (MoveResult == EPathFollowingRequestResult::AlreadyAtGoal)
 	{
-		return Controller->CompleteMGTurretMove()
-			? EStateTreeRunStatus::Succeeded
+		if (Controller->CompleteMGTurretMove())
+		{
+			return EStateTreeRunStatus::Succeeded;
+		}
+		return HoldMGTurretStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToMGTurret)
+			? EStateTreeRunStatus::Running
 			: EStateTreeRunStatus::Failed;
 	}
 	if (MoveResult == EPathFollowingRequestResult::RequestSuccessful)
@@ -83,6 +124,10 @@ EStateTreeRunStatus FDroneStateTreeMoveToMGTurretTask::EnterState(
 		return EStateTreeRunStatus::Running;
 	}
 
+	if (HoldMGTurretStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToMGTurret))
+	{
+		return EStateTreeRunStatus::Running;
+	}
 	Controller->AbortMGTurretResponse();
 	return EStateTreeRunStatus::Failed;
 }
@@ -95,6 +140,10 @@ EStateTreeRunStatus FDroneStateTreeMoveToMGTurretTask::Tick(
 	ADroneNPCAIController* Controller = GetMGTurretDroneController(Context);
 	if (!Controller || !Controller->HasDetectedDrone())
 	{
+		if (HoldMGTurretStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToMGTurret))
+		{
+			return EStateTreeRunStatus::Running;
+		}
 		if (Controller)
 		{
 			Controller->AbortMGTurretResponse();
@@ -105,6 +154,10 @@ EStateTreeRunStatus FDroneStateTreeMoveToMGTurretTask::Tick(
 	UDroneSmartObjectReservationComponent* Reservation = Controller->GetReservationComponent();
 	if (!Reservation || !Reservation->HasValidReservation())
 	{
+		if (HoldMGTurretStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToMGTurret))
+		{
+			return EStateTreeRunStatus::Running;
+		}
 		Controller->AbortMGTurretResponse();
 		return EStateTreeRunStatus::Failed;
 	}
@@ -117,8 +170,12 @@ EStateTreeRunStatus FDroneStateTreeMoveToMGTurretTask::Tick(
 	if (Pawn && FVector::DistSquared2D(Pawn->GetActorLocation(), InstanceData.Destination)
 		<= FMath::Square(OperatorSnapRadius))
 	{
-		return Controller->CompleteMGTurretMove()
-			? EStateTreeRunStatus::Succeeded
+		if (Controller->CompleteMGTurretMove())
+		{
+			return EStateTreeRunStatus::Succeeded;
+		}
+		return HoldMGTurretStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToMGTurret)
+			? EStateTreeRunStatus::Running
 			: EStateTreeRunStatus::Failed;
 	}
 	if (Controller->GetMoveStatus() == EPathFollowingStatus::Moving
@@ -186,6 +243,10 @@ EStateTreeRunStatus FDroneStateTreeMoveToMGTurretTask::Tick(
 		return EStateTreeRunStatus::Running;
 	}
 
+	if (HoldMGTurretStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToMGTurret))
+	{
+		return EStateTreeRunStatus::Running;
+	}
 	Controller->AbortMGTurretResponse();
 	return EStateTreeRunStatus::Failed;
 }
@@ -218,7 +279,11 @@ EStateTreeRunStatus FDroneStateTreeHoldMGTurretTask::EnterState(
 	const FStateTreeTransitionResult& Transition) const
 {
 	ADroneNPCAIController* Controller = GetMGTurretDroneController(Context);
-	return Controller && Controller->BeginMGTurretOperation()
+	if (UpdateOrBeginMGTurretOperation(Controller))
+	{
+		return EStateTreeRunStatus::Running;
+	}
+	return HoldMGTurretStateWhileRecovering(Controller, EDroneNPCAIResponseState::HoldMGTurret)
 		? EStateTreeRunStatus::Running
 		: EStateTreeRunStatus::Failed;
 }
@@ -228,7 +293,16 @@ EStateTreeRunStatus FDroneStateTreeHoldMGTurretTask::Tick(
 	const float DeltaTime) const
 {
 	ADroneNPCAIController* Controller = GetMGTurretDroneController(Context);
-	return Controller && Controller->UpdateMGTurretOperation()
+	if (UpdateOrBeginMGTurretOperation(Controller))
+	{
+		return EStateTreeRunStatus::Running;
+	}
+	const EDroneNPCAIResponseState CurrentState = Controller
+		? Controller->GetResponseState()
+		: EDroneNPCAIResponseState::Dead;
+	return (CurrentState == EDroneNPCAIResponseState::HoldMGTurret
+			|| CurrentState == EDroneNPCAIResponseState::UseMGTurret)
+		&& HoldMGTurretStateWhileRecovering(Controller, CurrentState)
 		? EStateTreeRunStatus::Running
 		: EStateTreeRunStatus::Failed;
 }

@@ -11,6 +11,23 @@ ADroneNPCAIController* GetCoverController(FStateTreeExecutionContext& Context)
 {
 	return Cast<ADroneNPCAIController>(Context.GetOwner());
 }
+
+bool HoldCoverStateWhileRecovering(
+	ADroneNPCAIController* Controller,
+	const EDroneNPCAIResponseState ExpectedState)
+{
+	if (!Controller
+		|| Controller->GetResponseState() != ExpectedState
+		|| Controller->HasSatisfiedMinimumResponseStateDuration())
+	{
+		return false;
+	}
+
+	// 유지시간 동안 예약·감지·개인화기 조건을 다시 확인한다. 회복되면 기존 Tick이
+	// 다음 프레임 정상 경로를 계속하고, 회복되지 않아도 최소시간 뒤에만 실패 전환한다.
+	Controller->MaintainCurrentResponseStateAction();
+	return true;
+}
 }
 
 const UStruct* FDroneStateTreeClaimCoverTask::GetInstanceDataType() const
@@ -51,6 +68,10 @@ EStateTreeRunStatus FDroneStateTreeMoveToCoverTask::EnterState(
 		|| !Controller->HasDetectedDrone()
 		|| !Controller->GetReservationComponent()->GetReservedSlotTransform(SlotTransform))
 	{
+		if (HoldCoverStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToCover))
+		{
+			return EStateTreeRunStatus::Running;
+		}
 		return EStateTreeRunStatus::Failed;
 	}
 
@@ -75,6 +96,10 @@ EStateTreeRunStatus FDroneStateTreeMoveToCoverTask::EnterState(
 		return EStateTreeRunStatus::Running;
 	}
 
+	if (HoldCoverStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToCover))
+	{
+		return EStateTreeRunStatus::Running;
+	}
 	Controller->AbortCoverResponse();
 	return EStateTreeRunStatus::Failed;
 }
@@ -89,6 +114,10 @@ EStateTreeRunStatus FDroneStateTreeMoveToCoverTask::Tick(
 		|| !Controller->HasDetectedDrone()
 		|| !Controller->GetReservationComponent()->HasValidReservation())
 	{
+		if (HoldCoverStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToCover))
+		{
+			return EStateTreeRunStatus::Running;
+		}
 		if (Controller)
 		{
 			Controller->AbortCoverResponse();
@@ -111,6 +140,10 @@ EStateTreeRunStatus FDroneStateTreeMoveToCoverTask::Tick(
 			: EStateTreeRunStatus::Failed;
 	}
 
+	if (HoldCoverStateWhileRecovering(Controller, EDroneNPCAIResponseState::MoveToCover))
+	{
+		return EStateTreeRunStatus::Running;
+	}
 	Controller->AbortCoverResponse();
 	return EStateTreeRunStatus::Failed;
 }
@@ -143,7 +176,11 @@ EStateTreeRunStatus FDroneStateTreeUseCoverTask::EnterState(
 	const FStateTreeTransitionResult& Transition) const
 {
 	ADroneNPCAIController* Controller = GetCoverController(Context);
-	return Controller && Controller->UpdateCoverResponse()
+	if (Controller && Controller->UpdateCoverResponse())
+	{
+		return EStateTreeRunStatus::Running;
+	}
+	return HoldCoverStateWhileRecovering(Controller, EDroneNPCAIResponseState::UseCover)
 		? EStateTreeRunStatus::Running
 		: EStateTreeRunStatus::Failed;
 }
@@ -153,7 +190,11 @@ EStateTreeRunStatus FDroneStateTreeUseCoverTask::Tick(
 	const float DeltaTime) const
 {
 	ADroneNPCAIController* Controller = GetCoverController(Context);
-	return Controller && Controller->UpdateCoverResponse()
+	if (Controller && Controller->UpdateCoverResponse())
+	{
+		return EStateTreeRunStatus::Running;
+	}
+	return HoldCoverStateWhileRecovering(Controller, EDroneNPCAIResponseState::UseCover)
 		? EStateTreeRunStatus::Running
 		: EStateTreeRunStatus::Failed;
 }

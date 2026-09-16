@@ -106,7 +106,7 @@ void ADroneNPCAIController::OnPossess(APawn* InPawn)
 	ClearDroneGameplayFocus();
 	CancelPendingDroneLost();
 	DetectedDrone.Reset();
-	ResponseState = EDroneNPCAIResponseState::Patrol;
+	SetResponseState(EDroneNPCAIResponseState::Patrol, true);
 	bHasLastKnownDroneLocation = false;
 	LastKnownDroneLocation = FVector::ZeroVector;
 	DroneDetectionCount = 0;
@@ -187,7 +187,7 @@ void ADroneNPCAIController::OnUnPossess()
 	StopMGTurretOperation();
 	ReservationComponent->ReleaseReservation();
 	DetectedDrone.Reset();
-	ResponseState = EDroneNPCAIResponseState::Patrol;
+	SetResponseState(EDroneNPCAIResponseState::Patrol, true);
 	bHasLastKnownDroneLocation = false;
 	if (StateTreeAIComponent->IsRunning())
 	{
@@ -226,6 +226,81 @@ bool ADroneNPCAIController::IsFriendlyNPC() const
 {
 	const UDroneNPCProfileComponent* Profile = GetPossessedProfile();
 	return Profile && Profile->IsFriendly();
+}
+
+float ADroneNPCAIController::GetResponseStateElapsedSeconds() const
+{
+	const UWorld* World = GetWorld();
+	return World
+		? FMath::Max(0.0f, World->GetTimeSeconds() - ResponseStateEnteredWorldTimeSeconds)
+		: 0.0f;
+}
+
+bool ADroneNPCAIController::HasSatisfiedMinimumResponseStateDuration() const
+{
+	// World가 없는 CDO/종료 구간은 StateTree 실행 대상이 아니므로 전환을 막지 않는다.
+	return !GetWorld()
+		|| ResponseState == EDroneNPCAIResponseState::Dead
+		|| MinimumResponseStateDurationSeconds <= 0.0f
+		|| GetResponseStateElapsedSeconds() >= MinimumResponseStateDurationSeconds;
+}
+
+bool ADroneNPCAIController::MaintainCurrentResponseStateAction()
+{
+	switch (ResponseState)
+	{
+	case EDroneNPCAIResponseState::Patrol:
+		return !HasDetectedDrone();
+
+	case EDroneNPCAIResponseState::DroneDetected:
+		if (!HasDetectedDrone())
+		{
+			return false;
+		}
+		if (const UDroneNPCWeaponComponent* WeaponComponent = GetPossessedWeaponComponent();
+			WeaponComponent && WeaponComponent->IsFiring())
+		{
+			return true;
+		}
+		return StartPersonalWeaponFire();
+
+	case EDroneNPCAIResponseState::MoveToMGTurret:
+	case EDroneNPCAIResponseState::HoldMGTurret:
+		return HasDetectedDrone()
+			&& ReservationComponent
+			&& ReservationComponent->HasValidReservation();
+
+	case EDroneNPCAIResponseState::UseMGTurret:
+		return UpdateMGTurretOperation();
+
+	case EDroneNPCAIResponseState::MoveToCover:
+		return HasDetectedDrone()
+			&& ReservationComponent
+			&& ReservationComponent->HasValidReservation();
+
+	case EDroneNPCAIResponseState::UseCover:
+		return UpdateCoverResponse();
+
+	case EDroneNPCAIResponseState::Search:
+		return !HasDetectedDrone() && bHasLastKnownDroneLocation;
+
+	case EDroneNPCAIResponseState::Dead:
+	default:
+		return false;
+	}
+}
+
+void ADroneNPCAIController::SetResponseState(
+	const EDroneNPCAIResponseState NewState,
+	const bool bRestartDuration)
+{
+	if (!bRestartDuration && ResponseState == NewState)
+	{
+		return;
+	}
+
+	ResponseState = NewState;
+	ResponseStateEnteredWorldTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 }
 
 UDroneNPCWeaponComponent* ADroneNPCAIController::GetPossessedWeaponComponent() const
@@ -290,7 +365,7 @@ void ADroneNPCAIController::EnterDroneDetectedResponse()
 	}
 
 	StopMGTurretOperation();
-	ResponseState = EDroneNPCAIResponseState::DroneDetected;
+	SetResponseState(EDroneNPCAIResponseState::DroneDetected);
 	StopMovement();
 	ReservationComponent->ReleaseReservation();
 }
@@ -303,7 +378,7 @@ bool ADroneNPCAIController::BeginDroneSearch(const float AcceptanceRadius)
 		return false;
 	}
 
-	ResponseState = EDroneNPCAIResponseState::Search;
+	SetResponseState(EDroneNPCAIResponseState::Search);
 	++DroneSearchStartCount;
 	StopMGTurretOperation();
 	ReservationComponent->ReleaseReservation();
@@ -330,7 +405,7 @@ void ADroneNPCAIController::CompleteDroneSearch()
 	StopMovement();
 	ClearDroneGameplayFocus();
 	++CompletedDroneSearchCount;
-	ResponseState = EDroneNPCAIResponseState::Patrol;
+	SetResponseState(EDroneNPCAIResponseState::Patrol);
 	ConfigureDefaultPatrolActivities();
 }
 
@@ -351,7 +426,7 @@ void ADroneNPCAIController::HandlePossessedPawnDeath()
 	ReservationComponent->ReleaseReservation();
 	DetectedDrone.Reset();
 	bHasLastKnownDroneLocation = false;
-	ResponseState = EDroneNPCAIResponseState::Dead;
+	SetResponseState(EDroneNPCAIResponseState::Dead);
 
 	if (StateTreeAIComponent && StateTreeAIComponent->IsRunning())
 	{
@@ -406,7 +481,7 @@ void ADroneNPCAIController::HandleDetectedDroneDestroyed(AActor* DestroyedDrone)
 	DetectedDrone.Reset();
 	bHasLastKnownDroneLocation = false;
 	LastKnownDroneLocation = FVector::ZeroVector;
-	ResponseState = EDroneNPCAIResponseState::Patrol;
+	SetResponseState(EDroneNPCAIResponseState::Patrol);
 	ConfigureDefaultPatrolActivities();
 	++DroneDestroyedResponseCount;
 
@@ -514,7 +589,7 @@ bool ADroneNPCAIController::ClaimAvailableMGTurret(FTransform& OutSlotTransform)
 		return false;
 	}
 
-	ResponseState = EDroneNPCAIResponseState::MoveToMGTurret;
+	SetResponseState(EDroneNPCAIResponseState::MoveToMGTurret);
 	++MGTurretClaimCount;
 	return true;
 }
@@ -530,7 +605,7 @@ bool ADroneNPCAIController::CompleteMGTurretMove()
 	}
 
 	StopMovement();
-	ResponseState = EDroneNPCAIResponseState::HoldMGTurret;
+	SetResponseState(EDroneNPCAIResponseState::HoldMGTurret);
 	++MGTurretArrivalCount;
 	return true;
 }
@@ -563,7 +638,7 @@ bool ADroneNPCAIController::BeginMGTurretOperation()
 	}
 
 	ActiveMGTurretStation = Station;
-	ResponseState = EDroneNPCAIResponseState::UseMGTurret;
+	SetResponseState(EDroneNPCAIResponseState::UseMGTurret);
 	++MGTurretUseCount;
 	return true;
 }
@@ -605,9 +680,9 @@ void ADroneNPCAIController::AbortMGTurretResponse()
 		return;
 	}
 	ConfigureDefaultPatrolActivities();
-	ResponseState = HasDetectedDrone()
+	SetResponseState(HasDetectedDrone()
 		? EDroneNPCAIResponseState::DroneDetected
-		: EDroneNPCAIResponseState::Patrol;
+		: EDroneNPCAIResponseState::Patrol);
 }
 
 bool ADroneNPCAIController::ClaimAvailableCover(FTransform& OutSlotTransform)
@@ -629,13 +704,13 @@ bool ADroneNPCAIController::ClaimAvailableCover(FTransform& OutSlotTransform)
 	if (!ReservationComponent->ClaimNearestAvailableSlot(GetPawn()->GetActorLocation(), OutSlotTransform))
 	{
 		ConfigureDefaultPatrolActivities();
-		ResponseState = EDroneNPCAIResponseState::DroneDetected;
+		SetResponseState(EDroneNPCAIResponseState::DroneDetected);
 		StartPersonalWeaponFire();
 		return false;
 	}
 
 	StopPersonalWeaponFire();
-	ResponseState = EDroneNPCAIResponseState::MoveToCover;
+	SetResponseState(EDroneNPCAIResponseState::MoveToCover);
 	++CoverClaimCount;
 	return true;
 }
@@ -652,9 +727,12 @@ bool ADroneNPCAIController::CompleteCoverMove()
 	}
 
 	StopMovement();
-	ResponseState = EDroneNPCAIResponseState::UseCover;
+	SetResponseState(EDroneNPCAIResponseState::UseCover);
 	++CoverUseCount;
-	return StartPersonalWeaponFire();
+	// Slot 점유 전환 자체가 성공했다면 UseCover 진입은 유지한다. 첫 사격 시작이 같은
+	// 프레임에 실패해도 UseCover Task가 최소 유지시간 동안 탄약·표적 조건을 재확인한다.
+	StartPersonalWeaponFire();
+	return true;
 }
 
 bool ADroneNPCAIController::UpdateCoverResponse()
@@ -681,9 +759,9 @@ void ADroneNPCAIController::AbortCoverResponse()
 	}
 
 	ConfigureDefaultPatrolActivities();
-	ResponseState = HasDetectedDrone()
+	SetResponseState(HasDetectedDrone()
 		? EDroneNPCAIResponseState::DroneDetected
-		: EDroneNPCAIResponseState::Patrol;
+		: EDroneNPCAIResponseState::Patrol);
 	if (HasDetectedDrone())
 	{
 		StartPersonalWeaponFire();
@@ -1156,7 +1234,8 @@ void ADroneNPCAIController::BeginMGTurretReassignmentRetry()
 	bMGTurretReassignmentRetryPending = true;
 	MGTurretReassignmentRetryElapsedSeconds = 0.0f;
 	MGTurretReassignmentRetryRemainingSeconds = 0.0f;
-	StopPersonalWeaponFire();
+	// 현재 Cover/개인화기 행동은 최소 유지시간 동안 계속한다. 실제 재점유 Event를
+	// 보내는 프레임에만 사격을 멈춰, 재시도 대기 중 행동이 매 Tick 꺼졌다 켜지지 않게 한다.
 }
 
 void ADroneNPCAIController::UpdateMGTurretReassignmentRetry(const float DeltaSeconds)
@@ -1192,6 +1271,11 @@ void ADroneNPCAIController::UpdateMGTurretReassignmentRetry(const float DeltaSec
 		|| ResponseState == EDroneNPCAIResponseState::UseCover;
 	if (!bCanInterruptForRetry || !StateTreeAIComponent || !StateTreeAIComponent->IsRunning())
 	{
+		return;
+	}
+	if (!HasSatisfiedMinimumResponseStateDuration())
+	{
+		MaintainCurrentResponseStateAction();
 		return;
 	}
 

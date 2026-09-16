@@ -41,7 +41,9 @@ VEHICLE_SPEC = {
     "name": "BP_GroundConformingVehicle_Greybox",
     "parent": "/Script/Drone.DroneGroundConformingVehicle",
     "folder": VEHICLE_BLUEPRINT_FOLDER,
+    "wheel_radius": 52.0,
     "wheel_spin_direction": 1.0,
+    "wheel_spin_axis": (0.0, 1.0, 0.0),
 }
 VEHICLE_CARRIER_LABEL = "AutoTurret_VehicleCarrier_Greybox"
 VEHICLE_CARRIER_LOCATION = (2700.0, -2200.0, 120.0)
@@ -144,8 +146,20 @@ def validate_vehicle_blueprint(blueprint: unreal.Blueprint) -> None:
     require(cdo.get_turret_mount() is not None, "Vehicle turret mount is missing")
     require(len(cdo.get_wheel_meshes()) == 4, "Vehicle must expose four wheel visuals")
     require(
+        abs(cdo.get_wheel_radius() - float(VEHICLE_SPEC["wheel_radius"])) < 0.001,
+        "Vehicle Blueprint wheel radius does not match the imported Tire Mesh",
+    )
+    require(
         abs(cdo.get_wheel_visual_spin_direction_multiplier() - float(VEHICLE_SPEC["wheel_spin_direction"])) < 0.001,
         "Vehicle Blueprint wheel spin direction does not match the manually verified Greybox direction",
+    )
+    wheel_spin_axis = cdo.get_wheel_visual_spin_axis_in_vehicle_space()
+    expected_axis = VEHICLE_SPEC["wheel_spin_axis"]
+    require(
+        abs(wheel_spin_axis.x - expected_axis[0]) < 0.001
+        and abs(wheel_spin_axis.y - expected_axis[1]) < 0.001
+        and abs(wheel_spin_axis.z - expected_axis[2]) < 0.001,
+        "Vehicle Blueprint wheel spin axis must use the vehicle-local lateral +Y axis",
     )
 
 
@@ -156,11 +170,24 @@ def configure_vehicle_blueprint(
     cdo = unreal.get_default_object(blueprint.generated_class())
     require(cdo is not None, f"Vehicle Blueprint CDO unavailable: {blueprint.get_path_name()}")
     cdo.set_editor_property(
+        "wheel_radius",
+        float(VEHICLE_SPEC["wheel_radius"]),
+    )
+    cdo.set_editor_property(
         "wheel_visual_spin_direction_multiplier",
         float(VEHICLE_SPEC["wheel_spin_direction"]),
     )
+    cdo.set_editor_property(
+        "wheel_visual_spin_axis_in_vehicle_space",
+        unreal.Vector(*VEHICLE_SPEC["wheel_spin_axis"]),
+    )
     require(editor_assets.save_loaded_asset(blueprint, only_if_is_dirty=False), f"Could not save: {blueprint.get_path_name()}")
-    log(f"CONFIGURED_VEHICLE_WHEEL_SPIN|direction={VEHICLE_SPEC['wheel_spin_direction']}")
+    log(
+        "CONFIGURED_VEHICLE_WHEELS"
+        f"|radius={VEHICLE_SPEC['wheel_radius']}"
+        f"|direction={VEHICLE_SPEC['wheel_spin_direction']}"
+        f"|axis={VEHICLE_SPEC['wheel_spin_axis']}"
+    )
 
 
 def actor_by_label(actors: unreal.EditorActorSubsystem, label: str) -> unreal.Actor | None:
@@ -238,8 +265,16 @@ def create_or_load_vehicle_carrier(
     carrier.set_actor_location(unreal.Vector(*VEHICLE_CARRIER_LOCATION), False, False)
     carrier.set_actor_rotation(unreal.Rotator(pitch=0.0, yaw=VEHICLE_CARRIER_YAW, roll=0.0), False)
     carrier.set_editor_property(
+        "wheel_radius",
+        float(VEHICLE_SPEC["wheel_radius"]),
+    )
+    carrier.set_editor_property(
         "wheel_visual_spin_direction_multiplier",
         float(VEHICLE_SPEC["wheel_spin_direction"]),
+    )
+    carrier.set_editor_property(
+        "wheel_visual_spin_axis_in_vehicle_space",
+        unreal.Vector(*VEHICLE_SPEC["wheel_spin_axis"]),
     )
     carrier.set_greybox_auto_drive_enabled(True)
     require(carrier.refresh_ground_conform_now(True), "Vehicle carrier could not find its four-point road surface")
@@ -284,8 +319,20 @@ def validate_map(
     require(carrier.is_greybox_auto_drive_enabled(), "Vehicle carrier Greybox auto drive is disabled")
     require(len(carrier.get_wheel_meshes()) == 4, "Placed vehicle does not have four wheel visuals")
     require(
+        abs(carrier.get_wheel_radius() - float(VEHICLE_SPEC["wheel_radius"])) < 0.001,
+        "Placed vehicle wheel radius does not match the imported Tire Mesh",
+    )
+    require(
         abs(carrier.get_wheel_visual_spin_direction_multiplier() - float(VEHICLE_SPEC["wheel_spin_direction"])) < 0.001,
         "Placed vehicle wheel spin direction does not match the manually verified Greybox direction",
+    )
+    wheel_spin_axis = carrier.get_wheel_visual_spin_axis_in_vehicle_space()
+    expected_axis = VEHICLE_SPEC["wheel_spin_axis"]
+    require(
+        abs(wheel_spin_axis.x - expected_axis[0]) < 0.001
+        and abs(wheel_spin_axis.y - expected_axis[1]) < 0.001
+        and abs(wheel_spin_axis.z - expected_axis[2]) < 0.001,
+        "Placed vehicle wheel spin axis must use the vehicle-local lateral +Y axis",
     )
     # LastGroundContactCount is transient and is intentionally zero immediately after a
     # validation-only map load. Runtime contact behavior is covered by the focused C++
@@ -311,6 +358,16 @@ def main() -> None:
     editor_assets = unreal.get_editor_subsystem(unreal.EditorAssetSubsystem)
     require(editor_assets is not None, "EditorAssetSubsystem is unavailable")
     validate_only = os.environ.get("DRONE_AUTO_TURRET_VALIDATE_ONLY") == "1"
+    wheel_defaults_only = os.environ.get("DRONE_VEHICLE_WHEEL_DEFAULTS_ONLY") == "1"
+
+    if wheel_defaults_only:
+        vehicle_path = asset_path(VEHICLE_SPEC)
+        vehicle_blueprint = editor_assets.load_asset(vehicle_path)
+        require(isinstance(vehicle_blueprint, unreal.Blueprint), f"Missing Blueprint: {vehicle_path}")
+        configure_vehicle_blueprint(editor_assets, vehicle_blueprint)
+        validate_vehicle_blueprint(vehicle_blueprint)
+        log(f"VEHICLE_WHEEL_DEFAULTS_OK|{vehicle_path}")
+        return
 
     blueprints: dict[str, unreal.Blueprint] = {}
     for spec in SPECS:
