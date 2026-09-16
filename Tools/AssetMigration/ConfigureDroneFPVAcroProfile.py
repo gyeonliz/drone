@@ -35,6 +35,10 @@ profile.set_editor_property(
         pitch_roll_expo=0.30,
         yaw_expo=0.20,
         maximum_world_vertical_speed_centimeters_per_second=900.0,
+        hover_throttle_normalized=0.50,
+        gravity_acceleration_centimeters_per_second_squared=980.0,
+        linear_drag_per_second=0.12,
+        body_rate_response_time_seconds=0.08,
     ),
 )
 profile.set_editor_property(
@@ -51,5 +55,6 @@ unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False)
 
 unreal.log(
     "FPV_ACRO_PROFILE_OK|default=RateAcro|handling=Agile|"
-    "runtime_speed=2700cm/s|pitch_roll=650dps|yaw=400dps|vertical=900cm/s"
+    "runtime_speed=2700cm/s|pitch_roll=650dps|yaw=400dps|vertical=900cm/s|"
+    "hover=0.50|gravity=980cm/s2|drag=0.12/s|rate_response=0.08s"
 )

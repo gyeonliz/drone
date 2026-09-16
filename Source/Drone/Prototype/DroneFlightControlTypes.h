@@ -50,6 +50,22 @@ struct DRONE_API FDroneAcroRateSettings
 	/** DJI Avata 2 공개 최대 상승/하강 속도 9 m/s를 현재 민간 FPV 기준값으로 사용한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Acro Rate|Translation", meta=(ClampMin="1.0", ForceUnits="cm/s"))
 	float MaximumWorldVerticalSpeedCentimetersPerSecond = 900.0f;
+
+	/** 스틱 중립에서 중력을 상쇄하는 0~1 추력 위치다. 낮을수록 남는 상승 추력이 커진다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Acro Rate|Physics", meta=(ClampMin="0.05", ClampMax="0.95"))
+	float HoverThrottleNormalized = 0.50f;
+
+	/** World Down으로 적용할 중력 가속도다. 최대 추력은 이 값 / HoverThrottle로 계산한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Acro Rate|Physics", meta=(ClampMin="1.0", ForceUnits="cm/s^2"))
+	float GravityAccelerationCentimetersPerSecondSquared = 980.0f;
+
+	/** 공기 저항 Greybox 계수다. 0이면 관성을 그대로 유지하고 값이 클수록 속도가 빨리 줄어든다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Acro Rate|Physics", meta=(ClampMin="0.0", ForceUnits="1/s"))
+	float LinearDragPerSecond = 0.12f;
+
+	/** 목표 Body Rate에 도달하는 응답 시간이다. 작은 값일수록 스틱 반응이 즉각적이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Acro Rate|Physics", meta=(ClampMin="0.001", ForceUnits="s"))
+	float BodyRateResponseTimeSeconds = 0.08f;
 };
 
 /** 동일 기체에서도 바꿀 수 있는 반응성 프리셋이다. 기체 종류를 뜻하지 않는다. */

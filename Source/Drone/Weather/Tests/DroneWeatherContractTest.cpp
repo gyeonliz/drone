@@ -10,6 +10,7 @@
 #include "Tests/AutomationEditorCommon.h"
 #include "UObject/StrongObjectPtr.h"
 #include "Weather/DroneWeatherController.h"
+#include "Weather/DroneWeatherDebugVisualizer.h"
 #include "Weather/DroneWeatherProfile.h"
 #include "Weather/DroneWeatherResponseComponent.h"
 #include "Weather/DroneWeatherWorldSubsystem.h"
@@ -42,6 +43,38 @@ bool FDroneWeatherContractTest::RunTest(const FString& Parameters)
 	Profile->Wind.GustIntervalSeconds = FVector2D(8.0f, 2.0f);
 	TestFalse(TEXT("Reversed gust interval is rejected"), Profile->ValidateProfile(ValidationError));
 	Profile->Wind.GustIntervalSeconds = FVector2D(2.0f, 8.0f);
+	Profile->Wind.GustAttackSeconds = 0.0f;
+	TestFalse(TEXT("Zero gust attack time is rejected"), Profile->ValidateProfile(ValidationError));
+	Profile->Wind.GustAttackSeconds = 0.65f;
+
+	const FVector FirstFlowOffset = ADroneWeatherDebugVisualizer::IntegrateFlowTravelOffset(
+		FVector::ZeroVector,
+		FVector(100.0f, 0.0f, 0.0f),
+		1.0f,
+		1.0f);
+	const FVector TurnedFlowOffset = ADroneWeatherDebugVisualizer::IntegrateFlowTravelOffset(
+		FirstFlowOffset,
+		FVector(0.0f, 100.0f, 0.0f),
+		1.0f,
+		1.0f);
+	TestTrue(TEXT("Changing wind direction preserves earlier flow travel instead of reprojecting it"),
+		TurnedFlowOffset.Equals(FVector(100.0f, 100.0f, 0.0f), 0.01f));
+	FVector FineStepOffset = FVector::ZeroVector;
+	for (int32 Step = 0; Step < 100; ++Step)
+	{
+		FineStepOffset = ADroneWeatherDebugVisualizer::IntegrateFlowTravelOffset(
+			FineStepOffset,
+			FVector(200.0f, 50.0f, 0.0f),
+			0.01f,
+			0.75f);
+	}
+	const FVector CoarseStepOffset = ADroneWeatherDebugVisualizer::IntegrateFlowTravelOffset(
+		FVector::ZeroVector,
+		FVector(200.0f, 50.0f, 0.0f),
+		1.0f,
+		0.75f);
+	TestTrue(TEXT("Flow offset integration is frame-step independent for constant wind"),
+		FineStepOffset.Equals(CoarseStepOffset, 0.1f));
 
 	UWorld* World = FAutomationEditorCommonUtils::CreateNewMap();
 	UDroneWeatherWorldSubsystem* Weather = World
@@ -155,6 +188,7 @@ bool FDroneWeatherSystemsTestMapTest::RunTest(const FString& Parameters)
 	constexpr const TCHAR* ExpectedGameModePath =
 		TEXT("/Game/Drone/Prototype/Blueprints/BP_DronePrototypeGameMode.BP_DronePrototypeGameMode_C");
 	const FName OwnedTag(TEXT("DroneWeatherSystemsTest.Owned"));
+	const FName VisualizerTag(TEXT("DroneWeatherSystemsTest.Visualizer"));
 
 	UWorld* TestWorld = LoadObject<UWorld>(nullptr, MapObjectPath);
 	UClass* ExpectedGameMode = LoadClass<ADronePrototypeGameMode>(nullptr, ExpectedGameModePath);
@@ -170,12 +204,19 @@ bool FDroneWeatherSystemsTestMapTest::RunTest(const FString& Parameters)
 			&& TestWorld->GetWorldSettings()->DefaultGameMode == ExpectedGameMode);
 
 	ADroneWeatherController* WeatherController = nullptr;
+	ADroneWeatherDebugVisualizer* WeatherVisualizer = nullptr;
 	int32 ControllerCount = 0;
 	int32 OwnedActorCount = 0;
+	int32 VisualizerCount = 0;
 	for (TActorIterator<AActor> It(TestWorld); It; ++It)
 	{
 		AActor* Actor = *It;
 		OwnedActorCount += Actor && Actor->ActorHasTag(OwnedTag) ? 1 : 0;
+		VisualizerCount += Actor && Actor->ActorHasTag(VisualizerTag) ? 1 : 0;
+		if (ADroneWeatherDebugVisualizer* Candidate = Cast<ADroneWeatherDebugVisualizer>(Actor))
+		{
+			WeatherVisualizer = Candidate;
+		}
 		if (ADroneWeatherController* Candidate = Cast<ADroneWeatherController>(Actor))
 		{
 			WeatherController = Candidate;
@@ -184,7 +225,14 @@ bool FDroneWeatherSystemsTestMapTest::RunTest(const FString& Parameters)
 	}
 
 	TestEqual(TEXT("Weather test map has one authoritative Weather Controller"), ControllerCount, 1);
-	TestEqual(TEXT("Weather test map keeps its complete owned Greybox set"), OwnedActorCount, 8);
+	TestEqual(TEXT("Weather test map keeps its complete owned Greybox set"), OwnedActorCount, 9);
+	TestEqual(TEXT("Weather test map has one readable runtime wind Visualizer"), VisualizerCount, 1);
+	TestNotNull(TEXT("Weather test map Visualizer uses the project native contract"), WeatherVisualizer);
+	TestEqual(TEXT("Weather Visualizer exposes twenty-four moving beads"), WeatherVisualizer ? WeatherVisualizer->GetFlowBeadCount() : 0, 24);
+	TestTrue(TEXT("Weather Visualizer shows the runtime readout by default"), WeatherVisualizer && WeatherVisualizer->bShowOnScreenReadout);
+	TestTrue(TEXT("Weather Visualizer enables the 1/2/3 mode comparison keys"), WeatherVisualizer && WeatherVisualizer->bEnableControlModeHotkeys);
+	TestTrue(TEXT("Weather Visualizer smooths displayed wind instead of snapping"),
+		WeatherVisualizer && WeatherVisualizer->FlowVelocityResponseSeconds > 0.0f);
 	if (WeatherController)
 	{
 		UDroneWeatherProfile* Profile = WeatherController->WeatherProfile.LoadSynchronous();

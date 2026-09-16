@@ -309,6 +309,9 @@ protected:
 
 	/** 개인화기 교전 중 몸 Yaw를 Drone 쪽으로 돌려 상체 시선 제한 밖 표적도 바라보게 한다. */
 	void UpdatePersonalWeaponFacing(float DeltaSeconds);
+	float GetPersonalWeaponFacingDeadZoneDegrees() const;
+	float GetPersonalWeaponFacingHysteresisDegrees() const;
+	float GetPersonalWeaponFacingTurnSpeedDegreesPerSecond() const;
 
 	/** MG 점유자는 포탑 뒤 조작점에 고정하고 포탑 중심을 바라보게 한다. */
 	bool AlignPawnToMGTurretOperator();
@@ -409,15 +412,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze")
 	bool bFaceDroneDuringPersonalWeaponResponse = true;
 
-	/** 개인화기 교전 중 몸 Yaw 회전 속도다. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze", meta=(ClampMin="0.0", ForceUnits="deg/s"))
-	float PersonalWeaponFacingTurnSpeedDegreesPerSecond = 180.0f;
-
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Gaze")
 	FRotator SmoothedDroneLookRotation = FRotator::ZeroRotator;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Gaze")
 	float DroneLookAlpha = 0.0f;
+
+	/** 시작각과 정지각을 분리해 경계에서 몸/고개가 좌우 왕복하지 않게 하는 런타임 상태다. */
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Gaze")
+	bool bPersonalWeaponFacingTurnActive = false;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Perception")
 	int32 DroneSearchStartCount = 0;

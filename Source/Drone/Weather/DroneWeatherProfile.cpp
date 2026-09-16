@@ -31,6 +31,9 @@ bool UDroneWeatherProfile::ValidateProfile(FString& OutError) const
 		|| !FMath::IsFinite(Wind.GustAdditionalSpeedMetersPerSecond)
 		|| !FMath::IsFinite(Wind.GustIntervalSeconds.X)
 		|| !FMath::IsFinite(Wind.GustIntervalSeconds.Y)
+		|| !FMath::IsFinite(Wind.GustAttackSeconds)
+		|| !FMath::IsFinite(Wind.GustReleaseSeconds)
+		|| !FMath::IsFinite(Wind.DirectionResponseSeconds)
 		|| !FMath::IsFinite(Wind.Turbulence01)
 		|| !FMath::IsFinite(Wind.VerticalGustMetersPerSecond)
 		|| !FMath::IsFinite(Wind.DroneWindResponseMultiplier)
@@ -38,6 +41,9 @@ bool UDroneWeatherProfile::ValidateProfile(FString& OutError) const
 		|| Wind.GustAdditionalSpeedMetersPerSecond < 0.0f
 		|| Wind.GustIntervalSeconds.X < 0.1f
 		|| Wind.GustIntervalSeconds.Y < Wind.GustIntervalSeconds.X
+		|| !FMath::IsWithinInclusive(Wind.GustAttackSeconds, 0.01f, 10.0f)
+		|| !FMath::IsWithinInclusive(Wind.GustReleaseSeconds, 0.01f, 10.0f)
+		|| !FMath::IsWithinInclusive(Wind.DirectionResponseSeconds, 0.01f, 10.0f)
 		|| !FMath::IsWithinInclusive(Wind.Turbulence01, 0.0f, 1.0f)
 		|| Wind.VerticalGustMetersPerSecond < 0.0f
 		|| !FMath::IsWithinInclusive(Wind.DroneWindResponseMultiplier, 0.0f, 2.0f))

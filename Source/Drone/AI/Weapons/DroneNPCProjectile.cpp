@@ -3,9 +3,11 @@
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
 
 ADroneNPCProjectile::ADroneNPCProjectile()
@@ -31,7 +33,7 @@ ADroneNPCProjectile::ADroneNPCProjectile()
 	ProjectileVisual->SetGenerateOverlapEvents(false);
 	ProjectileVisual->SetCanEverAffectNavigation(false);
 	ProjectileVisual->SetCastShadow(false);
-	ProjectileVisual->SetRelativeScale3D(FVector(0.08f));
+	ProjectileVisual->SetRelativeScale3D(FVector(0.06f));
 
 	// 별도 Asset 구매 전에도 탄속과 회피 여부를 눈으로 검증할 수 있는 Engine 기본 Greybox다.
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(
@@ -39,6 +41,32 @@ ADroneNPCProjectile::ADroneNPCProjectile()
 	if (SphereMesh.Succeeded())
 	{
 		ProjectileVisual->SetStaticMesh(SphereMesh.Object);
+	}
+
+	ProjectileTrailVisual = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ProjectileTrailVisual"));
+	ProjectileTrailVisual->SetupAttachment(CollisionComponent);
+	ProjectileTrailVisual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ProjectileTrailVisual->SetGenerateOverlapEvents(false);
+	ProjectileTrailVisual->SetCanEverAffectNavigation(false);
+	ProjectileTrailVisual->SetCastShadow(false);
+	ProjectileTrailVisual->SetRelativeLocation(FVector(-30.0f, 0.0f, 0.0f));
+	ProjectileTrailVisual->SetRelativeScale3D(FVector(0.60f, 0.018f, 0.018f));
+
+	// 별도 FX Asset 전에도 빠른 작은 Pellet을 짧은 선으로 판독할 수 있게 한다.
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(
+		TEXT("/Engine/BasicShapes/Cube.Cube"));
+	if (CubeMesh.Succeeded())
+	{
+		ProjectileTrailVisual->SetStaticMesh(CubeMesh.Object);
+	}
+	// Greybox Rifle/MG/무인 포탑은 별도 FX가 없어도 멀리서 발광 탄두와 짧은 꼬리를 읽을 수 있다.
+	// Shotgun Blueprint는 자체 비드/꼬리 Scale을 덮어쓰므로 역할별 수치는 계속 BP에서 조절한다.
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> TracerGlowMaterial(
+		TEXT("/Game/Drone/AI/Materials/M_ShotgunPelletGlow.M_ShotgunPelletGlow"));
+	if (TracerGlowMaterial.Succeeded())
+	{
+		ProjectileVisual->SetMaterial(0, TracerGlowMaterial.Object);
+		ProjectileTrailVisual->SetMaterial(0, TracerGlowMaterial.Object);
 	}
 
 	ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
@@ -84,6 +112,21 @@ void ADroneNPCProjectile::InitializeProjectile(
 	{
 		// Editor 시험 World처럼 BeginPlay가 생략되는 경우에도 자기 충돌 방지 계약을 유지한다.
 		CollisionComponent->IgnoreActorWhenMoving(OwnerActor, true);
+		// 같은 총구에서 동시에 나온 Shotgun Pellet은 WorldDynamic 서로를 Block한다.
+		// 첫 이동 Tick 전에 양쪽 Sweep Ignore를 등록해 Pellet끼리 사라지는 현상을 막는다.
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<ADroneNPCProjectile> It(World); It; ++It)
+			{
+				ADroneNPCProjectile* OtherProjectile = *It;
+				if (OtherProjectile == this || OtherProjectile->GetOwner() != OwnerActor)
+				{
+					continue;
+				}
+				CollisionComponent->IgnoreActorWhenMoving(OtherProjectile, true);
+				OtherProjectile->CollisionComponent->IgnoreActorWhenMoving(this, true);
+			}
+		}
 	}
 
 	ProjectileMovement->InitialSpeed = ProjectileSpeed;

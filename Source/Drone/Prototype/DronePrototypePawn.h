@@ -123,9 +123,21 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control|Acro")
 	FRotator GetCurrentAcroBodyRateSetpointDegreesPerSecond() const;
 
+	/** 응답 지연이 적용된 현재 Body 각속도다. HUD/튜닝 및 자동화 검증에 사용한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control|Acro")
+	FRotator GetCurrentAcroBodyRateDegreesPerSecond() const { return CurrentAcroBodyRateDegreesPerSecond; }
+
 	/** 자동화 테스트와 Blueprint 조종기 UI가 -1~+1 Rate 입력을 같은 경로로 공급한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control|Acro")
 	void SetAcroRateInputGreybox(float PitchInput, float RollInput, float YawInput);
+
+	/** -1=무추력, 0=호버, +1=최대 추력으로 해석하는 Acro 스로틀 입력이다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control|Acro")
+	void SetAcroThrottleInputGreybox(float ThrottleInput);
+
+	/** 현재 스로틀 입력을 0~1 실제 추력 위치로 변환한 값이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control|Acro")
+	float GetCurrentAcroThrottleNormalized() const;
 
 	/** Betaflight Actual Rates의 중앙 감도/최대 각속도/Expo 의미를 사용하는 단일 축 계산이다. */
 	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control|Acro")
@@ -295,6 +307,19 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UInputAction> CameraPitchRateAction;
 
+	/** Acro 전용 입력은 공용 이동 Action과 분리해 키보드와 Mode 2 패드 축이 서로 덮어쓰지 않게 한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input|Acro", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UInputAction> AcroPitchAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input|Acro", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UInputAction> AcroRollAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input|Acro", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UInputAction> AcroYawAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input|Acro", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UInputAction> AcroThrottleAction;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UInputAction> ToggleViewAction;
 
@@ -462,6 +487,14 @@ private:
 	void Look(const FInputActionValue& Value);
 	void ChangeCameraPitch(const FInputActionValue& Value);
 	void ResetCameraPitchInput(const FInputActionValue& Value);
+	void ChangeAcroPitch(const FInputActionValue& Value);
+	void ResetAcroPitchInput(const FInputActionValue& Value);
+	void ChangeAcroRoll(const FInputActionValue& Value);
+	void ResetAcroRollInput(const FInputActionValue& Value);
+	void ChangeAcroYaw(const FInputActionValue& Value);
+	void ResetAcroYawInput(const FInputActionValue& Value);
+	void ChangeAcroThrottle(const FInputActionValue& Value);
+	void ResetAcroThrottleInput(const FInputActionValue& Value);
 	void ToggleViewFromInput(const FInputActionValue& Value);
 	void TriggerPrimaryRoleAbilityFromInput(const FInputActionValue& Value);
 	void TriggerSecondaryRoleAbilityFromInput(const FInputActionValue& Value);
@@ -471,6 +504,7 @@ private:
 	void ApplyRuntimeFlightTuning();
 	const FDroneControlModeTuning& ResolveCurrentControlModeTuning() const;
 	void UpdateControlAttitude(float DeltaSeconds);
+	void UpdateAcroFlightPhysics(float DeltaSeconds);
 	void LimitAcroVerticalSpeed();
 	void UpdateVisualBank(float DeltaSeconds);
 	void UpdateRotorVisuals(float DeltaSeconds);
@@ -498,6 +532,8 @@ private:
 	float VisualBankLateralInput = 0.0f;
 	float VisualTiltForwardInput = 0.0f;
 	float AcroYawInput = 0.0f;
+	float AcroThrottleInput = 0.0f;
+	FRotator CurrentAcroBodyRateDegreesPerSecond = FRotator::ZeroRotator;
 	TArray<TWeakObjectPtr<UStaticMeshComponent>> RotorVisualComponents;
 	bool bFirstPersonViewEnabled = false;
 	bool bDropCameraViewEnabled = false;
