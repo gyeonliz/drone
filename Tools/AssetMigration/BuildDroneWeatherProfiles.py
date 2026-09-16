@@ -18,6 +18,9 @@ PROFILES = {
             base_speed_meters_per_second=0.0,
             gust_additional_speed_meters_per_second=0.0,
             gust_interval_seconds=unreal.Vector2D(2.0, 8.0),
+            gust_attack_seconds=0.65,
+            gust_release_seconds=1.50,
+            direction_response_seconds=0.80,
             turbulence01=0.0,
             vertical_gust_meters_per_second=0.0,
             drone_wind_response_multiplier=1.0,
@@ -42,6 +45,9 @@ PROFILES = {
             base_speed_meters_per_second=4.0,
             gust_additional_speed_meters_per_second=2.0,
             gust_interval_seconds=unreal.Vector2D(3.0, 7.0),
+            gust_attack_seconds=0.80,
+            gust_release_seconds=1.80,
+            direction_response_seconds=1.00,
             turbulence01=0.2,
             vertical_gust_meters_per_second=0.4,
             drone_wind_response_multiplier=1.0,
@@ -67,6 +73,9 @@ PROFILES = {
             base_speed_meters_per_second=8.0,
             gust_additional_speed_meters_per_second=2.7,
             gust_interval_seconds=unreal.Vector2D(2.0, 5.0),
+            gust_attack_seconds=0.45,
+            gust_release_seconds=1.20,
+            direction_response_seconds=0.65,
             turbulence01=0.35,
             vertical_gust_meters_per_second=0.8,
             drone_wind_response_multiplier=1.0,
@@ -126,5 +135,5 @@ for name, values in PROFILES.items():
 
 unreal.log(
     "DRONE_WEATHER_PROFILES_OK|clear=1|light_wind=1|rain_storm_greybox=1|"
-    "runtime_hz=10|rain_visual_assets=0"
+    "runtime_hz=10|gust_attack_release=1|direction_response=1|rain_visual_assets=0"
 )

@@ -224,6 +224,38 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 			// Rate/Acro는 Stick 끝에서 Profile 최대 각속도를 내고 Stick을 놓으면 자동 수평 복귀하지 않는다.
 			Pawn->SetActorRotation(FRotator::ZeroRotator);
 			Pawn->SetControlMode(EDroneControlMode::AcroRateRealisticGreybox);
+			Pawn->SetAcroRateInputGreybox(0.0f, 0.0f, 0.0f);
+			Pawn->SetAcroThrottleInputGreybox(0.0f);
+			Pawn->GetPrototypeMovementComponent()->Velocity = FVector::ZeroVector;
+			Pawn->Tick(0.1f);
+			TestTrue(TEXT("Centered Acro throttle balances gravity while level"),
+				FMath::Abs(Pawn->GetPrototypeMovementComponent()->Velocity.Z) < 0.1f);
+
+			Pawn->SetAcroThrottleInputGreybox(1.0f);
+			Pawn->GetPrototypeMovementComponent()->Velocity = FVector::ZeroVector;
+			Pawn->Tick(0.1f);
+			TestTrue(TEXT("Positive Acro throttle climbs"),
+				Pawn->GetPrototypeMovementComponent()->Velocity.Z > 1.0f);
+			Pawn->SetAcroThrottleInputGreybox(-1.0f);
+			Pawn->GetPrototypeMovementComponent()->Velocity = FVector::ZeroVector;
+			Pawn->Tick(0.1f);
+			TestTrue(TEXT("Negative Acro throttle removes thrust and descends"),
+				Pawn->GetPrototypeMovementComponent()->Velocity.Z < -1.0f);
+
+			Pawn->SetAcroThrottleInputGreybox(0.0f);
+			Pawn->GetPrototypeMovementComponent()->Velocity = FVector::ZeroVector;
+			Pawn->SetAcroRateInputGreybox(0.35f, 0.0f, 0.0f);
+			for (int32 Step = 0; Step < 20; ++Step)
+			{
+				Pawn->Tick(0.01f);
+			}
+			TestTrue(TEXT("Nose-down Acro attitude creates forward thrust"),
+				FVector::DotProduct(
+					Pawn->GetPrototypeMovementComponent()->Velocity,
+					FVector::ForwardVector) > 1.0f);
+
+			Pawn->SetActorRotation(FRotator::ZeroRotator);
+			Pawn->GetPrototypeMovementComponent()->Velocity = FVector::ZeroVector;
 			Pawn->SetAcroRateInputGreybox(1.0f, 1.0f, 1.0f);
 			const FRotator FullStickRates = Pawn->GetCurrentAcroBodyRateSetpointDegreesPerSecond();
 			TestTrue(TEXT("Full forward stick commands maximum nose-down pitch rate"), FMath::IsNearlyEqual(
@@ -236,11 +268,17 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 				FullStickRates.Yaw,
 				Definition->FlightProfile.AcroRateSettings.MaximumYawRateDegreesPerSecond));
 			Pawn->Tick(0.1f);
-			const FQuat RotationBeforeCenteredStick = Pawn->GetActorQuat();
 			Pawn->SetAcroRateInputGreybox(0.0f, 0.0f, 0.0f);
-			Pawn->Tick(0.1f);
-			TestTrue(TEXT("Centered Rate/Acro sticks retain the current attitude"),
-				FQuat::ErrorAutoNormalize(RotationBeforeCenteredStick, Pawn->GetActorQuat()) < 0.001f);
+			for (int32 Step = 0; Step < 100; ++Step)
+			{
+				Pawn->Tick(0.01f);
+			}
+			const FQuat RotationAfterRateSettled = Pawn->GetActorQuat();
+			Pawn->Tick(0.01f);
+			TestTrue(TEXT("Centered Rate/Acro sticks stop body rate without auto-leveling"),
+				Pawn->GetCurrentAcroBodyRateDegreesPerSecond().IsNearlyZero(0.01f)
+				&& FQuat::ErrorAutoNormalize(RotationAfterRateSettled, Pawn->GetActorQuat()) < 0.001f
+				&& FQuat::ErrorAutoNormalize(FQuat::Identity, Pawn->GetActorQuat()) > 0.01f);
 		}
 		TestTrue(
 			TEXT("Maximum health matches the Definition"),

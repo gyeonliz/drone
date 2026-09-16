@@ -62,4 +62,16 @@ struct FDroneNPCProfile
 	/** Hostile NPC가 DroneDetected 뒤 MG Turret 후보를 검색할 수 있는지 여부다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="NPC")
 	bool bCanUseMGTurret = false;
+
+	/** 개인화기 교전 중 정면의 작은 표적 이동을 몸/고개가 왕복 추종하지 않게 하는 Yaw 허용각이다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="NPC|Gaze", meta=(ClampMin="0.0", ClampMax="30.0", ForceUnits="deg"))
+	float PersonalWeaponFacingDeadZoneDegrees = 3.0f;
+
+	/** 데드존 경계에서 몸 회전이 On/Off를 반복하지 않게 회전 시작각에 더하는 여유각이다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="NPC|Gaze", meta=(ClampMin="0.0", ClampMax="30.0", ForceUnits="deg"))
+	float PersonalWeaponFacingHysteresisDegrees = 3.0f;
+
+	/** 개인화기 교전 중 몸이 표적 Yaw를 따라가는 최대 회전속도다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="NPC|Gaze", meta=(ClampMin="0.0", ForceUnits="deg/s"))
+	float PersonalWeaponFacingTurnSpeedDegreesPerSecond = 180.0f;
 };

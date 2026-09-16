@@ -29,6 +29,29 @@ bool FDroneFlightProfile::ValidateProfile(FString& OutError) const
 		OutError = TEXT("Acro 최대 수직 속도는 0보다 커야 합니다.");
 		return false;
 	}
+	if (!FMath::IsWithinInclusive(AcroRateSettings.HoverThrottleNormalized, 0.05f, 0.95f))
+	{
+		OutError = TEXT("Acro 호버 스로틀은 0.05~0.95 범위여야 합니다.");
+		return false;
+	}
+	if (!FMath::IsFinite(AcroRateSettings.GravityAccelerationCentimetersPerSecondSquared)
+		|| AcroRateSettings.GravityAccelerationCentimetersPerSecondSquared <= 0.0f)
+	{
+		OutError = TEXT("Acro 중력 가속도는 0보다 커야 합니다.");
+		return false;
+	}
+	if (!FMath::IsFinite(AcroRateSettings.LinearDragPerSecond)
+		|| AcroRateSettings.LinearDragPerSecond < 0.0f)
+	{
+		OutError = TEXT("Acro 선형 항력은 0 이상이어야 합니다.");
+		return false;
+	}
+	if (!FMath::IsFinite(AcroRateSettings.BodyRateResponseTimeSeconds)
+		|| AcroRateSettings.BodyRateResponseTimeSeconds <= 0.0f)
+	{
+		OutError = TEXT("Acro Body Rate 응답 시간은 0보다 커야 합니다.");
+		return false;
+	}
 
 	if (!FMath::IsFinite(MaxSpeedCentimetersPerSecond) || MaxSpeedCentimetersPerSecond <= 0.0f)
 	{

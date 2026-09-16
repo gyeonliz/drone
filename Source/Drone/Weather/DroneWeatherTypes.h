@@ -21,6 +21,18 @@ struct DRONE_API FDroneWindSettings
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Wind|Gust", meta=(ClampMin="0.1", ForceUnits="s"))
 	FVector2D GustIntervalSeconds = FVector2D(2.0f, 8.0f);
 
+	/** 새 돌풍 세기가 커질 때 목표값을 따라가는 시간이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Wind|Gust", meta=(ClampMin="0.01", ClampMax="10.0", ForceUnits="s"))
+	float GustAttackSeconds = 0.65f;
+
+	/** 돌풍 세기가 작아질 때 잦은 꺼짐처럼 보이지 않도록 천천히 빠지는 시간이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Wind|Gust", meta=(ClampMin="0.01", ClampMax="10.0", ForceUnits="s"))
+	float GustReleaseSeconds = 1.50f;
+
+	/** 풍향 변화가 최단각으로 새 목표를 따라가는 시간이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Wind|Gust", meta=(ClampMin="0.01", ClampMax="10.0", ForceUnits="s"))
+	float DirectionResponseSeconds = 0.80f;
+
 	/** 풍향을 좌우 최대 20도까지 흔들고 돌풍 변화를 빠르게 만드는 0~1 Greybox 값이다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Wind|Gust", meta=(ClampMin="0.0", ClampMax="1.0"))
 	float Turbulence01 = 0.0f;

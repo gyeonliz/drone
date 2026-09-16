@@ -78,6 +78,14 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Projectile")
 	UProjectileMovementComponent* GetProjectileMovement() const { return ProjectileMovement; }
 
+	/** Blueprint 자식에서 실제 탄두 Mesh/Material을 교체하는 중심 Visual이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Projectile|Visual")
+	UStaticMeshComponent* GetProjectileVisual() const { return ProjectileVisual; }
+
+	/** Mesh가 없어도 비행 방향을 읽기 쉽게 하는 짧은 Tracer Visual이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Projectile|Visual")
+	UStaticMeshComponent* GetProjectileTrailVisual() const { return ProjectileTrailVisual; }
+
 	UPROPERTY(BlueprintAssignable, Category="Drone|AI|Projectile")
 	FDroneNPCProjectileImpactSignature OnProjectileImpact;
 
@@ -90,6 +98,10 @@ protected:
 	/** 기본 Engine Sphere는 Greybox 확인용이다. 최종 탄환/Tracer Mesh는 BP에서 바꾼다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Projectile|Components")
 	TObjectPtr<UStaticMeshComponent> ProjectileVisual;
+
+	/** 기본 Engine Cube Tracer다. Blueprint 자식에서 Mesh/Material/Transform을 자유롭게 교체할 수 있다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Projectile|Components")
+	TObjectPtr<UStaticMeshComponent> ProjectileTrailVisual;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Projectile|Components")
 	TObjectPtr<UProjectileMovementComponent> ProjectileMovement;

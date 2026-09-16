@@ -666,7 +666,7 @@ private:
 			if (WeaponComponent)
 			{
 				Test->TestEqual(TEXT("Rifle greybox damage is 10"), WeaponComponent->GetRifleDamage(), 10.0f);
-				Test->TestEqual(TEXT("Shotgun pellet greybox damage is 8"), WeaponComponent->GetShotgunDamagePerPellet(), 8.0f);
+				Test->TestEqual(TEXT("Shotgun pellet greybox damage is 3"), WeaponComponent->GetShotgunDamagePerPellet(), 3.0f);
 				WeaponComponent->ConfigureDamageGreybox(0.0f, 0.0f);
 			}
 		}

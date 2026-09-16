@@ -77,6 +77,10 @@ def make_acro_rates(
     pitch_roll_expo=0.30,
     yaw_expo=0.20,
     maximum_vertical_speed=900.0,
+    hover_throttle=0.50,
+    gravity_acceleration=980.0,
+    linear_drag=0.12,
+    body_rate_response_time=0.08,
 ):
     """Betaflight Actual Rates 의미를 쓰는 프로젝트 조정값을 만든다."""
     return unreal.DroneAcroRateSettings(
@@ -88,6 +92,10 @@ def make_acro_rates(
         pitch_roll_expo=pitch_roll_expo,
         yaw_expo=yaw_expo,
         maximum_world_vertical_speed_centimeters_per_second=maximum_vertical_speed,
+        hover_throttle_normalized=hover_throttle,
+        gravity_acceleration_centimeters_per_second_squared=gravity_acceleration,
+        linear_drag_per_second=linear_drag,
+        body_rate_response_time_seconds=body_rate_response_time,
     )
 
 

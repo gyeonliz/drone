@@ -1,4 +1,4 @@
-"""Create or validate the isolated Shotgun NPC systems test map.
+"""Create or validate the isolated Shotgun NPC systems test map and Pellet Blueprint.
 
 The existing Smart Object greybox keeps its original Rifle/Shotgun/Friendly
 population.  This script owns only actors tagged DroneShotgunSystemsTest.Owned
@@ -22,6 +22,10 @@ MAP_PATH = f"{MAP_FOLDER}/Lvl_DroneShotgunSystemsTest"
 TRAINING_MAP_PATH = "/Game/Drone/Maps/Lvl_DroneTraining"
 GAME_MODE_BLUEPRINT_PATH = "/Game/Drone/Prototype/Blueprints/BP_DronePrototypeGameMode"
 SHOTGUN_NPC_BLUEPRINT_PATH = "/Game/Drone/AI/Blueprints/BP_NPC_Hostile_Shotgun"
+PELLET_BLUEPRINT_FOLDER = "/Game/Drone/AI/Blueprints/Projectiles"
+PELLET_BLUEPRINT_NAME = "BP_ShotgunPelletProjectile"
+PELLET_BLUEPRINT_PATH = f"{PELLET_BLUEPRINT_FOLDER}/{PELLET_BLUEPRINT_NAME}"
+PELLET_PARENT_CLASS_PATH = "/Script/Drone.DroneNPCProjectile"
 CUBE_PATH = "/Engine/BasicShapes/Cube"
 
 OWNED_TAG = unreal.Name("DroneShotgunSystemsTest.Owned")
@@ -63,6 +67,68 @@ def load_native_class(path: str) -> unreal.Class:
     actor_class = unreal.load_class(None, path)
     require(actor_class is not None, f"Missing native Class: {path}")
     return actor_class
+
+
+def compile_blueprint(blueprint: unreal.Blueprint) -> None:
+    unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+    require(
+        blueprint.get_editor_property("status") != unreal.BlueprintStatus.BS_ERROR,
+        f"Blueprint compile failed: {blueprint.get_path_name()}",
+    )
+
+
+def ensure_shotgun_pellet_assets(editor_assets: unreal.EditorAssetSubsystem) -> unreal.Class:
+    parent_class = load_native_class(PELLET_PARENT_CLASS_PATH)
+    unreal.EditorAssetLibrary.make_directory(PELLET_BLUEPRINT_FOLDER)
+    pellet_blueprint = editor_assets.load_asset(PELLET_BLUEPRINT_PATH)
+    created_pellet_blueprint = pellet_blueprint is None
+    if pellet_blueprint is None:
+        factory = unreal.BlueprintFactory()
+        factory.set_editor_property("parent_class", parent_class)
+        pellet_blueprint = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+            PELLET_BLUEPRINT_NAME,
+            PELLET_BLUEPRINT_FOLDER,
+            unreal.Blueprint.static_class(),
+            factory,
+            overwrite_existing=False,
+        )
+        log(f"CREATED_PELLET_BLUEPRINT|{PELLET_BLUEPRINT_PATH}")
+    require(isinstance(pellet_blueprint, unreal.Blueprint), f"Missing Pellet Blueprint: {PELLET_BLUEPRINT_PATH}")
+    require(
+        unreal.BlueprintEditorLibrary.get_blueprint_parent_class(pellet_blueprint) == parent_class,
+        f"Pellet Blueprint parent mismatch: {PELLET_BLUEPRINT_PATH}",
+    )
+    compile_blueprint(pellet_blueprint)
+    pellet_cdo = unreal.get_default_object(pellet_blueprint.generated_class())
+    require(pellet_cdo is not None, "Pellet Blueprint CDO is unavailable")
+    projectile_visual = pellet_cdo.get_projectile_visual()
+    projectile_trail = pellet_cdo.get_projectile_trail_visual()
+    require(projectile_visual is not None, "Pellet core visual component is unavailable")
+    require(projectile_trail is not None, "Pellet tracer visual component is unavailable")
+    if created_pellet_blueprint:
+        require(editor_assets.save_loaded_asset(pellet_blueprint, only_if_is_dirty=False), "Could not save Pellet Blueprint")
+
+    shotgun_blueprint = editor_assets.load_asset(SHOTGUN_NPC_BLUEPRINT_PATH)
+    require(isinstance(shotgun_blueprint, unreal.Blueprint), f"Missing Shotgun Blueprint: {SHOTGUN_NPC_BLUEPRINT_PATH}")
+    compile_blueprint(shotgun_blueprint)
+    shotgun_cdo = unreal.get_default_object(shotgun_blueprint.generated_class())
+    require(shotgun_cdo is not None, "Shotgun Blueprint CDO is unavailable")
+    weapon = shotgun_cdo.get_npc_weapon_component()
+    require(weapon is not None, "Shotgun Blueprint Weapon Component is unavailable")
+    if created_pellet_blueprint:
+        shotgun_blueprint.modify()
+        shotgun_cdo.modify()
+        weapon.modify()
+        weapon.set_editor_property("shotgun_damage_per_pellet", 3.0)
+        weapon.set_editor_property("projectile_class", pellet_blueprint.generated_class())
+        compile_blueprint(shotgun_blueprint)
+        require(editor_assets.save_loaded_asset(shotgun_blueprint, only_if_is_dirty=False), "Could not save Shotgun Blueprint")
+        log("CONFIGURED_PELLET|count=8|damage_each=3|core_scale=0.025|tracer=1")
+    else:
+        require(abs(weapon.get_shotgun_damage_per_pellet() - 3.0) < 0.001, "Shotgun Pellet damage mismatch")
+        require(weapon.get_projectile_class() == pellet_blueprint.generated_class(), "Shotgun does not use its Pellet Blueprint")
+        log("VALIDATED_PELLET|count=8|damage_each=3|dedicated_class=1|tracer=1")
+    return pellet_blueprint.generated_class()
 
 
 def actor_by_label(actors: unreal.EditorActorSubsystem, label: str) -> unreal.Actor | None:
@@ -218,10 +284,14 @@ def validate_map(level_editor: unreal.LevelEditorSubsystem, actors: unreal.Edito
     weapon = shooter.get_npc_weapon_component()
     require(weapon is not None, "Shotgun Shooter Weapon Component is missing")
     require(weapon.get_shotgun_pellet_count() == 8, "Shotgun Pellet default mismatch")
-    require(abs(weapon.get_shotgun_spread_half_angle_degrees() - 6.0) < 0.001, "Shotgun Spread default mismatch")
+    require(abs(weapon.get_shotgun_spread_half_angle_degrees() - 12.0) < 0.001, "Shotgun Spread default mismatch")
     require(abs(weapon.get_shotgun_projectile_speed() - 3500.0) < 0.001, "Shotgun projectile speed mismatch")
+    require(abs(weapon.get_shotgun_damage_per_pellet() - 3.0) < 0.001, "Shotgun Pellet damage mismatch")
+    pellet_blueprint = unreal.EditorAssetLibrary.load_asset(PELLET_BLUEPRINT_PATH)
+    require(isinstance(pellet_blueprint, unreal.Blueprint), "Dedicated Pellet Blueprint is missing")
+    require(weapon.get_projectile_class() == pellet_blueprint.generated_class(), "Shotgun does not use its Pellet Blueprint")
     require(weapon.uses_projectile_ballistics(), "Shotgun Shooter must use projectile ballistics")
-    require(weapon.is_shotgun_debug_trace_enabled(), "Shotgun debug cone must be enabled in the test map")
+    require(not weapon.is_shotgun_debug_trace_enabled(), "Shotgun cyan debug rays must be disabled in the test map")
     hidden_weapon_visuals = [
         component
         for component in shooter.get_components_by_class(unreal.StaticMeshComponent)
@@ -248,6 +318,8 @@ def main() -> None:
     level_editor = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
     actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     require(editor_assets is not None and level_editor is not None and actors is not None, "Editor subsystems are unavailable")
+
+    ensure_shotgun_pellet_assets(editor_assets)
 
     map_exists = editor_assets.does_asset_exist(MAP_PATH)
     rebuild = os.environ.get("DRONE_SHOTGUN_TESTMAP_REBUILD") == "1"

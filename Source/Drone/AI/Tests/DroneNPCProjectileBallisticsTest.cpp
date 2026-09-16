@@ -7,6 +7,7 @@
 #include "AI/Weapons/DroneNPCWeaponComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Tests/AutomationEditorCommon.h"
 
 namespace
@@ -65,7 +66,22 @@ bool FDroneNPCProjectileBallisticsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Rifle default projectile speed is 4500 cm/s"), Weapon->GetRifleProjectileSpeed(), 4500.0f);
 	TestEqual(TEXT("Shotgun default projectile speed is 3500 cm/s"), Weapon->GetShotgunProjectileSpeed(), 3500.0f);
 	TestEqual(TEXT("Rifle default cone half-angle is 2.5 degrees"), Weapon->GetRifleSpreadHalfAngleDegrees(), 2.5f);
-	TestEqual(TEXT("Shotgun default cone half-angle is 6 degrees"), Weapon->GetShotgunSpreadHalfAngleDegrees(), 6.0f);
+	TestEqual(TEXT("Shotgun default cone half-angle is 12 degrees"), Weapon->GetShotgunSpreadHalfAngleDegrees(), 12.0f);
+	TestFalse(TEXT("Shotgun cyan debug rays are off by default"), Weapon->IsShotgunDebugTraceEnabled());
+	const ADroneNPCProjectile* ProjectileDefaults = GetDefault<ADroneNPCProjectile>();
+	const UStaticMeshComponent* DefaultCore = ProjectileDefaults ? ProjectileDefaults->GetProjectileVisual() : nullptr;
+	const UStaticMeshComponent* DefaultTrail = ProjectileDefaults ? ProjectileDefaults->GetProjectileTrailVisual() : nullptr;
+	TestTrue(TEXT("Rifle/MG core is at least five centimeters wide"),
+		DefaultCore && DefaultCore->GetRelativeScale3D().X >= 0.05f);
+	TestTrue(TEXT("Rifle/MG tracer is at least forty centimeters long"),
+		DefaultTrail && DefaultTrail->GetRelativeScale3D().X >= 0.40f);
+	const FString PrototypeGlowPath = TEXT("/Game/Drone/AI/Materials/M_ShotgunPelletGlow.M_ShotgunPelletGlow");
+	TestTrue(TEXT("Rifle/MG core uses the emissive prototype Material"),
+		DefaultCore && DefaultCore->GetMaterial(0)
+		&& DefaultCore->GetMaterial(0)->GetPathName() == PrototypeGlowPath);
+	TestTrue(TEXT("Rifle/MG tracer uses the emissive prototype Material"),
+		DefaultTrail && DefaultTrail->GetMaterial(0)
+		&& DefaultTrail->GetMaterial(0)->GetPathName() == PrototypeGlowPath);
 
 	Weapon->ConfigureWeapon(EDroneNPCWeaponType::Rifle);
 	Weapon->ConfigureRifleGreybox(2000.0f, 1.0f);

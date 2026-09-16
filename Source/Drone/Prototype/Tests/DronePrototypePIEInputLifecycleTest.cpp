@@ -45,10 +45,14 @@ constexpr const TCHAR* AltitudePath = TEXT("/Game/Drone/Prototype/Input/Actions/
 constexpr const TCHAR* YawPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_Yaw.IA_DronePrototype_Yaw");
 constexpr const TCHAR* LookPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_Look.IA_DronePrototype_Look");
 constexpr const TCHAR* CameraPitchRatePath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_CameraPitchRate.IA_DronePrototype_CameraPitchRate");
+constexpr const TCHAR* AcroPitchPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroPitch.IA_DronePrototype_AcroPitch");
+constexpr const TCHAR* AcroRollPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroRoll.IA_DronePrototype_AcroRoll");
+constexpr const TCHAR* AcroYawPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroYaw.IA_DronePrototype_AcroYaw");
+constexpr const TCHAR* AcroThrottlePath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroThrottle.IA_DronePrototype_AcroThrottle");
 constexpr const TCHAR* ToggleViewPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_ToggleView.IA_DronePrototype_ToggleView");
 constexpr const TCHAR* PrimaryAbilityPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_PrimaryAbility.IA_DronePrototype_PrimaryAbility");
 constexpr const TCHAR* SecondaryAbilityPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_SecondaryAbility.IA_DronePrototype_SecondaryAbility");
-constexpr int32 ExpectedMappingCount = 21;
+constexpr int32 ExpectedMappingCount = 33;
 constexpr double EffectSampleSeconds = 0.2;
 constexpr float TranslationTolerance = 0.01f;
 constexpr float RotationTolerance = 0.001f;
@@ -771,6 +775,10 @@ private:
 		UInputAction* Yaw = LoadObject<UInputAction>(nullptr, YawPath);
 		UInputAction* Look = LoadObject<UInputAction>(nullptr, LookPath);
 		UInputAction* CameraPitchRate = LoadObject<UInputAction>(nullptr, CameraPitchRatePath);
+		UInputAction* AcroPitch = LoadObject<UInputAction>(nullptr, AcroPitchPath);
+		UInputAction* AcroRoll = LoadObject<UInputAction>(nullptr, AcroRollPath);
+		UInputAction* AcroYaw = LoadObject<UInputAction>(nullptr, AcroYawPath);
+		UInputAction* AcroThrottle = LoadObject<UInputAction>(nullptr, AcroThrottlePath);
 		UInputAction* ToggleView = LoadObject<UInputAction>(nullptr, ToggleViewPath);
 		UInputAction* PrimaryAbility = LoadObject<UInputAction>(nullptr, PrimaryAbilityPath);
 		UInputAction* SecondaryAbility = LoadObject<UInputAction>(nullptr, SecondaryAbilityPath);
@@ -780,6 +788,10 @@ private:
 			|| !Yaw
 			|| !Look
 			|| !CameraPitchRate
+			|| !AcroPitch
+			|| !AcroRoll
+			|| !AcroYaw
+			|| !AcroThrottle
 			|| !ToggleView
 			|| !PrimaryAbility
 			|| !SecondaryAbility)
@@ -873,6 +885,10 @@ private:
 			Yaw,
 			Look,
 			CameraPitchRate,
+			AcroPitch,
+			AcroRoll,
+			AcroYaw,
+			AcroThrottle,
 			ToggleView,
 			PrimaryAbility,
 			SecondaryAbility};
@@ -969,7 +985,11 @@ private:
 
 			const bool bNeedsAxisReleaseReset = Action == Move
 				|| Action == Yaw
-				|| Action == CameraPitchRate;
+				|| Action == CameraPitchRate
+				|| Action == AcroPitch
+				|| Action == AcroRoll
+				|| Action == AcroYaw
+				|| Action == AcroThrottle;
 			const bool bIsStartedAction = Action == ToggleView
 				|| Action == PrimaryAbility
 				|| Action == SecondaryAbility;

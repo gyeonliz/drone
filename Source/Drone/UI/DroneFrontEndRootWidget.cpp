@@ -5,6 +5,8 @@
 #include "Components/Button.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
 #include "Components/Overlay.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
@@ -254,6 +256,7 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		DroneFrontEndUI::OpeningPanelName,
 		FLinearColor(0.005f, 0.012f, 0.018f, 1.0f));
 	OpeningPanel = NativeOpeningPanel;
+	NativeOpeningPanel->SetPadding(FMargin(96.0f, 72.0f));
 	UVerticalBox* OpeningColumn = WidgetTree->ConstructWidget<UVerticalBox>(
 		UVerticalBox::StaticClass(),
 		TEXT("OpeningColumn"));
@@ -262,17 +265,17 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 	OpeningTitleText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::OpeningTitleName);
-	OpeningTitleText->SetText(FText::FromString(TEXT("드론 운용 시스템")));
+	OpeningTitleText->SetText(FText::FromString(TEXT("PROJECT DRONER")));
 	OpeningTitleText->SetJustification(ETextJustify::Center);
 	OpeningTitleText->SetColorAndOpacity(FSlateColor(FLinearColor(0.20f, 0.95f, 0.82f, 1.0f)));
-	OpeningTitleText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 36.0f));
+	OpeningTitleText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 48.0f));
 	OpeningColumn->AddChildToVerticalBox(OpeningTitleText);
 
 	UTextBlock* PlaceholderText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(),
 		TEXT("OpeningPlaceholderText"));
 	PlaceholderText->SetText(FText::FromString(
-		TEXT("시작 트레일러가 준비되기 전 사용하는 정적 대체 화면입니다.")));
+		TEXT("작전 통제 시스템 연결 완료\n시작 트레일러 임시 프로토타입")));
 	PlaceholderText->SetJustification(ETextJustify::Center);
 	PlaceholderText->SetColorAndOpacity(FSlateColor(FLinearColor(0.72f, 0.82f, 0.85f, 1.0f)));
 	OpeningColumn->AddChildToVerticalBox(PlaceholderText);
@@ -292,6 +295,7 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		DroneFrontEndUI::LobbyPanelName,
 		FLinearColor(0.012f, 0.025f, 0.032f, 1.0f));
 	LobbyPanel = NativeLobbyPanel;
+	NativeLobbyPanel->SetPadding(FMargin(64.0f, 42.0f));
 	UVerticalBox* LobbyColumn = WidgetTree->ConstructWidget<UVerticalBox>(
 		UVerticalBox::StaticClass(),
 		TEXT("LobbyColumn"));
@@ -300,20 +304,57 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 	LobbyTitleText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::LobbyTitleName);
-	LobbyTitleText->SetText(FText::FromString(TEXT("작전 로비")));
-	LobbyTitleText->SetJustification(ETextJustify::Center);
+	LobbyTitleText->SetText(FText::FromString(TEXT("MISSION CONTROL  /  작전 선택")));
+	LobbyTitleText->SetJustification(ETextJustify::Left);
 	LobbyTitleText->SetColorAndOpacity(FSlateColor(FLinearColor(0.20f, 0.95f, 0.82f, 1.0f)));
-	LobbyTitleText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 32.0f));
-	LobbyColumn->AddChildToVerticalBox(LobbyTitleText);
+	LobbyTitleText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 34.0f));
+	if (UVerticalBoxSlot* TitleSlot = LobbyColumn->AddChildToVerticalBox(LobbyTitleText))
+	{
+		TitleSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+	}
 
 	LobbyStatusText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::LobbyStatusName);
 	LobbyStatusText->SetText(FText::FromString(
 		TEXT("미션을 선택해 상세 정보를 확인하세요.")));
-	LobbyStatusText->SetJustification(ETextJustify::Center);
+	LobbyStatusText->SetJustification(ETextJustify::Left);
 	LobbyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.72f, 0.82f, 0.85f, 1.0f)));
-	LobbyColumn->AddChildToVerticalBox(LobbyStatusText);
+	if (UVerticalBoxSlot* StatusSlot = LobbyColumn->AddChildToVerticalBox(LobbyStatusText))
+	{
+		StatusSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 28.0f));
+	}
+
+	UHorizontalBox* MissionWorkspace = WidgetTree->ConstructWidget<UHorizontalBox>(
+		UHorizontalBox::StaticClass(), TEXT("MissionWorkspace"));
+	if (UVerticalBoxSlot* WorkspaceSlot = LobbyColumn->AddChildToVerticalBox(MissionWorkspace))
+	{
+		WorkspaceSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	}
+
+	auto AddWorkspacePanel = [this, MissionWorkspace](const FName Name, const FLinearColor Color)
+	{
+		UBorder* Panel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), Name);
+		Panel->SetBrushColor(Color);
+		Panel->SetPadding(FMargin(24.0f));
+		if (UHorizontalBoxSlot* Slot = MissionWorkspace->AddChildToHorizontalBox(Panel))
+		{
+			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			Slot->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
+		}
+		UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		Panel->SetContent(Column);
+		return Column;
+	};
+
+	UVerticalBox* MissionListColumn = AddWorkspacePanel(
+		TEXT("MissionListPanel"), FLinearColor(0.018f, 0.045f, 0.055f, 0.98f));
+	UTextBlock* MissionListHeader = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(), TEXT("MissionListHeader"));
+	MissionListHeader->SetText(FText::FromString(TEXT("작전 목록")));
+	MissionListHeader->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18.0f));
+	MissionListHeader->SetColorAndOpacity(FSlateColor(FLinearColor(0.20f, 0.95f, 0.82f, 1.0f)));
+	MissionListColumn->AddChildToVerticalBox(MissionListHeader);
 
 	MissionSelectButton = WidgetTree->ConstructWidget<UButton>(
 		UButton::StaticClass(),
@@ -322,28 +363,58 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::MissionSelectButtonTextName);
 	MissionSelectButtonText->SetText(FText::FromString(TEXT("등록된 미션 없음")));
+	MissionSelectButtonText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 17.0f));
+	MissionSelectButtonText->SetColorAndOpacity(FSlateColor(FLinearColor(0.92f, 0.97f, 0.97f, 1.0f)));
 	MissionSelectButton->AddChild(MissionSelectButtonText);
-	LobbyColumn->AddChildToVerticalBox(MissionSelectButton);
+	MissionSelectButton->SetBackgroundColor(FLinearColor(0.04f, 0.16f, 0.18f, 1.0f));
+	if (UVerticalBoxSlot* MissionButtonSlot = MissionListColumn->AddChildToVerticalBox(MissionSelectButton))
+	{
+		MissionButtonSlot->SetPadding(FMargin(0.0f, 18.0f, 0.0f, 0.0f));
+	}
+
+	UVerticalBox* MissionCardColumn = AddWorkspacePanel(
+		TEXT("MissionCardPanel"), FLinearColor(0.025f, 0.055f, 0.065f, 0.98f));
+	UTextBlock* MissionCardHeader = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(), TEXT("MissionCardHeader"));
+	MissionCardHeader->SetText(FText::FromString(TEXT("선택 작전")));
+	MissionCardHeader->SetColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.90f, 0.83f, 1.0f)));
+	MissionCardColumn->AddChildToVerticalBox(MissionCardHeader);
 
 	MissionNameText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::MissionNameName);
 	MissionNameText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 24.0f));
 	MissionNameText->SetColorAndOpacity(FSlateColor(FLinearColor(0.90f, 0.96f, 0.96f, 1.0f)));
-	LobbyColumn->AddChildToVerticalBox(MissionNameText);
+	if (UVerticalBoxSlot* NameSlot = MissionCardColumn->AddChildToVerticalBox(MissionNameText))
+	{
+		NameSlot->SetPadding(FMargin(0.0f, 18.0f, 0.0f, 10.0f));
+	}
+
+	MissionMetaText = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(),
+		DroneFrontEndUI::MissionMetaName);
+	MissionMetaText->SetColorAndOpacity(FSlateColor(FLinearColor(0.20f, 0.95f, 0.82f, 1.0f)));
+	MissionCardColumn->AddChildToVerticalBox(MissionMetaText);
+
+	UVerticalBox* MissionDetailColumn = AddWorkspacePanel(
+		TEXT("MissionDetailPanel"), FLinearColor(0.014f, 0.034f, 0.043f, 0.98f));
+	UTextBlock* MissionDetailHeader = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(), TEXT("MissionDetailHeader"));
+	MissionDetailHeader->SetText(FText::FromString(TEXT("작전 개요")));
+	MissionDetailHeader->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18.0f));
+	MissionDetailHeader->SetColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.90f, 0.83f, 1.0f)));
+	MissionDetailColumn->AddChildToVerticalBox(MissionDetailHeader);
 
 	MissionDescriptionText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::MissionDescriptionName);
 	MissionDescriptionText->SetAutoWrapText(true);
 	MissionDescriptionText->SetColorAndOpacity(FSlateColor(FLinearColor(0.72f, 0.82f, 0.85f, 1.0f)));
-	LobbyColumn->AddChildToVerticalBox(MissionDescriptionText);
-
-	MissionMetaText = WidgetTree->ConstructWidget<UTextBlock>(
-		UTextBlock::StaticClass(),
-		DroneFrontEndUI::MissionMetaName);
-	MissionMetaText->SetColorAndOpacity(FSlateColor(FLinearColor(0.20f, 0.95f, 0.82f, 1.0f)));
-	LobbyColumn->AddChildToVerticalBox(MissionMetaText);
+	if (UVerticalBoxSlot* DescriptionSlot = MissionDetailColumn->AddChildToVerticalBox(MissionDescriptionText))
+	{
+		DescriptionSlot->SetPadding(FMargin(0.0f, 18.0f, 0.0f, 0.0f));
+		DescriptionSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	}
 
 	StartMissionButton = WidgetTree->ConstructWidget<UButton>(
 		UButton::StaticClass(),
@@ -352,14 +423,21 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		UTextBlock::StaticClass(),
 		TEXT("StartMissionButtonText"));
 	StartMissionText->SetText(FText::FromString(TEXT("미션 시작")));
+	StartMissionText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18.0f));
 	StartMissionButton->AddChild(StartMissionText);
-	LobbyColumn->AddChildToVerticalBox(StartMissionButton);
+	StartMissionButton->SetBackgroundColor(FLinearColor(0.08f, 0.65f, 0.56f, 1.0f));
+	if (UVerticalBoxSlot* StartSlot = LobbyColumn->AddChildToVerticalBox(StartMissionButton))
+	{
+		StartSlot->SetPadding(FMargin(0.0f, 24.0f, 0.0f, 0.0f));
+		StartSlot->SetHorizontalAlignment(HAlign_Center);
+	}
 
 	// FLOW-04의 영상 Asset이 없어도 전체 진입 흐름을 시험할 수 있는 정적 Briefing 안전망이다.
 	UBorder* NativeBriefingPanel = AddFullScreenPanel(
 		DroneFrontEndUI::MissionBriefingPanelName,
 		FLinearColor(0.008f, 0.018f, 0.025f, 1.0f));
 	MissionBriefingPanel = NativeBriefingPanel;
+	NativeBriefingPanel->SetPadding(FMargin(96.0f, 72.0f));
 	UVerticalBox* BriefingColumn = WidgetTree->ConstructWidget<UVerticalBox>(
 		UVerticalBox::StaticClass(),
 		TEXT("MissionBriefingColumn"));

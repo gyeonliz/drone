@@ -78,7 +78,7 @@ public:
 		float InRifleProjectileSpeed,
 		float InShotgunProjectileSpeed);
 
-	/** 현재 회색상자 피해량만 따로 조정한다. 기본값은 Rifle 10, Shotgun Pellet당 8이다. */
+	/** 현재 회색상자 피해량만 따로 조정한다. 기본값은 Rifle 10, Shotgun Pellet당 3이다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon|Damage")
 	void ConfigureDamageGreybox(float InRifleDamage, float InShotgunDamagePerPellet);
 
@@ -135,6 +135,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Projectile")
 	float GetShotgunProjectileSpeed() const { return ShotgunProjectileSpeed; }
+
+	/** 해당 무기 Blueprint가 선택한 탄환 외형/FX Blueprint Class다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Projectile")
+	TSubclassOf<ADroneNPCProjectile> GetProjectileClass() const { return ProjectileClass; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Weapon|Projectile|Debug")
 	int32 GetRifleProjectileSpawnCount() const { return RifleProjectileSpawnCount; }
@@ -390,10 +394,10 @@ private:
 
 	/** 모든 Pellet이 무작위로 퍼지는 원뿔 반각이다. 0이면 모든 Pellet이 조준점으로 향한다. */
 	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Shotgun", meta=(ClampMin="0.0", ClampMax="45.0", ForceUnits="deg"))
-	float ShotgunSpreadHalfAngleDegrees = 6.0f;
+	float ShotgunSpreadHalfAngleDegrees = 12.0f;
 
 	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Shotgun Debug")
-	bool bDrawShotgunDebugTrace = true;
+	bool bDrawShotgunDebugTrace = false;
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone AI Weapon Shotgun Debug")
 	int32 ShotgunVolleyAttemptCount = 0;
@@ -412,5 +416,5 @@ private:
 
 	/** 한 Volley가 아니라 Target에 실제 적중한 Pellet 하나당 적용하는 피해량이다. */
 	UPROPERTY(EditAnywhere, Category="Drone AI Weapon Damage", meta=(ClampMin="0.0"))
-	float ShotgunDamagePerPellet = 8.0f;
+	float ShotgunDamagePerPellet = 3.0f;
 };

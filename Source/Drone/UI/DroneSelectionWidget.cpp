@@ -5,8 +5,11 @@
 #include "Components/Button.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
 #include "Flow/DroneGameFlowSubsystem.h"
 #include "Flow/DroneMissionPlayerController.h"
 #include "Mission/DroneDefinition.h"
@@ -283,6 +286,7 @@ void UDroneSelectionWidget::BuildDefaultLayout()
 	WidgetTree->RootWidget = RootCanvas;
 	UBorder* Panel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), DroneSelectionUI::PanelName);
 	Panel->SetBrushColor(FLinearColor(0.008f, 0.018f, 0.025f, 0.97f));
+	Panel->SetPadding(FMargin(64.0f, 42.0f));
 	UCanvasPanelSlot* PanelSlot = RootCanvas->AddChildToCanvas(Panel);
 	PanelSlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
 	PanelSlot->SetOffsets(FMargin(0.0f));
@@ -291,10 +295,45 @@ void UDroneSelectionWidget::BuildDefaultLayout()
 	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("SelectionColumn"));
 	Panel->SetContent(Column);
 	MissionNameText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), DroneSelectionUI::MissionNameName);
-	MissionNameText->SetText(FText::FromString(TEXT("기체 선택")));
-	MissionNameText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 30.0f));
+	MissionNameText->SetText(FText::FromString(TEXT("DRONE LOADOUT  /  기체 선택")));
+	MissionNameText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 34.0f));
 	MissionNameText->SetColorAndOpacity(FSlateColor(FLinearColor(0.20f, 0.95f, 0.82f, 1.0f)));
-	Column->AddChildToVerticalBox(MissionNameText);
+	if (UVerticalBoxSlot* HeaderSlot = Column->AddChildToVerticalBox(MissionNameText))
+	{
+		HeaderSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 28.0f));
+	}
+
+	UHorizontalBox* Workspace = WidgetTree->ConstructWidget<UHorizontalBox>(
+		UHorizontalBox::StaticClass(), TEXT("DroneSelectionWorkspace"));
+	if (UVerticalBoxSlot* WorkspaceSlot = Column->AddChildToVerticalBox(Workspace))
+	{
+		WorkspaceSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	}
+	auto AddSelectionPanel = [this, Workspace](const FName Name, const FLinearColor Color)
+	{
+		UBorder* Section = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), Name);
+		Section->SetBrushColor(Color);
+		Section->SetPadding(FMargin(24.0f));
+		if (UHorizontalBoxSlot* Slot = Workspace->AddChildToHorizontalBox(Section))
+		{
+			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			Slot->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
+		}
+		UVerticalBox* SectionColumn = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		Section->SetContent(SectionColumn);
+		return SectionColumn;
+	};
+	UVerticalBox* DroneListColumn = AddSelectionPanel(
+		TEXT("DroneListPanel"), FLinearColor(0.018f, 0.045f, 0.055f, 0.98f));
+	UTextBlock* ListHeader = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("DroneListHeader"));
+	ListHeader->SetText(FText::FromString(TEXT("보유 기체")));
+	ListHeader->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18.0f));
+	ListHeader->SetColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.90f, 0.83f, 1.0f)));
+	DroneListColumn->AddChildToVerticalBox(ListHeader);
+	UVerticalBox* DroneDetailColumn = AddSelectionPanel(
+		TEXT("DroneDetailPanel"), FLinearColor(0.025f, 0.055f, 0.065f, 0.98f));
+	UVerticalBox* DroneControlColumn = AddSelectionPanel(
+		TEXT("DroneControlPanel"), FLinearColor(0.014f, 0.034f, 0.043f, 0.98f));
 
 	DroneButtons.Reset();
 	DroneButtonTexts.Reset();
@@ -305,8 +344,14 @@ void UDroneSelectionWidget::BuildDefaultLayout()
 			UTextBlock::StaticClass(),
 			DroneSelectionUI::GetDroneButtonTextName(Index));
 		ButtonText->SetText(FText::FromString(TEXT("기체 슬롯")));
+		ButtonText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 16.0f));
+		ButtonText->SetColorAndOpacity(FSlateColor(FLinearColor(0.92f, 0.97f, 0.97f, 1.0f)));
 		Button->AddChild(ButtonText);
-		Column->AddChildToVerticalBox(Button);
+		Button->SetBackgroundColor(FLinearColor(0.04f, 0.16f, 0.18f, 1.0f));
+		if (UVerticalBoxSlot* ButtonSlot = DroneListColumn->AddChildToVerticalBox(Button))
+		{
+			ButtonSlot->SetPadding(FMargin(0.0f, 14.0f, 0.0f, 0.0f));
+		}
 		DroneButtons.Add(Button);
 		DroneButtonTexts.Add(ButtonText);
 	}
@@ -314,34 +359,53 @@ void UDroneSelectionWidget::BuildDefaultLayout()
 	DroneNameText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), DroneSelectionUI::DroneNameName);
 	DroneNameText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 23.0f));
 	DroneNameText->SetColorAndOpacity(FSlateColor(FLinearColor(0.90f, 0.96f, 0.96f, 1.0f)));
-	Column->AddChildToVerticalBox(DroneNameText);
+	DroneDetailColumn->AddChildToVerticalBox(DroneNameText);
 	DroneDescriptionText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(), DroneSelectionUI::DroneDescriptionName);
 	DroneDescriptionText->SetAutoWrapText(true);
 	DroneDescriptionText->SetColorAndOpacity(FSlateColor(FLinearColor(0.72f, 0.82f, 0.85f, 1.0f)));
-	Column->AddChildToVerticalBox(DroneDescriptionText);
+	if (UVerticalBoxSlot* DescriptionSlot = DroneDetailColumn->AddChildToVerticalBox(DroneDescriptionText))
+	{
+		DescriptionSlot->SetPadding(FMargin(0.0f, 18.0f, 0.0f, 18.0f));
+	}
 	DroneProfileText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), DroneSelectionUI::DroneProfileName);
 	DroneProfileText->SetAutoWrapText(true);
 	DroneProfileText->SetColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.90f, 0.83f, 1.0f)));
-	Column->AddChildToVerticalBox(DroneProfileText);
+	DroneDetailColumn->AddChildToVerticalBox(DroneProfileText);
+
+	UTextBlock* ControlHeader = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("DroneControlHeader"));
+	ControlHeader->SetText(FText::FromString(TEXT("조작 설정")));
+	ControlHeader->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18.0f));
+	ControlHeader->SetColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.90f, 0.83f, 1.0f)));
+	DroneControlColumn->AddChildToVerticalBox(ControlHeader);
 
 	ControlModeButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), DroneSelectionUI::ControlModeButtonName);
 	ControlModeButtonText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(), DroneSelectionUI::ControlModeButtonTextName);
 	ControlModeButton->AddChild(ControlModeButtonText);
-	Column->AddChildToVerticalBox(ControlModeButton);
+	ControlModeButton->SetBackgroundColor(FLinearColor(0.04f, 0.16f, 0.18f, 1.0f));
+	if (UVerticalBoxSlot* ControlSlot = DroneControlColumn->AddChildToVerticalBox(ControlModeButton))
+	{
+		ControlSlot->SetPadding(FMargin(0.0f, 18.0f, 0.0f, 8.0f));
+	}
 	HandlingPresetButton = WidgetTree->ConstructWidget<UButton>(
 		UButton::StaticClass(), DroneSelectionUI::HandlingPresetButtonName);
 	HandlingPresetButtonText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(), DroneSelectionUI::HandlingPresetButtonTextName);
 	HandlingPresetButton->AddChild(HandlingPresetButtonText);
-	Column->AddChildToVerticalBox(HandlingPresetButton);
+	HandlingPresetButton->SetBackgroundColor(FLinearColor(0.04f, 0.16f, 0.18f, 1.0f));
+	DroneControlColumn->AddChildToVerticalBox(HandlingPresetButton);
 
 	LaunchDroneButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), DroneSelectionUI::LaunchButtonName);
 	UTextBlock* LaunchText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("LaunchDroneButtonText"));
 	LaunchText->SetText(FText::FromString(TEXT("선택 기체 출격")));
+	LaunchText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18.0f));
 	LaunchDroneButton->AddChild(LaunchText);
-	Column->AddChildToVerticalBox(LaunchDroneButton);
+	LaunchDroneButton->SetBackgroundColor(FLinearColor(0.08f, 0.65f, 0.56f, 1.0f));
+	if (UVerticalBoxSlot* LaunchSlot = DroneControlColumn->AddChildToVerticalBox(LaunchDroneButton))
+	{
+		LaunchSlot->SetPadding(FMargin(0.0f, 24.0f, 0.0f, 0.0f));
+	}
 	RefreshControlLabels();
 }
 

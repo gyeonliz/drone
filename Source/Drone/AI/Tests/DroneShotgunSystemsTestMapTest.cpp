@@ -6,7 +6,10 @@
 #include "AI/DroneNPCCharacter.h"
 #include "AI/DroneNPCNavigationFloor.h"
 #include "AI/DroneNPCProfileComponent.h"
+#include "AI/Weapons/DroneNPCProjectile.h"
 #include "AI/Weapons/DroneNPCWeaponComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Editor.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -29,6 +32,8 @@ constexpr const TCHAR* ShotgunNPCClassPath =
 	TEXT("/Game/Drone/AI/Blueprints/BP_NPC_Hostile_Shotgun.BP_NPC_Hostile_Shotgun_C");
 constexpr const TCHAR* GameModeClassPath =
 	TEXT("/Game/Drone/Prototype/Blueprints/BP_DronePrototypeGameMode.BP_DronePrototypeGameMode_C");
+constexpr const TCHAR* ShotgunPelletProjectileClassPath =
+	TEXT("/Game/Drone/AI/Blueprints/Projectiles/BP_ShotgunPelletProjectile.BP_ShotgunPelletProjectile_C");
 const FName ShooterTag(TEXT("DroneShotgunSystemsTest.Shooter"));
 
 UWorld* FindPIEWorld()
@@ -122,6 +127,23 @@ public:
 		{
 			return false;
 		}
+		if (bVolleyObserved && VolleyObservedAt == 0.0)
+		{
+			VolleyObservedAt = Now;
+		}
+		if (bVolleyObserved && Now - VolleyObservedAt < 0.08)
+		{
+			return false;
+		}
+		int32 LivePelletCount = 0;
+		for (TActorIterator<ADroneNPCProjectile> It(PIEWorld); It; ++It)
+		{
+			LivePelletCount += It->GetOwner() == ShotgunNPC
+				&& It->GetProjectileSource() == EDroneNPCProjectileSource::Shotgun ? 1 : 0;
+		}
+		Test->TestEqual(TEXT("All eight separately flying pellets remain alive after 80 ms"),
+			LivePelletCount,
+			Weapon ? Weapon->GetShotgunPelletCount() : 8);
 
 		Test->TestEqual(TEXT("Shotgun systems PIE has exactly one dedicated Shotgun NPC"), ShotgunNPCCount, 1);
 		Test->TestNotNull(TEXT("Shotgun systems PIE spawns the playable Drone"), Drone);
@@ -140,9 +162,17 @@ public:
 			Profile && Profile->GetProfile().WeaponType == EDroneNPCWeaponType::Shotgun);
 		Test->TestTrue(TEXT("Controller reports the Shotgun role"), Controller->UsesShotgun());
 		Test->TestFalse(TEXT("Shotgun NPC is not an MG operator"), Controller->CanUseMGTurret());
+		Test->TestEqual(
+			TEXT("Shotgun profile exposes a three-degree personal-weapon facing dead zone"),
+			Profile ? Profile->GetProfile().PersonalWeaponFacingDeadZoneDegrees : -1.0f,
+			3.0f);
+		Test->TestEqual(
+			TEXT("Shotgun profile exposes the personal-weapon facing turn speed"),
+			Profile ? Profile->GetProfile().PersonalWeaponFacingTurnSpeedDegreesPerSecond : -1.0f,
+			180.0f);
 		Test->TestTrue(TEXT("Shotgun uses moving Projectile ballistics"), Weapon->UsesProjectileBallistics());
 		Test->TestEqual(TEXT("Shotgun test keeps eight Pellets per Volley"), Weapon->GetShotgunPelletCount(), 8);
-		Test->TestEqual(TEXT("Shotgun test keeps a six-degree cone half-angle"), Weapon->GetShotgunSpreadHalfAngleDegrees(), 6.0f);
+		Test->TestEqual(TEXT("Shotgun test keeps a twelve-degree cone half-angle"), Weapon->GetShotgunSpreadHalfAngleDegrees(), 12.0f);
 		Test->TestEqual(TEXT("Shotgun test keeps 3500 cm/s projectile speed"), Weapon->GetShotgunProjectileSpeed(), 3500.0f);
 		Test->TestEqual(TEXT("Shotgun test keeps an eight-shell magazine"), Weapon->GetMagazineCapacity(), 8);
 		Test->TestTrue(TEXT("PIE observes at least one Shotgun Volley"), Weapon->GetShotgunVolleyAttemptCount() >= 1);
@@ -151,7 +181,7 @@ public:
 			Weapon->GetShotgunProjectileSpawnCount() >= Weapon->GetShotgunPelletCount());
 		Test->TestTrue(TEXT("Shotgun Volley consumes at least one shell"), Weapon->GetCurrentMagazineAmmo() < Weapon->GetMagazineCapacity());
 		Test->TestTrue(TEXT("Shotgun Volley emits its common fire event"), Weapon->GetWeaponFiredEventCount() >= 1);
-		Test->TestTrue(TEXT("Shotgun cone debug display is enabled for this test"), Weapon->IsShotgunDebugTraceEnabled());
+		Test->TestFalse(TEXT("Production shotgun hides cyan debug rays by default"), Weapon->IsShotgunDebugTraceEnabled());
 
 		const TArray<FVector>& PelletEnds = Weapon->GetLastShotgunPelletTraceEnds();
 		const TArray<FVector> BlueprintPelletEnds = Weapon->GetLastShotgunPelletEndpoints();
@@ -171,13 +201,13 @@ public:
 				FVector::DotProduct(CenterDirection, PelletDirection),
 				-1.0f,
 				1.0f)));
-			bEveryPelletInsideCone &= PelletAngleDegrees <= 6.01f;
+			bEveryPelletInsideCone &= PelletAngleDegrees <= 12.01f;
 			if (Index > 0)
 			{
 				bFoundSeparatedPellet |= !PelletEnds[Index].Equals(PelletEnds[0], 1.0f);
 			}
 		}
-		Test->TestTrue(TEXT("Every Projectile direction stays inside the six-degree cone"), bEveryPelletInsideCone);
+		Test->TestTrue(TEXT("Every Projectile direction stays inside the twelve-degree cone"), bEveryPelletInsideCone);
 		Test->TestTrue(TEXT("Shotgun Pellets use independently randomized directions"), bFoundSeparatedPellet);
 		return true;
 	}
@@ -203,9 +233,175 @@ private:
 
 	FAutomationTestBase* Test;
 	double StartedAt = 0.0;
+	double VolleyObservedAt = 0.0;
 	TWeakObjectPtr<ADroneNPCCharacter> LastNPC;
 	TWeakObjectPtr<ADroneNPCAIController> LastController;
 	TWeakObjectPtr<UDroneNPCWeaponComponent> LastWeapon;
+};
+
+/**
+ * 개인화기 NPC가 이미 표적 정면을 본 상태에서 작은 좌우 위치 변화까지 몸으로 따라가면
+ * 상체/고개가 화면상 계속 도리도리하는 것처럼 보인다. 조준선 안의 미세 변화는 몸 회전으로
+ * 넘기지 않는 안정화 계약을 실제 Shotgun NPC와 Controller Tick 경로에서 검증한다.
+ */
+class FValidatePersonalWeaponFacingStabilityPIECommand final : public IAutomationLatentCommand
+{
+public:
+	explicit FValidatePersonalWeaponFacingStabilityPIECommand(FAutomationTestBase* InTest)
+		: Test(InTest)
+	{
+	}
+
+	virtual bool Update() override
+	{
+		const double Now = FPlatformTime::Seconds();
+		if (StartedAt == 0.0)
+		{
+			StartedAt = Now;
+		}
+
+		UWorld* PIEWorld = FindPIEWorld();
+		if (!PIEWorld || !PIEWorld->HasBegunPlay())
+		{
+			return FinishOnTimeout(Now, TEXT("Shotgun facing stability PIE World is unavailable"));
+		}
+
+		ADroneNPCCharacter* ShotgunNPC = nullptr;
+		for (TActorIterator<ADroneNPCCharacter> It(PIEWorld); It; ++It)
+		{
+			if (It->ActorHasTag(ShooterTag))
+			{
+				ShotgunNPC = *It;
+				break;
+			}
+		}
+
+		ADronePrototypePawn* Drone = nullptr;
+		for (TActorIterator<ADronePrototypePawn> It(PIEWorld); It; ++It)
+		{
+			Drone = *It;
+			break;
+		}
+
+		ADroneNPCAIController* Controller = ShotgunNPC
+			? Cast<ADroneNPCAIController>(ShotgunNPC->GetController())
+			: nullptr;
+		if (!ShotgunNPC || !Drone || !Controller || !Controller->HasActiveDroneLookTarget())
+		{
+			return FinishOnTimeout(Now, TEXT("Shotgun NPC did not keep an active Drone target"));
+		}
+
+		if (!bAlignmentStarted)
+		{
+			bAlignmentStarted = true;
+			AlignmentStartedAt = Now;
+			const FVector NPCForward = ShotgunNPC->GetActorForwardVector().GetSafeNormal2D();
+			TargetCenter = ShotgunNPC->GetActorLocation()
+				+ NPCForward * 900.0f
+				+ FVector::UpVector * 150.0f;
+			Drone->SetActorLocation(TargetCenter, false, nullptr, ETeleportType::TeleportPhysics);
+			return false;
+		}
+
+		if (!bSamplingStarted)
+		{
+			Drone->SetActorLocation(TargetCenter, false, nullptr, ETeleportType::TeleportPhysics);
+			if (Now - AlignmentStartedAt < 0.35)
+			{
+				return false;
+			}
+
+			bSamplingStarted = true;
+			SamplingStartedAt = Now;
+			BaselineBodyYaw = ShotgunNPC->GetActorRotation().Yaw;
+			if (const USkeletalMeshComponent* Mesh = ShotgunNPC->GetMesh();
+				Mesh && Mesh->DoesSocketExist(TEXT("head")))
+			{
+				BaselineHeadYaw = Mesh->GetSocketRotation(TEXT("head")).Yaw;
+			}
+			const FRotator BaselineRotation(0.0f, BaselineBodyYaw, 0.0f);
+			TargetCenter = ShotgunNPC->GetActorLocation()
+				+ BaselineRotation.Vector() * 900.0f
+				+ FVector::UpVector * 150.0f;
+			TargetRight = FRotationMatrix(BaselineRotation).GetUnitAxis(EAxis::Y);
+		}
+
+		const double SamplingElapsed = Now - SamplingStartedAt;
+		const int32 AlternationIndex = FMath::FloorToInt(SamplingElapsed / 0.10);
+		const float Side = (AlternationIndex % 2 == 0) ? 1.0f : -1.0f;
+		// 900cm 전방에서 30cm 횡이동은 약 1.9도다. 자연스러운 정면 조준 허용 범위다.
+		Drone->SetActorLocation(
+			TargetCenter + TargetRight * 30.0f * Side,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+		MaxBodyYawExcursionDegrees = FMath::Max(
+			MaxBodyYawExcursionDegrees,
+			FMath::Abs(FMath::FindDeltaAngleDegrees(
+				BaselineBodyYaw,
+				ShotgunNPC->GetActorRotation().Yaw)));
+		if (const USkeletalMeshComponent* Mesh = ShotgunNPC->GetMesh();
+			Mesh && Mesh->DoesSocketExist(TEXT("head")))
+		{
+			const FRotator HeadRotation = Mesh->GetSocketRotation(TEXT("head"));
+			const float RelativeHeadYaw = FMath::FindDeltaAngleDegrees(BaselineHeadYaw, HeadRotation.Yaw);
+			if (!bHasHeadSample)
+			{
+				bHasHeadSample = true;
+				MinHeadYaw = MaxHeadYaw = RelativeHeadYaw;
+				MinHeadPitch = MaxHeadPitch = HeadRotation.Pitch;
+			}
+			else
+			{
+				MinHeadYaw = FMath::Min(MinHeadYaw, RelativeHeadYaw);
+				MaxHeadYaw = FMath::Max(MaxHeadYaw, RelativeHeadYaw);
+				MinHeadPitch = FMath::Min(MinHeadPitch, HeadRotation.Pitch);
+				MaxHeadPitch = FMath::Max(MaxHeadPitch, HeadRotation.Pitch);
+			}
+		}
+
+		if (SamplingElapsed < 1.0)
+		{
+			return false;
+		}
+
+		Test->TestTrue(
+			TEXT("Personal-weapon body facing ignores sub-three-degree target jitter"),
+			MaxBodyYawExcursionDegrees <= 0.75f);
+		Test->TestTrue(TEXT("Personal-weapon head does not shake side-to-side while tracking"),
+			bHasHeadSample && MaxHeadYaw - MinHeadYaw <= 4.0f);
+		Test->TestTrue(TEXT("Personal-weapon fire presentation does not nod the head repeatedly"),
+			bHasHeadSample && MaxHeadPitch - MinHeadPitch <= 8.0f);
+		return true;
+	}
+
+private:
+	bool FinishOnTimeout(const double Now, const TCHAR* Reason)
+	{
+		if (Now - StartedAt <= 5.0)
+		{
+			return false;
+		}
+		Test->AddError(FString::Printf(TEXT("%s after 5 seconds"), Reason));
+		return true;
+	}
+
+	FAutomationTestBase* Test;
+	double StartedAt = 0.0;
+	double AlignmentStartedAt = 0.0;
+	double SamplingStartedAt = 0.0;
+	bool bAlignmentStarted = false;
+	bool bSamplingStarted = false;
+	float BaselineBodyYaw = 0.0f;
+	float MaxBodyYawExcursionDegrees = 0.0f;
+	float BaselineHeadYaw = 0.0f;
+	float MinHeadYaw = 0.0f;
+	float MaxHeadYaw = 0.0f;
+	float MinHeadPitch = 0.0f;
+	float MaxHeadPitch = 0.0f;
+	bool bHasHeadSample = false;
+	FVector TargetCenter = FVector::ZeroVector;
+	FVector TargetRight = FVector::RightVector;
 };
 } // namespace DroneShotgunSystemsTestMap
 
@@ -219,11 +415,13 @@ bool FDroneShotgunSystemsTestMapAssetTest::RunTest(const FString& Parameters)
 	using namespace DroneShotgunSystemsTestMap;
 	UClass* ShotgunNPCClass = LoadClass<ADroneNPCCharacter>(nullptr, ShotgunNPCClassPath);
 	UClass* GameModeClass = LoadClass<AGameModeBase>(nullptr, GameModeClassPath);
+	UClass* ShotgunPelletProjectileClass = LoadClass<ADroneNPCProjectile>(nullptr, ShotgunPelletProjectileClassPath);
 	UWorld* World = LoadObject<UWorld>(nullptr, MapObjectPath);
 	TestNotNull(TEXT("Dedicated Shotgun NPC Blueprint Class loads"), ShotgunNPCClass);
 	TestNotNull(TEXT("Prototype GameMode Class loads"), GameModeClass);
+	TestNotNull(TEXT("Shotgun Pellet projectile Blueprint Class loads"), ShotgunPelletProjectileClass);
 	TestNotNull(TEXT("Shotgun systems test map loads"), World);
-	if (!ShotgunNPCClass || !GameModeClass || !World)
+	if (!ShotgunNPCClass || !GameModeClass || !ShotgunPelletProjectileClass || !World)
 	{
 		return false;
 	}
@@ -263,10 +461,49 @@ bool FDroneShotgunSystemsTestMapAssetTest::RunTest(const FString& Parameters)
 		TEXT("Shotgun Blueprint profile selects Shotgun"),
 		Profile && Profile->GetProfile().WeaponType == EDroneNPCWeaponType::Shotgun);
 	TestTrue(TEXT("Shotgun Blueprint cannot claim an MG turret"), Profile && !Profile->GetProfile().bCanUseMGTurret);
+	TestEqual(
+		TEXT("Shotgun Blueprint profile keeps the three-degree facing dead zone"),
+		Profile ? Profile->GetProfile().PersonalWeaponFacingDeadZoneDegrees : -1.0f,
+		3.0f);
+	TestEqual(
+		TEXT("Shotgun Blueprint profile keeps the facing turn speed"),
+		Profile ? Profile->GetProfile().PersonalWeaponFacingTurnSpeedDegreesPerSecond : -1.0f,
+		180.0f);
 	TestTrue(TEXT("Shotgun Blueprint defaults to projectile ballistics"), Weapon && Weapon->UsesProjectileBallistics());
 	TestEqual(TEXT("Shotgun Blueprint keeps eight Pellets"), Weapon ? Weapon->GetShotgunPelletCount() : 0, 8);
-	TestEqual(TEXT("Shotgun Blueprint keeps six-degree spread"), Weapon ? Weapon->GetShotgunSpreadHalfAngleDegrees() : 0.0f, 6.0f);
+	TestEqual(TEXT("Shotgun Blueprint keeps twelve-degree spread"), Weapon ? Weapon->GetShotgunSpreadHalfAngleDegrees() : 0.0f, 12.0f);
+	TestFalse(TEXT("Shotgun Blueprint disables cyan debug rays"), Weapon && Weapon->IsShotgunDebugTraceEnabled());
 	TestEqual(TEXT("Shotgun Blueprint keeps 3500 cm/s Pellet speed"), Weapon ? Weapon->GetShotgunProjectileSpeed() : 0.0f, 3500.0f);
+	TestEqual(TEXT("Shotgun Pellet damage stays at the low Greybox value"), Weapon ? Weapon->GetShotgunDamagePerPellet() : 0.0f, 3.0f);
+	TestTrue(
+		TEXT("Shotgun Blueprint selects its dedicated Pellet projectile Class"),
+		Weapon && Weapon->GetProjectileClass() == ShotgunPelletProjectileClass);
+
+	ADroneNPCProjectile* ProjectileDefaults = Cast<ADroneNPCProjectile>(ShotgunPelletProjectileClass->GetDefaultObject());
+	const UStaticMeshComponent* ProjectileVisual = ProjectileDefaults
+		? Cast<UStaticMeshComponent>(ProjectileDefaults->GetDefaultSubobjectByName(TEXT("ProjectileVisual")))
+		: nullptr;
+	const UStaticMeshComponent* ProjectileTrailVisual = ProjectileDefaults
+		? Cast<UStaticMeshComponent>(ProjectileDefaults->GetDefaultSubobjectByName(TEXT("ProjectileTrailVisual")))
+		: nullptr;
+	TestNotNull(TEXT("Projectile owns a replaceable core Visual component"), ProjectileVisual);
+	TestNotNull(TEXT("Projectile owns a replaceable short Tracer component"), ProjectileTrailVisual);
+	TestTrue(
+		TEXT("Production Shotgun Pellet keeps a readable bead scale"),
+		ProjectileVisual
+			&& ProjectileVisual->GetRelativeScale3D().X >= 0.035f
+			&& ProjectileVisual->GetRelativeScale3D().X <= 0.06f);
+	TestTrue(
+		TEXT("Production Shotgun Pellet keeps a short readable tracer"),
+		ProjectileTrailVisual
+			&& ProjectileTrailVisual->GetRelativeScale3D().X >= 0.18f
+			&& ProjectileTrailVisual->GetRelativeScale3D().Y >= 0.01f);
+	TestNotNull(
+		TEXT("Production Shotgun Pellet bead uses a visible Material"),
+		ProjectileVisual ? ProjectileVisual->GetMaterial(0) : nullptr);
+	TestNotNull(
+		TEXT("Production Shotgun Pellet tracer uses a visible Material"),
+		ProjectileTrailVisual ? ProjectileTrailVisual->GetMaterial(0) : nullptr);
 	return !HasAnyErrors();
 }
 
@@ -298,6 +535,7 @@ bool FDroneShotgunSystemsTestMapPIETest::RunTest(const FString& Parameters)
 
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIEForAutomationCommand(MakePlayParams()));
 	ADD_LATENT_AUTOMATION_COMMAND(FValidateShotgunFirePIECommand(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FValidatePersonalWeaponFacingStabilityPIECommand(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
 	return true;
 }

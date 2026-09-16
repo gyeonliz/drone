@@ -123,6 +123,7 @@ void ADroneNPCAIController::OnPossess(APawn* InPawn)
 	CoverUseCount = 0;
 	SmoothedDroneLookRotation = FRotator::ZeroRotator;
 	DroneLookAlpha = 0.0f;
+	bPersonalWeaponFacingTurnActive = false;
 
 	if (const UDroneNPCProfileComponent* Profile = GetPossessedProfile())
 	{
@@ -1001,6 +1002,7 @@ void ADroneNPCAIController::UpdatePersonalWeaponFacing(const float DeltaSeconds)
 		|| !ControlledPawn
 		|| !CurrentDrone)
 	{
+		bPersonalWeaponFacingTurnActive = false;
 		return;
 	}
 
@@ -1013,10 +1015,27 @@ void ADroneNPCAIController::UpdatePersonalWeaponFacing(const float DeltaSeconds)
 
 	const FRotator CurrentFacing = ControlledPawn->GetActorRotation();
 	const float DesiredYaw = ToDrone.Rotation().Yaw;
+	const float YawError = FMath::FindDeltaAngleDegrees(CurrentFacing.Yaw, DesiredYaw);
+	const float StopThresholdDegrees = GetPersonalWeaponFacingDeadZoneDegrees();
+	const float StartThresholdDegrees = StopThresholdDegrees + GetPersonalWeaponFacingHysteresisDegrees();
+	const float AbsoluteYawError = FMath::Abs(YawError);
+	if (bPersonalWeaponFacingTurnActive)
+	{
+		bPersonalWeaponFacingTurnActive = AbsoluteYawError > StopThresholdDegrees;
+	}
+	else
+	{
+		bPersonalWeaponFacingTurnActive = AbsoluteYawError > StartThresholdDegrees;
+	}
+	if (!bPersonalWeaponFacingTurnActive)
+	{
+		// 시작/정지 문턱을 분리해 경계값을 넘나드는 표적에서도 몸 회전이 깜빡이지 않게 한다.
+		return;
+	}
 	const float NewYaw = FMath::FixedTurn(
 		CurrentFacing.Yaw,
 		DesiredYaw,
-		FMath::Max(0.0f, PersonalWeaponFacingTurnSpeedDegreesPerSecond) * DeltaSeconds);
+		GetPersonalWeaponFacingTurnSpeedDegreesPerSecond() * DeltaSeconds);
 	const FRotator NewFacing(0.0f, NewYaw, 0.0f);
 	SetControlRotation(NewFacing);
 	ControlledPawn->SetActorRotation(NewFacing, ETeleportType::None);
@@ -1056,6 +1075,8 @@ void ADroneNPCAIController::UpdateDroneGaze(const float DeltaSeconds)
 				DesiredLookRotation.Yaw,
 				-MaxDroneLookYawDegrees,
 				MaxDroneLookYawDegrees);
+			// 몸은 Hysteresis로 큰 Yaw만 담당하고, 작은 잔여 오차는 보간된 Bone Gaze가
+			// 계속 담당한다. 데드존 경계에서 시선을 0도로 Snap하지 않는다.
 			DesiredLookRotation.Pitch = FMath::Clamp(
 				DesiredLookRotation.Pitch,
 				-MaxDroneLookPitchDownDegrees,
@@ -1092,6 +1113,30 @@ void ADroneNPCAIController::UpdateDroneGaze(const float DeltaSeconds)
 			SmoothedDroneLookRotation = FRotator::ZeroRotator;
 		}
 	}
+}
+
+float ADroneNPCAIController::GetPersonalWeaponFacingDeadZoneDegrees() const
+{
+	const UDroneNPCProfileComponent* Profile = GetPossessedProfile();
+	return Profile
+		? FMath::Max(0.0f, Profile->GetProfile().PersonalWeaponFacingDeadZoneDegrees)
+		: 3.0f;
+}
+
+float ADroneNPCAIController::GetPersonalWeaponFacingHysteresisDegrees() const
+{
+	const UDroneNPCProfileComponent* Profile = GetPossessedProfile();
+	return Profile
+		? FMath::Max(0.0f, Profile->GetProfile().PersonalWeaponFacingHysteresisDegrees)
+		: 3.0f;
+}
+
+float ADroneNPCAIController::GetPersonalWeaponFacingTurnSpeedDegreesPerSecond() const
+{
+	const UDroneNPCProfileComponent* Profile = GetPossessedProfile();
+	return Profile
+		? FMath::Max(0.0f, Profile->GetProfile().PersonalWeaponFacingTurnSpeedDegreesPerSecond)
+		: 180.0f;
 }
 
 void ADroneNPCAIController::ClearDroneGameplayFocus()

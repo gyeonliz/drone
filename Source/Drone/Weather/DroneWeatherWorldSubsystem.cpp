@@ -9,6 +9,11 @@ namespace DroneWeather
 constexpr float DefaultUpdateHertz = 10.0f;
 constexpr float MaximumTurbulenceYawDegrees = 20.0f;
 
+float ResponseAlpha(const float DeltaSeconds, const float ResponseSeconds)
+{
+	return 1.0f - FMath::Exp(-FMath::Max(0.0f, DeltaSeconds) / FMath::Max(0.01f, ResponseSeconds));
+}
+
 FDroneWeatherSnapshot MakeClearSnapshot()
 {
 	FDroneWeatherSnapshot Clear;
@@ -155,22 +160,29 @@ FDroneWeatherSnapshot UDroneWeatherWorldSubsystem::BuildTargetSnapshot(const flo
 			FMath::Max(Wind.GustIntervalSeconds.X, Wind.GustIntervalSeconds.Y));
 	}
 
-	const float GustInterpolationSpeed = FMath::Lerp(1.0f, 5.0f, FMath::Clamp(Wind.Turbulence01, 0.0f, 1.0f));
-	CurrentGustSpeedMetersPerSecond = FMath::FInterpTo(
+	const float GustResponseSeconds = TargetGustSpeedMetersPerSecond > CurrentGustSpeedMetersPerSecond
+		? Wind.GustAttackSeconds
+		: Wind.GustReleaseSeconds;
+	CurrentGustSpeedMetersPerSecond = FMath::Lerp(
 		CurrentGustSpeedMetersPerSecond,
 		TargetGustSpeedMetersPerSecond,
-		DeltaSeconds,
-		GustInterpolationSpeed);
-	CurrentGustYawOffsetDegrees = FMath::FInterpTo(
+		DroneWeather::ResponseAlpha(DeltaSeconds, GustResponseSeconds));
+
+	const float YawDeltaDegrees = FMath::FindDeltaAngleDegrees(
 		CurrentGustYawOffsetDegrees,
-		TargetGustYawOffsetDegrees,
-		DeltaSeconds,
-		GustInterpolationSpeed);
-	CurrentVerticalGustMetersPerSecond = FMath::FInterpTo(
+		TargetGustYawOffsetDegrees);
+	CurrentGustYawOffsetDegrees = FMath::UnwindDegrees(
+		CurrentGustYawOffsetDegrees
+		+ YawDeltaDegrees * DroneWeather::ResponseAlpha(DeltaSeconds, Wind.DirectionResponseSeconds));
+
+	const float VerticalResponseSeconds = FMath::Abs(TargetVerticalGustMetersPerSecond)
+		> FMath::Abs(CurrentVerticalGustMetersPerSecond)
+			? Wind.GustAttackSeconds
+			: Wind.GustReleaseSeconds;
+	CurrentVerticalGustMetersPerSecond = FMath::Lerp(
 		CurrentVerticalGustMetersPerSecond,
 		TargetVerticalGustMetersPerSecond,
-		DeltaSeconds,
-		GustInterpolationSpeed);
+		DroneWeather::ResponseAlpha(DeltaSeconds, VerticalResponseSeconds));
 
 	const float WindYawRadians = FMath::DegreesToRadians(Wind.DirectionYawDegrees + CurrentGustYawOffsetDegrees);
 	const float HorizontalSpeedCentimetersPerSecond =
