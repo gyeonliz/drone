@@ -20,6 +20,15 @@ ADroneNPCCharacter::ADroneNPCCharacter()
 
 	AIControllerClass = ADroneNPCAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+	bUseControllerRotationYaw = false;
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		// 순찰·엄폐·추적 이동은 이동 방향을 바라본다. 정지 사격 상태의 몸 Yaw만
+		// AI Controller가 직접 보간해 두 회전 작성자가 동시에 경쟁하지 않게 한다.
+		Movement->bUseControllerDesiredRotation = false;
+		Movement->bOrientRotationToMovement = true;
+		Movement->RotationRate = FRotator(0.0f, 360.0f, 0.0f);
+	}
 
 	NPCProfileComponent = CreateDefaultSubobject<UDroneNPCProfileComponent>(TEXT("NPCProfileComponent"));
 	SmartObjectUserComponent = CreateDefaultSubobject<USmartObjectUserComponent>(TEXT("SmartObjectUserComponent"));
@@ -66,6 +75,16 @@ void ADroneNPCCharacter::OnConstruction(const FTransform& Transform)
 void ADroneNPCCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 기존 역할 Blueprint에 저장된 CharacterMovement 값이 C++ 생성자 기본값을 덮어쓸 수 있다.
+	// 순찰·추적의 단일 회전 작성자는 항상 이동 벡터가 되도록 런타임 계약을 재적용한다.
+	// RotationRate는 역할 Blueprint의 조정값을 보존한다.
+	bUseControllerRotationYaw = false;
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->bUseControllerDesiredRotation = false;
+		Movement->bOrientRotationToMovement = true;
+	}
 	RefreshWeaponVisualAttachment();
 
 	// Weapon Component의 판정 결과를 Character BP의 표현 Event로 한 번만 전달한다.

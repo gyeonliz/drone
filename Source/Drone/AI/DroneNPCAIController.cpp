@@ -1,6 +1,7 @@
 #include "AI/DroneNPCAIController.h"
 
 #include "AI/DroneAITags.h"
+#include "AI/DroneNPCEngagementPolicy.h"
 #include "AI/DroneMGTurretStation.h"
 #include "AI/DroneNPCProfileComponent.h"
 #include "AI/DroneSmartObjectReservationComponent.h"
@@ -10,8 +11,10 @@
 #include "Components/StateTreeAIComponent.h"
 #include "EngineUtils.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Health/DroneHealthComponent.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "NavigationSystem.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISense_Sight.h"
@@ -85,6 +88,7 @@ void ADroneNPCAIController::RefreshDroneSightTuning()
 void ADroneNPCAIController::Tick(const float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	UpdatePersonalWeaponDisengageCooldown(DeltaSeconds);
 	UpdateMGTurretReassignmentRetry(DeltaSeconds);
 	// StateTree의 MG 진입 Task는 한 번만 호출될 수 있다. 이미 시선 보간을 위해
 	// 동작하는 Controller Tick에서 실제 점유자 한 명의 포탑 조준만 계속 갱신한다.
@@ -94,6 +98,12 @@ void ADroneNPCAIController::Tick(const float DeltaSeconds)
 	}
 	else
 	{
+		if (ResponseState == EDroneNPCAIResponseState::DroneDetected
+			|| ResponseState == EDroneNPCAIResponseState::PursueDrone)
+		{
+			UpdatePersonalWeaponEngagement(DeltaSeconds);
+		}
+		UpdatePursuitFacing(DeltaSeconds);
 		UpdatePersonalWeaponFacing(DeltaSeconds);
 	}
 	// 몸 정렬을 먼저 적용한 뒤 Pawn 로컬 기준 시선각을 계산한다.
@@ -114,6 +124,10 @@ void ADroneNPCAIController::OnPossess(APawn* InPawn)
 	DroneSearchStartCount = 0;
 	CompletedDroneSearchCount = 0;
 	DroneDestroyedResponseCount = 0;
+	ResetPersonalWeaponEngagement();
+	PersonalWeaponPursuitStartCount = 0;
+	PersonalWeaponPursuitMoveRequestCount = 0;
+	PersonalWeaponDisengageCount = 0;
 	MGTurretClaimCount = 0;
 	MGTurretArrivalCount = 0;
 	MGTurretUseCount = 0;
@@ -182,6 +196,7 @@ void ADroneNPCAIController::OnUnPossess()
 	ClearDroneGameplayFocus();
 	CancelPendingDroneLost();
 	ClearMGTurretReassignmentRetry();
+	ResetPersonalWeaponEngagement();
 	StopPersonalWeaponFire();
 	StopMovement();
 	StopMGTurretOperation();
@@ -253,16 +268,12 @@ bool ADroneNPCAIController::MaintainCurrentResponseStateAction()
 		return !HasDetectedDrone();
 
 	case EDroneNPCAIResponseState::DroneDetected:
+	case EDroneNPCAIResponseState::PursueDrone:
 		if (!HasDetectedDrone())
 		{
 			return false;
 		}
-		if (const UDroneNPCWeaponComponent* WeaponComponent = GetPossessedWeaponComponent();
-			WeaponComponent && WeaponComponent->IsFiring())
-		{
-			return true;
-		}
-		return StartPersonalWeaponFire();
+		return UpdatePersonalWeaponEngagement(GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f);
 
 	case EDroneNPCAIResponseState::MoveToMGTurret:
 	case EDroneNPCAIResponseState::HoldMGTurret:
@@ -357,6 +368,309 @@ bool ADroneNPCAIController::ReloadPersonalWeapon()
 		&& WeaponComponent->Reload();
 }
 
+float ADroneNPCAIController::GetPersonalWeaponRange() const
+{
+	const UDroneNPCWeaponComponent* WeaponComponent = GetPossessedWeaponComponent();
+	if (!WeaponComponent)
+	{
+		return 0.0f;
+	}
+	if (UsesShotgun())
+	{
+		return WeaponComponent->GetShotgunRange();
+	}
+	if (UsesRifle())
+	{
+		return WeaponComponent->GetRifleRange();
+	}
+	return 0.0f;
+}
+
+bool ADroneNPCAIController::UpdatePersonalWeaponEngagement(const float DeltaSeconds)
+{
+	APawn* ControlledPawn = GetPawn();
+	AActor* TargetActor = GetDetectedDrone();
+	if (ResponseState == EDroneNPCAIResponseState::Dead
+		|| !IsHostileNPC()
+		|| !ControlledPawn
+		|| !TargetActor)
+	{
+		return false;
+	}
+
+	if (!bHasPersonalWeaponCombatOrigin)
+	{
+		PersonalWeaponCombatOrigin = ControlledPawn->GetActorLocation();
+		bHasPersonalWeaponCombatOrigin = true;
+	}
+
+	const FVector PawnLocation = ControlledPawn->GetActorLocation();
+	const FVector TargetLocation = TargetActor->GetActorLocation();
+	const float WeaponRange = GetPersonalWeaponRange();
+	const EDroneNPCEngagementDecision Decision = FDroneNPCEngagementPolicy::Evaluate(
+		bHasPersonalWeaponCombatOrigin,
+		PersonalWeaponCombatOrigin,
+		PawnLocation,
+		TargetLocation,
+		WeaponRange,
+		PersonalWeaponCombatLeashRadius);
+
+	if (Decision == EDroneNPCEngagementDecision::Disengage)
+	{
+		PersonalWeaponOutOfRangeElapsedSeconds = 0.0f;
+		DisengagePersonalWeaponTarget();
+		return false;
+	}
+
+	if (Decision == EDroneNPCEngagementDecision::Fire)
+	{
+		// 실제 사거리 안에 들어오는 즉시 추적을 끝낸다. 공간 Hysteresis 때문에
+		// 사거리 안에서도 계속 달려드는 동작을 만들지 않는다.
+		PersonalWeaponOutOfRangeElapsedSeconds = 0.0f;
+		StopMovement();
+		SetResponseState(EDroneNPCAIResponseState::DroneDetected);
+		PersonalWeaponPursuitNoProgressSeconds = 0.0f;
+		PersonalWeaponPursuitRepathRemainingSeconds = 0.0f;
+		LastPersonalWeaponPursuitDistance = 0.0f;
+		PersonalWeaponPursuitNavigationDestination = FVector::ZeroVector;
+		bHasPersonalWeaponPursuitNavigationDestination = false;
+		if (const UDroneNPCWeaponComponent* WeaponComponent = GetPossessedWeaponComponent();
+			WeaponComponent && WeaponComponent->IsFiring())
+		{
+			return true;
+		}
+		return StartPersonalWeaponFire();
+	}
+
+	StopPersonalWeaponFire();
+	if (ResponseState != EDroneNPCAIResponseState::PursueDrone)
+	{
+		// 경계에서 한두 프레임만 사거리 밖으로 튀는 값은 상태 전환으로 만들지 않는다.
+		// 실제로 계속 밖에 있을 때만 Pursue에 진입하며, 안쪽 복귀는 위에서 즉시 처리한다.
+		PersonalWeaponOutOfRangeElapsedSeconds += FMath::Max(0.0f, DeltaSeconds);
+		if (PersonalWeaponOutOfRangeElapsedSeconds
+			< FMath::Max(0.0f, PersonalWeaponOutOfRangeConfirmationSeconds))
+		{
+			StopMovement();
+			return true;
+		}
+	}
+	const float CurrentDistance = FVector::Dist(PawnLocation, TargetLocation);
+	if (ResponseState != EDroneNPCAIResponseState::PursueDrone)
+	{
+		SetResponseState(EDroneNPCAIResponseState::PursueDrone);
+		PersonalWeaponOutOfRangeElapsedSeconds = 0.0f;
+		PersonalWeaponPursuitNoProgressSeconds = 0.0f;
+		PersonalWeaponPursuitRepathRemainingSeconds = 0.0f;
+		LastPersonalWeaponPursuitDistance = CurrentDistance;
+		PersonalWeaponPursuitNavigationDestination = FVector::ZeroVector;
+		bHasPersonalWeaponPursuitNavigationDestination = false;
+		++PersonalWeaponPursuitStartCount;
+	}
+	else if (CurrentDistance + FMath::Max(0.0f, PersonalWeaponPursuitProgressTolerance)
+		< LastPersonalWeaponPursuitDistance)
+	{
+		PersonalWeaponPursuitNoProgressSeconds = 0.0f;
+		LastPersonalWeaponPursuitDistance = CurrentDistance;
+	}
+	else
+	{
+		PersonalWeaponPursuitNoProgressSeconds += FMath::Max(0.0f, DeltaSeconds);
+	}
+
+	if (PersonalWeaponPursuitNoProgressSeconds
+		>= FMath::Max(0.1f, PersonalWeaponPursuitNoProgressTimeoutSeconds))
+	{
+		DisengagePersonalWeaponTarget();
+		return false;
+	}
+
+	PersonalWeaponPursuitRepathRemainingSeconds -= FMath::Max(0.0f, DeltaSeconds);
+	if (PersonalWeaponPursuitRepathRemainingSeconds <= 0.0f)
+	{
+		const float AcceptanceRadius = FMath::Max(
+			100.0f,
+			WeaponRange * FMath::Clamp(PersonalWeaponPursuitRangeRatio, 0.1f, 0.95f));
+		FNavLocation ProjectedTarget;
+		const UNavigationSystemV1* NavigationSystem = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld());
+		const bool bProjectedToNavigation = NavigationSystem
+			&& NavigationSystem->ProjectPointToNavigation(
+				TargetLocation,
+				ProjectedTarget,
+				PersonalWeaponPursuitNavigationProjectionExtent.GetAbs());
+		EPathFollowingRequestResult::Type MoveResult = EPathFollowingRequestResult::Failed;
+		bool bRequestedMove = false;
+		if (bProjectedToNavigation)
+		{
+			const EPathFollowingStatus::Type MoveStatus = GetMoveStatus();
+			const bool bMoveInProgress = MoveStatus == EPathFollowingStatus::Moving
+				|| MoveStatus == EPathFollowingStatus::Paused;
+			bRequestedMove = FDroneNPCEngagementPolicy::ShouldRequestPursuitMove(
+				bHasPersonalWeaponPursuitNavigationDestination,
+				PersonalWeaponPursuitNavigationDestination,
+				ProjectedTarget.Location,
+				PersonalWeaponPursuitRepathDistance,
+				bMoveInProgress);
+			if (bRequestedMove)
+			{
+				MoveResult = MoveToLocation(
+					ProjectedTarget.Location,
+					AcceptanceRadius,
+					true,
+					true,
+					true,
+					false,
+					nullptr,
+					true);
+				++PersonalWeaponPursuitMoveRequestCount;
+				if (MoveResult != EPathFollowingRequestResult::Failed)
+				{
+					PersonalWeaponPursuitNavigationDestination = ProjectedTarget.Location;
+					bHasPersonalWeaponPursuitNavigationDestination = true;
+				}
+			}
+		}
+		PersonalWeaponPursuitRepathRemainingSeconds = FMath::Max(
+			0.05f,
+			PersonalWeaponPursuitRepathIntervalSeconds);
+		if (!bProjectedToNavigation || (bRequestedMove && MoveResult == EPathFollowingRequestResult::Failed))
+		{
+			bHasPersonalWeaponPursuitNavigationDestination = false;
+			PersonalWeaponPursuitNoProgressSeconds += FMath::Max(
+				0.05f,
+				PersonalWeaponPursuitRepathIntervalSeconds);
+		}
+	}
+	return true;
+}
+
+void ADroneNPCAIController::ResetPersonalWeaponEngagement(const bool bClearIgnoredDrone)
+{
+	bHasPersonalWeaponCombatOrigin = false;
+	PersonalWeaponCombatOrigin = FVector::ZeroVector;
+	PersonalWeaponPursuitNoProgressSeconds = 0.0f;
+	PersonalWeaponPursuitRepathRemainingSeconds = 0.0f;
+	PersonalWeaponOutOfRangeElapsedSeconds = 0.0f;
+	LastPersonalWeaponPursuitDistance = 0.0f;
+	PersonalWeaponPursuitNavigationDestination = FVector::ZeroVector;
+	bHasPersonalWeaponPursuitNavigationDestination = false;
+	if (bClearIgnoredDrone)
+	{
+		IgnoredDisengagedDrone.Reset();
+		IgnoredDisengageCombatOrigin = FVector::ZeroVector;
+		bHasIgnoredDisengageCombatOrigin = false;
+		PersonalWeaponDisengageCooldownRemainingSeconds = 0.0f;
+	}
+}
+
+void ADroneNPCAIController::DisengagePersonalWeaponTarget()
+{
+	AActor* AbandonedTarget = DetectedDrone.Get();
+	if (!AbandonedTarget || ResponseState == EDroneNPCAIResponseState::Dead)
+	{
+		return;
+	}
+	IgnoredDisengagedDrone = AbandonedTarget;
+	IgnoredDisengageCombatOrigin = bHasPersonalWeaponCombatOrigin
+		? PersonalWeaponCombatOrigin
+		: (GetPawn() ? GetPawn()->GetActorLocation() : FVector::ZeroVector);
+	bHasIgnoredDisengageCombatOrigin = true;
+	PersonalWeaponDisengageCooldownRemainingSeconds = FMath::Max(
+		0.0f,
+		PersonalWeaponDisengageCooldownSeconds);
+	CancelPendingDroneLost();
+	ClearMGTurretReassignmentRetry();
+	ClearDroneGameplayFocus();
+	StopPersonalWeaponFire();
+	StopMovement();
+	StopMGTurretOperation();
+	ReservationComponent->ReleaseReservation();
+	DetectedDrone.Reset();
+	bHasLastKnownDroneLocation = false;
+	LastKnownDroneLocation = FVector::ZeroVector;
+	ResetPersonalWeaponEngagement(false);
+	SetResponseState(EDroneNPCAIResponseState::Patrol);
+	ConfigureDefaultPatrolActivities();
+	++PersonalWeaponDisengageCount;
+
+	if (DronePerceptionComponent)
+	{
+		DronePerceptionComponent->ForgetActor(AbandonedTarget);
+	}
+	if (StateTreeAIComponent && StateTreeAIComponent->IsRunning())
+	{
+		// Pursuit는 Detected State 안에서 Controller가 수행한다. 리시 포기 후 Lost/Search
+		// 전환을 우회하면 방금 끝난 MoveTo Task가 남을 수 있다. 다만 StateTree Task
+		// 실행 중 동기 Restart하면 StartTree 재진입 오류가 나므로 다음 Tick에 정리한다.
+		GetWorldTimerManager().SetTimerForNextTick(
+			this,
+			&ADroneNPCAIController::RestartStateTreeAfterPersonalWeaponDisengage);
+	}
+	else
+	{
+		TryStartAssignedStateTree();
+	}
+	OnDronePerceptionChanged.Broadcast(AbandonedTarget, false);
+}
+
+void ADroneNPCAIController::RestartStateTreeAfterPersonalWeaponDisengage()
+{
+	if (ResponseState == EDroneNPCAIResponseState::Dead
+		|| HasDetectedDrone()
+		|| !GetPawn()
+		|| !StateTreeAIComponent)
+	{
+		return;
+	}
+
+	if (StateTreeAIComponent->IsRunning())
+	{
+		StateTreeAIComponent->RestartLogic();
+	}
+	else
+	{
+		TryStartAssignedStateTree();
+	}
+}
+
+void ADroneNPCAIController::UpdatePersonalWeaponDisengageCooldown(const float DeltaSeconds)
+{
+	if (!IgnoredDisengagedDrone.IsValid())
+	{
+		IgnoredDisengageCombatOrigin = FVector::ZeroVector;
+		bHasIgnoredDisengageCombatOrigin = false;
+		PersonalWeaponDisengageCooldownRemainingSeconds = 0.0f;
+		return;
+	}
+
+	PersonalWeaponDisengageCooldownRemainingSeconds -= FMath::Max(0.0f, DeltaSeconds);
+	if (PersonalWeaponDisengageCooldownRemainingSeconds > 0.0f)
+	{
+		return;
+	}
+	if (bHasIgnoredDisengageCombatOrigin)
+	{
+		const float ReturnRadius = FMath::Max(100.0f, PersonalWeaponCombatLeashRadius)
+			* FMath::Clamp(PersonalWeaponDisengageReturnRadiusRatio, 0.1f, 1.0f);
+		if (FVector::DistSquared2D(
+				IgnoredDisengageCombatOrigin,
+				IgnoredDisengagedDrone->GetActorLocation()) > FMath::Square(ReturnRadius))
+		{
+			// 표적이 리시 안으로 실제 복귀할 때까지 순찰을 유지한다.
+			return;
+		}
+	}
+
+	IgnoredDisengagedDrone.Reset();
+	IgnoredDisengageCombatOrigin = FVector::ZeroVector;
+	bHasIgnoredDisengageCombatOrigin = false;
+	PersonalWeaponDisengageCooldownRemainingSeconds = 0.0f;
+	if (DronePerceptionComponent)
+	{
+		DronePerceptionComponent->RequestStimuliListenerUpdate();
+	}
+}
+
 void ADroneNPCAIController::EnterDroneDetectedResponse()
 {
 	if (!IsHostileNPC() || ResponseState == EDroneNPCAIResponseState::Dead)
@@ -365,6 +679,14 @@ void ADroneNPCAIController::EnterDroneDetectedResponse()
 	}
 
 	StopMGTurretOperation();
+	if (!bHasPersonalWeaponCombatOrigin)
+	{
+		if (const APawn* ControlledPawn = GetPawn())
+		{
+			PersonalWeaponCombatOrigin = ControlledPawn->GetActorLocation();
+			bHasPersonalWeaponCombatOrigin = true;
+		}
+	}
 	SetResponseState(EDroneNPCAIResponseState::DroneDetected);
 	StopMovement();
 	ReservationComponent->ReleaseReservation();
@@ -425,6 +747,7 @@ void ADroneNPCAIController::HandlePossessedPawnDeath()
 	StopMGTurretOperation();
 	ReservationComponent->ReleaseReservation();
 	DetectedDrone.Reset();
+	ResetPersonalWeaponEngagement();
 	bHasLastKnownDroneLocation = false;
 	SetResponseState(EDroneNPCAIResponseState::Dead);
 
@@ -445,6 +768,7 @@ void ADroneNPCAIController::HandlePossessedPawnDeath()
 			? OtherController->GetResponseState()
 			: EDroneNPCAIResponseState::Dead;
 		const bool bCanRetryFromCurrentState = OtherState == EDroneNPCAIResponseState::DroneDetected
+			|| OtherState == EDroneNPCAIResponseState::PursueDrone
 			|| OtherState == EDroneNPCAIResponseState::MoveToCover
 			|| OtherState == EDroneNPCAIResponseState::UseCover;
 		if (!OtherController
@@ -479,6 +803,7 @@ void ADroneNPCAIController::HandleDetectedDroneDestroyed(AActor* DestroyedDrone)
 	StopMGTurretOperation();
 	ReservationComponent->ReleaseReservation();
 	DetectedDrone.Reset();
+	ResetPersonalWeaponEngagement();
 	bHasLastKnownDroneLocation = false;
 	LastKnownDroneLocation = FVector::ZeroVector;
 	SetResponseState(EDroneNPCAIResponseState::Patrol);
@@ -907,6 +1232,13 @@ void ADroneNPCAIController::HandleTargetPerceptionUpdated(AActor* Actor, const F
 		return;
 	}
 
+	// 리시 초과나 경로 정체로 방금 포기한 같은 표적을 즉시 다시 감지하면
+	// Patrol과 Pursuit가 매 프레임 왕복한다. Cooldown 동안 그 자극만 무시한다.
+	if (IgnoredDisengagedDrone.Get() == Actor)
+	{
+		return;
+	}
+
 	// 사망한 Drone의 뒤늦은 Sight 자극은 새 감지로 등록하지 않는다.
 	if (const UDroneHealthComponent* TargetHealth = Actor->FindComponentByClass<UDroneHealthComponent>();
 		TargetHealth && TargetHealth->IsDead())
@@ -991,7 +1323,6 @@ void ADroneNPCAIController::ConfirmPendingDroneLost()
 		CancelPendingDroneLost();
 		return;
 	}
-
 	// 성공 Sight Callback은 이 Timer보다 먼저/나중 어느 순서로 오더라도
 	// HandleTargetPerceptionUpdated에서 Timer를 취소하므로 여기서는 보류된 대상만 확정한다.
 	CancelPendingDroneLost();
@@ -1003,6 +1334,7 @@ void ADroneNPCAIController::ConfirmPendingDroneLost()
 	StopMGTurretOperation();
 	ReservationComponent->ReleaseReservation();
 	DetectedDrone.Reset();
+	ResetPersonalWeaponEngagement();
 	++DroneLostCount;
 	if (StateTreeAIComponent->IsRunning())
 	{
@@ -1119,6 +1451,42 @@ void ADroneNPCAIController::UpdatePersonalWeaponFacing(const float DeltaSeconds)
 	ControlledPawn->SetActorRotation(NewFacing, ETeleportType::None);
 }
 
+void ADroneNPCAIController::UpdatePursuitFacing(const float DeltaSeconds)
+{
+	ACharacter* ControlledCharacter = Cast<ACharacter>(GetPawn());
+	UCharacterMovementComponent* Movement = ControlledCharacter
+		? ControlledCharacter->GetCharacterMovement()
+		: nullptr;
+	if (!ControlledCharacter || !Movement)
+	{
+		return;
+	}
+
+	const bool bUsesVelocityFacing = ResponseState == EDroneNPCAIResponseState::PursueDrone;
+	Movement->bUseControllerDesiredRotation = false;
+	Movement->bOrientRotationToMovement = !bUsesVelocityFacing;
+	if (!bUsesVelocityFacing)
+	{
+		return;
+	}
+
+	const FVector MoveDirection = ControlledCharacter->GetVelocity().GetSafeNormal2D();
+	if (MoveDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	const FRotator CurrentFacing = ControlledCharacter->GetActorRotation();
+	const float DesiredYaw = MoveDirection.Rotation().Yaw;
+	const float NewYaw = FMath::FixedTurn(
+		CurrentFacing.Yaw,
+		DesiredYaw,
+		FMath::Max(1.0f, PursuitFacingTurnSpeedDegreesPerSecond) * FMath::Max(0.0f, DeltaSeconds));
+	const FRotator NewFacing(0.0f, NewYaw, 0.0f);
+	SetControlRotation(NewFacing);
+	ControlledCharacter->SetActorRotation(NewFacing, ETeleportType::None);
+}
+
 void ADroneNPCAIController::UpdateDroneGaze(const float DeltaSeconds)
 {
 	APawn* ControlledPawn = GetPawn();
@@ -1129,9 +1497,26 @@ void ADroneNPCAIController::UpdateDroneGaze(const float DeltaSeconds)
 	{
 		if (AActor* CurrentDrone = DetectedDrone.Get())
 		{
-			LookTargetLocation = CurrentDrone->GetActorLocation();
-			LastKnownDroneLocation = LookTargetLocation;
+			const FVector DroneLocation = CurrentDrone->GetActorLocation();
+			LastKnownDroneLocation = DroneLocation;
 			bHasLastKnownDroneLocation = true;
+			if (ResponseState == EDroneNPCAIResponseState::PursueDrone)
+			{
+				// 추적 중에는 장애물을 피해가는 Nav 이동 방향과 Drone 직선 방향이 다를 수 있다.
+				// 몸은 CharacterMovement가 이동 벡터를 따라 돌리고, Bone gaze도 같은 벡터를
+				// 보게 해 몸/고개가 서로 다른 방향을 선택하는 도리도리 현상을 막는다.
+				FVector PursuitLookDirection = ControlledPawn->GetVelocity().GetSafeNormal2D();
+				if (PursuitLookDirection.IsNearlyZero())
+				{
+					PursuitLookDirection = ControlledPawn->GetActorForwardVector().GetSafeNormal2D();
+				}
+				LookTargetLocation = ControlledPawn->GetPawnViewLocation()
+					+ PursuitLookDirection * 1000.0f;
+			}
+			else
+			{
+				LookTargetLocation = DroneLocation;
+			}
 			bHasTarget = true;
 		}
 		else if (ResponseState == EDroneNPCAIResponseState::Search && bHasLastKnownDroneLocation)
@@ -1267,12 +1652,14 @@ void ADroneNPCAIController::UpdateMGTurretReassignmentRetry(const float DeltaSec
 	}
 
 	const bool bCanInterruptForRetry = ResponseState == EDroneNPCAIResponseState::DroneDetected
+		|| ResponseState == EDroneNPCAIResponseState::PursueDrone
 		|| ResponseState == EDroneNPCAIResponseState::MoveToCover
 		|| ResponseState == EDroneNPCAIResponseState::UseCover;
 	if (!bCanInterruptForRetry || !StateTreeAIComponent || !StateTreeAIComponent->IsRunning())
 	{
 		return;
 	}
+
 	if (!HasSatisfiedMinimumResponseStateDuration())
 	{
 		MaintainCurrentResponseStateAction();

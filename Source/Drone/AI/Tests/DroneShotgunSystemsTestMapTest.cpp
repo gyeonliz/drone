@@ -403,6 +403,272 @@ private:
 	FVector TargetCenter = FVector::ZeroVector;
 	FVector TargetRight = FVector::RightVector;
 };
+
+/** 사거리 밖 추적, 리시 초과 포기, 포기 뒤 순찰 유지까지 실제 NavMesh PIE에서 검증한다. */
+class FValidatePersonalWeaponPursuitPIECommand final : public IAutomationLatentCommand
+{
+public:
+	explicit FValidatePersonalWeaponPursuitPIECommand(FAutomationTestBase* InTest)
+		: Test(InTest)
+	{
+	}
+
+	virtual bool Update() override
+	{
+		const double Now = FPlatformTime::Seconds();
+		if (StartedAt == 0.0)
+		{
+			StartedAt = Now;
+			PhaseStartedAt = Now;
+		}
+
+		UWorld* PIEWorld = FindPIEWorld();
+		ADroneNPCCharacter* ShotgunNPC = nullptr;
+		ADronePrototypePawn* Drone = nullptr;
+		if (PIEWorld)
+		{
+			for (TActorIterator<ADroneNPCCharacter> It(PIEWorld); It; ++It)
+			{
+				if (It->ActorHasTag(ShooterTag))
+				{
+					ShotgunNPC = *It;
+					break;
+				}
+			}
+			for (TActorIterator<ADronePrototypePawn> It(PIEWorld); It; ++It)
+			{
+				Drone = *It;
+				break;
+			}
+		}
+		ADroneNPCAIController* Controller = ShotgunNPC
+			? Cast<ADroneNPCAIController>(ShotgunNPC->GetController())
+			: nullptr;
+		if (!PIEWorld || !ShotgunNPC || !Drone || !Controller)
+		{
+			return FinishWithError(Now, TEXT("Pursuit PIE actors are unavailable"));
+		}
+		LastControllerState = static_cast<int32>(Controller->GetResponseState());
+		LastDetected = Controller->HasDetectedDrone();
+		LastPursuitCount = Controller->GetPersonalWeaponPursuitStartCount();
+		LastDisengageCount = Controller->GetPersonalWeaponDisengageCount();
+
+		switch (Phase)
+		{
+		case EPhase::WaitForDetection:
+			if (!Controller->HasDetectedDrone())
+			{
+				return FinishWithError(Now, TEXT("Shotgun NPC did not detect the Drone before pursuit"));
+			}
+			CombatOrigin = Controller->HasPersonalWeaponCombatOrigin()
+				? Controller->GetPersonalWeaponCombatOrigin()
+				: ShotgunNPC->GetActorLocation();
+			PursuitDirection = (Drone->GetActorLocation() - ShotgunNPC->GetActorLocation()).GetSafeNormal2D();
+			if (PursuitDirection.IsNearlyZero())
+			{
+				PursuitDirection = ShotgunNPC->GetActorForwardVector().GetSafeNormal2D();
+			}
+			InitialPawnLocation = ShotgunNPC->GetActorLocation();
+			PursuitCountBeforeBoundaryCheck = Controller->GetPersonalWeaponPursuitStartCount();
+			Phase = EPhase::ConfirmRangeBoundaryStability;
+			PhaseStartedAt = Now;
+			return false;
+
+		case EPhase::ConfirmRangeBoundaryStability:
+			{
+				const int32 AlternationIndex = FMath::FloorToInt((Now - PhaseStartedAt) / 0.10);
+				const float BoundaryOffset = AlternationIndex % 2 == 0 ? -10.0f : 10.0f;
+				const float DesiredDistance = Controller->GetPersonalWeaponRange() + BoundaryOffset;
+				constexpr float TargetHeight = 120.0f;
+				const float HorizontalDistance = FMath::Sqrt(FMath::Max(
+					0.0f,
+					FMath::Square(DesiredDistance) - FMath::Square(TargetHeight)));
+				FVector BoundaryTarget = ShotgunNPC->GetActorLocation()
+					+ PursuitDirection * HorizontalDistance;
+				BoundaryTarget.Z = ShotgunNPC->GetActorLocation().Z + TargetHeight;
+				Drone->SetActorLocation(BoundaryTarget, false, nullptr, ETeleportType::TeleportPhysics);
+				const bool bIsPursuing = Controller->GetResponseState()
+					== EDroneNPCAIResponseState::PursueDrone;
+				bUnexpectedBoundaryPursuit |= bIsPursuing;
+			}
+			if (Now - PhaseStartedAt < 0.8)
+			{
+				return false;
+			}
+			Test->TestFalse(
+				TEXT("Brief weapon-range boundary jitter does not start pursuit"),
+				bUnexpectedBoundaryPursuit);
+			Test->TestEqual(
+				TEXT("Boundary jitter does not add a pursuit transition"),
+				Controller->GetPersonalWeaponPursuitStartCount(),
+				PursuitCountBeforeBoundaryCheck);
+			{
+				const float PursuitDistance = FMath::Min(
+					Controller->GetPersonalWeaponRange() + 600.0f,
+					Controller->GetPersonalWeaponCombatLeashRadius() * 0.75f);
+				FVector PursuitTarget = CombatOrigin + PursuitDirection * PursuitDistance;
+				PursuitTarget.Z = InitialPawnLocation.Z + 120.0f;
+				Drone->SetActorLocation(PursuitTarget, false, nullptr, ETeleportType::TeleportPhysics);
+			}
+			InitialTargetDistance = FVector::Dist(ShotgunNPC->GetActorLocation(), Drone->GetActorLocation());
+			Phase = EPhase::WaitForPursuit;
+			PhaseStartedAt = Now;
+			return false;
+
+		case EPhase::WaitForPursuit:
+			{
+				const float PawnTravel = FVector::Dist2D(InitialPawnLocation, ShotgunNPC->GetActorLocation());
+				const float CurrentDistance = FVector::Dist(ShotgunNPC->GetActorLocation(), Drone->GetActorLocation());
+				if (Controller->GetResponseState() == EDroneNPCAIResponseState::PursueDrone
+					&& PawnTravel >= 50.0f
+					&& CurrentDistance <= InitialTargetDistance - 50.0f)
+				{
+					Test->TestTrue(TEXT("Out-of-range Shotgun NPC enters PursueDrone"), true);
+					Test->TestTrue(TEXT("Pursuing NPC advances on the target"), true);
+					const FVector MoveDirection = ShotgunNPC->GetVelocity().GetSafeNormal2D();
+					const FVector BodyForward = ShotgunNPC->GetActorForwardVector().GetSafeNormal2D();
+					const float ViewYaw = ShotgunNPC->GetActorRotation().Yaw
+						+ Controller->GetSmoothedDroneLookRotation().Yaw;
+					const FVector ViewForward = FRotator(0.0f, ViewYaw, 0.0f).Vector().GetSafeNormal2D();
+					const float BodyMoveAlignment = FVector::DotProduct(BodyForward, MoveDirection);
+					const float ViewMoveAlignment = FVector::DotProduct(ViewForward, MoveDirection);
+					if (MoveDirection.IsNearlyZero()
+						|| BodyMoveAlignment < 0.85f
+						|| ViewMoveAlignment < 0.85f)
+					{
+						return FinishWithError(Now, TEXT("Pursuit body and gaze did not converge on movement direction"));
+					}
+					Test->TestTrue(
+						*FString::Printf(TEXT("Pursuit body faces its actual movement direction (dot %.3f)"), BodyMoveAlignment),
+						true);
+					Test->TestTrue(
+						*FString::Printf(TEXT("Pursuit gaze follows movement instead of fighting the path (dot %.3f)"), ViewMoveAlignment),
+						true);
+					PursuitMoveRequestCountAtStableStart = Controller->GetPersonalWeaponPursuitMoveRequestCount();
+					Phase = EPhase::ConfirmStablePursuit;
+					PhaseStartedAt = Now;
+					return false;
+				}
+				return FinishWithError(Now, TEXT("Shotgun NPC did not make pursuit progress"));
+			}
+
+		case EPhase::ConfirmStablePursuit:
+			if (Controller->GetResponseState() != EDroneNPCAIResponseState::PursueDrone)
+			{
+				return FinishWithError(Now, TEXT("Shotgun NPC left pursuit before the stable-path check"));
+			}
+			if (Now - PhaseStartedAt < 0.45)
+			{
+				return false;
+			}
+			Test->TestEqual(
+				TEXT("A stationary pursuit target does not restart the active MoveTo path"),
+				Controller->GetPersonalWeaponPursuitMoveRequestCount(),
+				PursuitMoveRequestCountAtStableStart);
+			{
+				const FVector MoveDirection = ShotgunNPC->GetVelocity().GetSafeNormal2D();
+				const float InRangeDistance = FMath::Max(100.0f, Controller->GetPersonalWeaponRange() - 100.0f);
+				constexpr float InRangeTargetHeight = 120.0f;
+				const float InRangeHorizontalDistance = FMath::Sqrt(FMath::Max(
+					0.0f,
+					FMath::Square(InRangeDistance) - FMath::Square(InRangeTargetHeight)));
+				FVector InRangeTarget = ShotgunNPC->GetActorLocation()
+					+ MoveDirection * InRangeHorizontalDistance;
+				InRangeTarget.Z = ShotgunNPC->GetActorLocation().Z + InRangeTargetHeight;
+				Drone->SetActorLocation(InRangeTarget, false, nullptr, ETeleportType::TeleportPhysics);
+				Phase = EPhase::ConfirmInRangeStop;
+				PhaseStartedAt = Now;
+				return false;
+			}
+
+		case EPhase::ConfirmInRangeStop:
+			if (Controller->GetResponseState() != EDroneNPCAIResponseState::DroneDetected
+				|| ShotgunNPC->GetVelocity().Size2D() > 30.0f)
+			{
+				return FinishWithError(Now, TEXT("Shotgun NPC kept pursuing after the target entered weapon range"));
+			}
+			Test->TestTrue(TEXT("Entering actual weapon range immediately stops pursuit and resumes fire"), true);
+			DisengageCountBefore = Controller->GetPersonalWeaponDisengageCount();
+			{
+				FVector BeyondLeash = CombatOrigin + PursuitDirection
+					* (Controller->GetPersonalWeaponCombatLeashRadius() + 350.0f);
+				BeyondLeash.Z = InitialPawnLocation.Z + 120.0f;
+				Drone->SetActorLocation(BeyondLeash, false, nullptr, ETeleportType::TeleportPhysics);
+			}
+			Phase = EPhase::WaitForDisengage;
+			PhaseStartedAt = Now;
+			return false;
+
+		case EPhase::WaitForDisengage:
+			if (Controller->GetResponseState() == EDroneNPCAIResponseState::Patrol
+				&& !Controller->HasDetectedDrone()
+				&& Controller->GetPersonalWeaponDisengageCount() == DisengageCountBefore + 1)
+			{
+				Phase = EPhase::ConfirmPatrolHold;
+				PhaseStartedAt = Now;
+				return false;
+			}
+			return FinishWithError(Now, TEXT("Leash exit did not disengage to Patrol"));
+
+		case EPhase::ConfirmPatrolHold:
+			if (Now - PhaseStartedAt < 0.75)
+			{
+				return false;
+			}
+			Test->TestTrue(TEXT("Disengaged NPC keeps Patrol while the target remains outside the leash"),
+				Controller->GetResponseState() == EDroneNPCAIResponseState::Patrol
+				&& !Controller->HasDetectedDrone());
+			Test->TestEqual(TEXT("Outside-leash target does not trigger immediate disengage loops"),
+				Controller->GetPersonalWeaponDisengageCount(), DisengageCountBefore + 1);
+			return true;
+		}
+		return true;
+	}
+
+private:
+	enum class EPhase : uint8
+	{
+		WaitForDetection,
+		ConfirmRangeBoundaryStability,
+		WaitForPursuit,
+		ConfirmStablePursuit,
+		ConfirmInRangeStop,
+		WaitForDisengage,
+		ConfirmPatrolHold
+	};
+
+	bool FinishWithError(const double Now, const TCHAR* Reason)
+	{
+		if (Now - PhaseStartedAt <= 6.0 && Now - StartedAt <= 15.0)
+		{
+			return false;
+		}
+		Test->AddError(FString::Printf(TEXT("%s (state=%d detected=%d pursuits=%d disengages=%d)"),
+			Reason,
+			LastControllerState,
+			LastDetected ? 1 : 0,
+			LastPursuitCount,
+			LastDisengageCount));
+		return true;
+	}
+
+	FAutomationTestBase* Test;
+	EPhase Phase = EPhase::WaitForDetection;
+	double StartedAt = 0.0;
+	double PhaseStartedAt = 0.0;
+	FVector CombatOrigin = FVector::ZeroVector;
+	FVector PursuitDirection = FVector::ForwardVector;
+	FVector InitialPawnLocation = FVector::ZeroVector;
+	float InitialTargetDistance = 0.0f;
+	int32 DisengageCountBefore = 0;
+	int32 PursuitCountBeforeBoundaryCheck = 0;
+	int32 PursuitMoveRequestCountAtStableStart = 0;
+	bool bUnexpectedBoundaryPursuit = false;
+	int32 LastControllerState = -1;
+	bool LastDetected = false;
+	int32 LastPursuitCount = 0;
+	int32 LastDisengageCount = 0;
+};
 } // namespace DroneShotgunSystemsTestMap
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -536,6 +802,7 @@ bool FDroneShotgunSystemsTestMapPIETest::RunTest(const FString& Parameters)
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIEForAutomationCommand(MakePlayParams()));
 	ADD_LATENT_AUTOMATION_COMMAND(FValidateShotgunFirePIECommand(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FValidatePersonalWeaponFacingStabilityPIECommand(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FValidatePersonalWeaponPursuitPIECommand(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
 	return true;
 }

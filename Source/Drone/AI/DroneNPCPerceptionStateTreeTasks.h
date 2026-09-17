@@ -10,8 +10,8 @@ struct FDroneStateTreeDetectedTaskInstanceData
 	GENERATED_BODY()
 };
 
-/** 드론을 보고 있는 동안 이동·Smart Object 점유를 중단한다. */
-USTRUCT(meta=(DisplayName="Hold Drone Detected Response", Category="Drone|AI|Perception"))
+/** 드론을 보는 동안 사거리·시야를 확보하도록 추적하고, 확보 뒤 정지·사격한다. */
+USTRUCT(meta=(DisplayName="Engage Detected Drone", Category="Drone|AI|Perception"))
 struct DRONE_API FDroneStateTreeDetectedTask : public FStateTreeAITaskBase
 {
 	GENERATED_BODY()

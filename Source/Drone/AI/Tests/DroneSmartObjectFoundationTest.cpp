@@ -19,6 +19,7 @@
 #include "Engine/Blueprint.h"
 #include "Engine/StaticMesh.h"
 #include "GameplayInteractionSmartObjectBehaviorDefinition.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Prototype/DronePrototypePawn.h"
@@ -48,6 +49,10 @@ bool FDroneSmartObjectFoundationTest::RunTest(const FString& Parameters)
 		TestNotNull(TEXT("NPC owns a Profile Component"), NPCDefaults->GetNPCProfileComponent());
 		TestNotNull(TEXT("NPC owns a Smart Object User Component"), NPCDefaults->GetSmartObjectUserComponent());
 		TestNotNull(TEXT("NPC owns the common Weapon Component"), NPCDefaults->GetNPCWeaponComponent());
+		TestFalse(TEXT("NPC movement does not use Controller desired rotation"),
+			NPCDefaults->GetCharacterMovement()->bUseControllerDesiredRotation);
+		TestTrue(TEXT("NPC patrol and pursuit face their movement direction"),
+			NPCDefaults->GetCharacterMovement()->bOrientRotationToMovement);
 	}
 
 	const ADroneNPCAIController* ControllerDefaults = GetDefault<ADroneNPCAIController>();
@@ -72,6 +77,32 @@ bool FDroneSmartObjectFoundationTest::RunTest(const FString& Parameters)
 			TestTrue(
 				TEXT("Default minimum response-state duration prevents one-frame state churn"),
 				MinimumStateDuration >= 0.5f);
+		}
+
+		const FFloatProperty* CombatLeashProperty = FindFProperty<FFloatProperty>(
+			ADroneNPCAIController::StaticClass(),
+			TEXT("PersonalWeaponCombatLeashRadius"));
+		TestNotNull(TEXT("Controller exposes a Blueprint-tunable personal-weapon combat leash"), CombatLeashProperty);
+		if (CombatLeashProperty)
+		{
+			TestTrue(TEXT("Personal-weapon combat leash is editable on Controller Blueprints"),
+				CombatLeashProperty->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible));
+			TestTrue(TEXT("Default combat leash is longer than Shotgun range and inside Sight range"),
+				ControllerDefaults->GetPersonalWeaponCombatLeashRadius() > 1600.0f
+				&& ControllerDefaults->GetPersonalWeaponCombatLeashRadius() < 4000.0f);
+		}
+
+		const FFloatProperty* OutOfRangeConfirmationProperty = FindFProperty<FFloatProperty>(
+			ADroneNPCAIController::StaticClass(),
+			TEXT("PersonalWeaponOutOfRangeConfirmationSeconds"));
+		TestNotNull(TEXT("Controller exposes Blueprint-tunable out-of-range confirmation"), OutOfRangeConfirmationProperty);
+		if (OutOfRangeConfirmationProperty)
+		{
+			TestTrue(TEXT("Out-of-range confirmation is editable on Controller Blueprints"),
+				OutOfRangeConfirmationProperty->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible));
+			TestTrue(TEXT("Default out-of-range confirmation filters only brief boundary jitter"),
+				ControllerDefaults->GetPersonalWeaponOutOfRangeConfirmationSeconds() > 0.0f
+				&& ControllerDefaults->GetPersonalWeaponOutOfRangeConfirmationSeconds() <= 0.5f);
 		}
 	}
 

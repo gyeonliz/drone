@@ -58,6 +58,8 @@ constexpr const TCHAR* GameModeClassPath =
 	TEXT("/Game/Drone/Prototype/Blueprints/BP_DronePrototypeGameMode.BP_DronePrototypeGameMode_C");
 constexpr const TCHAR* MannyMeshPath =
 	TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple");
+constexpr const TCHAR* FriendlyCharacterMeshPath =
+	TEXT("/Game/QuantumCharacter/Mesh/SKM_QuantumCharacter.SKM_QuantumCharacter");
 constexpr const TCHAR* UnarmedAnimClassPath =
 	TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed.ABP_Unarmed_C");
 constexpr const TCHAR* ArmedAnimClassPath =
@@ -90,7 +92,7 @@ const FNPCExpectation NPCExpectations[] =
 	{TEXT("Hostile_Shotgun"), EDroneNPCFaction::Hostile, EDroneNPCWeaponType::Shotgun, false, 1,
 		TEXT("/Game/Modular_Insurgents/Mesh/SK_Preset2.SK_Preset2")},
 	{TEXT("Friendly_Base"), EDroneNPCFaction::Friendly, EDroneNPCWeaponType::Unarmed, false, 2,
-		MannyMeshPath},
+		FriendlyCharacterMeshPath},
 };
 
 UWorld* FindPIEWorld()
@@ -675,6 +677,12 @@ private:
 		for (TActorIterator<ADroneSmartObjectStation> It(Drone->GetWorld()); It; ++It)
 		{
 			ADroneSmartObjectStation* Station = *It;
+			// 같은 Greybox의 무인 자동포탑은 별도 시스템 대상이다. 이 테스트에서는
+			// NPC 상태 전이 도중 Drone을 먼저 파괴하지 않도록 피해만 격리한다.
+			if (Cast<ADroneAutomaticTurret>(Station))
+			{
+				Station->ConfigureMGTurretDamageGreybox(0.0f);
+			}
 			// 같은 맵의 무인 자동포탑도 MG 회전/발사 기반을 상속하지만 Smart Object가
 			// 아니므로 병사가 Claim할 수 없다. 유인 포탑만 이 점유 테스트 대상으로 센다.
 			if (Station
@@ -687,6 +695,23 @@ private:
 			}
 		}
 		Test->TestEqual(TEXT("Perception PIE has one MG Station"), MGTurretStationCount, 1);
+
+		// 이 테스트는 실제 시야 배치가 아니라 수동 Sight 자극 뒤의 상태 전이 계약을
+		// 검증한다. 자동 Perception 갱신이 수동 자극을 덮어쓰지 않게 Source 등록을
+		// 끄고, 두 Hostile의 전투 이탈 거리 안인 중간 지점에 Drone을 둔다.
+		Drone->GetPerceptionStimuliSource()->UnregisterFromPerceptionSystem();
+		FVector HostileCenter = FVector::ZeroVector;
+		for (const ADroneNPCAIController* Controller : Hostiles)
+		{
+			HostileCenter += Controller->GetPawn()->GetActorLocation();
+		}
+		HostileCenter /= static_cast<float>(Hostiles.Num());
+		HostileCenter.Z += 300.0f;
+		Drone->SetActorLocation(
+			HostileCenter,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
 
 		for (ADroneNPCAIController* Controller : Hostiles)
 		{
@@ -714,12 +739,14 @@ private:
 			const EDroneNPCAIResponseState ResponseState = Controller->GetResponseState();
 			const bool bExpectedResponse = Controller->CanUseMGTurret()
 				? ResponseState == EDroneNPCAIResponseState::DroneDetected
+					|| ResponseState == EDroneNPCAIResponseState::PursueDrone
 					|| ResponseState == EDroneNPCAIResponseState::MoveToMGTurret
 					|| ResponseState == EDroneNPCAIResponseState::HoldMGTurret
 					|| ResponseState == EDroneNPCAIResponseState::UseMGTurret
 					|| ResponseState == EDroneNPCAIResponseState::MoveToCover
 					|| ResponseState == EDroneNPCAIResponseState::UseCover
-				: ResponseState == EDroneNPCAIResponseState::DroneDetected;
+				: ResponseState == EDroneNPCAIResponseState::DroneDetected
+					|| ResponseState == EDroneNPCAIResponseState::PursueDrone;
 			bHostilesDetected &= Controller->HasDetectedDrone()
 				&& bExpectedResponse
 				&& Controller->GetDroneDetectionCount() == 1
@@ -747,7 +774,47 @@ private:
 		}
 		if (!bHostilesDetected || !bFriendliesUnaffected)
 		{
-			return FinishWithTimeout(Now, 5.0, TEXT("Hostile-only DroneDetected response did not become stable"));
+			if (Now - PhaseStartedAt <= 5.0)
+			{
+				return false;
+			}
+			if (!bHostilesDetected)
+			{
+				for (int32 Index = 0; Index < Hostiles.Num(); ++Index)
+				{
+					const ADroneNPCAIController* Controller = Hostiles[Index];
+					Test->AddError(FString::Printf(
+						TEXT("Hostile[%d] detection unstable: state=%d detected=%d count=%d focus=%s lookActive=%d lookAlpha=%.2f lookYaw=%.1f lookPitch=%.1f MGCapable=%d reservation=%d"),
+						Index,
+						Controller ? static_cast<int32>(Controller->GetResponseState()) : -1,
+						Controller && Controller->HasDetectedDrone() ? 1 : 0,
+						Controller ? Controller->GetDroneDetectionCount() : -1,
+						*GetNameSafe(Controller ? Controller->GetFocusActor() : nullptr),
+						Controller && Controller->HasActiveDroneLookTarget() ? 1 : 0,
+						Controller ? Controller->GetDroneLookAlpha() : -1.0f,
+						Controller ? Controller->GetSmoothedDroneLookRotation().Yaw : 0.0f,
+						Controller ? Controller->GetSmoothedDroneLookRotation().Pitch : 0.0f,
+						Controller && Controller->CanUseMGTurret() ? 1 : 0,
+						Controller && Controller->GetReservationComponent()->HasValidReservation() ? 1 : 0));
+				}
+			}
+			if (!bFriendliesUnaffected)
+			{
+				for (int32 Index = 0; Index < Friendlies.Num(); ++Index)
+				{
+					const ADroneNPCAIController* Controller = Friendlies[Index];
+					Test->AddError(FString::Printf(
+						TEXT("Friendly[%d] affected: state=%d detected=%d count=%d focus=%s lookActive=%d lookAlpha=%.2f"),
+						Index,
+						Controller ? static_cast<int32>(Controller->GetResponseState()) : -1,
+						Controller && Controller->HasDetectedDrone() ? 1 : 0,
+						Controller ? Controller->GetDroneDetectionCount() : -1,
+						*GetNameSafe(Controller ? Controller->GetFocusActor() : nullptr),
+						Controller && Controller->HasActiveDroneLookTarget() ? 1 : 0,
+						Controller ? Controller->GetDroneLookAlpha() : -1.0f));
+				}
+			}
+			return true;
 		}
 
 		AdvanceTo(EPhase::WaitForMGTurret, Now);
@@ -846,7 +913,8 @@ private:
 			}
 			const bool bUsesCover = Controller->GetResponseState() == EDroneNPCAIResponseState::UseCover
 				&& Controller->GetReservationComponent()->IsReservationOccupied();
-			const bool bUsesInPlaceFallback = Controller->GetResponseState() == EDroneNPCAIResponseState::DroneDetected
+			const bool bUsesInPlaceFallback = (Controller->GetResponseState() == EDroneNPCAIResponseState::DroneDetected
+					|| Controller->GetResponseState() == EDroneNPCAIResponseState::PursueDrone)
 				&& !Controller->GetReservationComponent()->HasValidReservation();
 			bPersonalWeaponFallbackReady &= (bUsesCover || bUsesInPlaceFallback)
 				&& bFacesDrone
@@ -895,6 +963,12 @@ private:
 				for (const ADroneNPCAIController* Controller : Hostiles)
 				{
 					const APawn* ControlledPawn = Controller ? Controller->GetPawn() : nullptr;
+					FTransform ReservedTransform = FTransform::Identity;
+					const bool bHasReservedTransform = Controller
+						&& Controller->GetReservationComponent()->GetReservedSlotTransform(ReservedTransform);
+					const float ReservedDistance = ControlledPawn && bHasReservedTransform
+						? FVector::Dist2D(ControlledPawn->GetActorLocation(), ReservedTransform.GetLocation())
+						: -1.0f;
 					const UDroneNPCWeaponComponent* WeaponComponent = Controller
 						? Controller->GetPossessedWeaponComponent()
 						: nullptr;
@@ -908,10 +982,14 @@ private:
 							ToDrone.Rotation().Yaw))
 						: -1.0f;
 					Test->AddInfo(FString::Printf(
-						TEXT("MG hostile debug: controller=%s pawn=%s state=%d canMG=%d reservation=%d occupied=%d reservedActor=%s activeMG=%s coverClaims=%d coverUses=%d facingDelta=%.2f canFire=%d firing=%d weapon=%d ammo=%d fireRequests=%d accepted=%d weaponTarget=%s"),
+						TEXT("MG hostile debug: controller=%s pawn=%s state=%d moveStatus=%d pawnLoc=%s reservedLoc=%s reservedDist=%.1f canMG=%d reservation=%d occupied=%d reservedActor=%s activeMG=%s coverClaims=%d coverUses=%d facingDelta=%.2f canFire=%d firing=%d weapon=%d ammo=%d fireRequests=%d accepted=%d weaponTarget=%s"),
 						*GetNameSafe(Controller),
 						*GetNameSafe(ControlledPawn),
 						Controller ? static_cast<int32>(Controller->GetResponseState()) : -1,
+						Controller ? static_cast<int32>(Controller->GetMoveStatus()) : -1,
+						ControlledPawn ? *ControlledPawn->GetActorLocation().ToCompactString() : TEXT("None"),
+						bHasReservedTransform ? *ReservedTransform.GetLocation().ToCompactString() : TEXT("None"),
+						ReservedDistance,
 						Controller && Controller->CanUseMGTurret() ? 1 : 0,
 						Controller && Controller->GetReservationComponent()->HasValidReservation() ? 1 : 0,
 						Controller && Controller->GetReservationComponent()->IsReservationOccupied() ? 1 : 0,
@@ -1091,13 +1169,8 @@ private:
 		{
 			BroadcastSight(Controller, Drone, false);
 		}
-		// 실제 Sight 갱신이 수동 Lost 자극 직후 같은 Pawn을 다시 감지해
-		// Search를 중단하지 않도록 테스트 Pawn을 LoseSight 범위 밖으로 격리한다.
-		Drone->SetActorLocation(
-			FVector(100000.0f, 100000.0f, 100000.0f),
-			false,
-			nullptr,
-			ETeleportType::TeleportPhysics);
+		// Baseline에서 자동 Perception Source를 해제했으므로 수동 Lost 자극이
+		// 실제 Sight 갱신에 덮어써지지 않는다. 표적 위치는 마지막 위치 검증을 위해 유지한다.
 		AdvanceTo(EPhase::WaitForSearch, Now);
 		return false;
 	}

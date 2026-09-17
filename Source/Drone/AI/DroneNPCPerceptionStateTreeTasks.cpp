@@ -1,7 +1,6 @@
 #include "AI/DroneNPCPerceptionStateTreeTasks.h"
 
 #include "AI/DroneNPCAIController.h"
-#include "AI/Weapons/DroneNPCWeaponComponent.h"
 #include "StateTreeExecutionContext.h"
 
 namespace
@@ -33,7 +32,7 @@ EStateTreeRunStatus FDroneStateTreeDetectedTask::EnterState(
 	}
 
 	Controller->EnterDroneDetectedResponse();
-	Controller->StartPersonalWeaponFire();
+	Controller->UpdatePersonalWeaponEngagement(0.0f);
 	return EStateTreeRunStatus::Running;
 }
 
@@ -45,11 +44,6 @@ EStateTreeRunStatus FDroneStateTreeDetectedTask::Tick(
 	if (!Controller || !Controller->IsHostileNPC() || !Controller->HasDetectedDrone())
 	{
 		return EStateTreeRunStatus::Failed;
-	}
-	if (const UDroneNPCWeaponComponent* WeaponComponent = Controller->GetPossessedWeaponComponent();
-		WeaponComponent && !WeaponComponent->IsFiring())
-	{
-		Controller->StartPersonalWeaponFire();
 	}
 	return EStateTreeRunStatus::Running;
 }

@@ -26,7 +26,9 @@ enum class EDroneNPCAIResponseState : uint8
 	MoveToCover,
 	UseCover,
 	Search,
-	Dead
+	Dead,
+	/** 개인화기 사거리·시야를 확보하기 위해 교전 원점의 리시 안에서 이동 중이다. */
+	PursueDrone
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -96,6 +98,40 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Weapon")
 	bool ReloadPersonalWeapon();
+
+	/**
+	 * 개인화기 교전 판단을 한 번 갱신한다. 사격 구간이면 정지·재장전/사격하고,
+	 * 사거리 밖이면 리시 안에서 추적하며, 리시/경로 제한을 넘으면 순찰로 복귀한다.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|Engagement")
+	bool UpdatePersonalWeaponEngagement(float DeltaSeconds);
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	float GetPersonalWeaponRange() const;
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	float GetPersonalWeaponCombatLeashRadius() const { return PersonalWeaponCombatLeashRadius; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	float GetPersonalWeaponOutOfRangeConfirmationSeconds() const
+	{
+		return PersonalWeaponOutOfRangeConfirmationSeconds;
+	}
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	bool HasPersonalWeaponCombatOrigin() const { return bHasPersonalWeaponCombatOrigin; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	FVector GetPersonalWeaponCombatOrigin() const { return PersonalWeaponCombatOrigin; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	int32 GetPersonalWeaponPursuitStartCount() const { return PersonalWeaponPursuitStartCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	int32 GetPersonalWeaponPursuitMoveRequestCount() const { return PersonalWeaponPursuitMoveRequestCount; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	int32 GetPersonalWeaponDisengageCount() const { return PersonalWeaponDisengageCount; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|AI")
 	bool IsHostileNPC() const;
@@ -323,6 +359,9 @@ protected:
 	/** 현재 감지 Actor 또는 Search 마지막 위치를 향한 AnimBP용 시선 값을 갱신한다. */
 	void UpdateDroneGaze(float DeltaSeconds);
 
+	/** 추적 중 몸 Yaw를 실제 수평 이동 벡터에 맞춘다. */
+	void UpdatePursuitFacing(float DeltaSeconds);
+
 	/** 개인화기 교전 중 몸 Yaw를 Drone 쪽으로 돌려 상체 시선 제한 밖 표적도 바라보게 한다. */
 	void UpdatePersonalWeaponFacing(float DeltaSeconds);
 	float GetPersonalWeaponFacingDeadZoneDegrees() const;
@@ -342,6 +381,16 @@ protected:
 	void UpdateMGTurretReassignmentRetry(float DeltaSeconds);
 
 	void ClearMGTurretReassignmentRetry();
+
+	/** 최초 감지 지점을 기준으로 한 개인화기 추적 진행값을 초기화한다. */
+	void ResetPersonalWeaponEngagement(bool bClearIgnoredDrone = true);
+
+	/** 리시 초과·경로 정체 시 표적을 놓고 재감지 Cooldown 뒤 순찰 Tree로 복귀한다. */
+	void DisengagePersonalWeaponTarget();
+
+	/** 방금 포기한 표적을 즉시 다시 감지해 추적 왕복하는 것을 막는다. */
+	void UpdatePersonalWeaponDisengageCooldown(float DeltaSeconds);
+	void RestartStateTreeAfterPersonalWeaponDisengage();
 
 	/** 상태 진입 시각을 한 곳에서 기록해 모든 태스크가 같은 최소 유지시간을 사용하게 한다. */
 	void SetResponseState(EDroneNPCAIResponseState NewState, bool bRestartDuration = false);
@@ -395,6 +444,100 @@ protected:
 		meta=(ClampMin="0.0", ClampMax="10.0", UIMin="0.0", UIMax="5.0", ForceUnits="s"))
 	float MinimumResponseStateDurationSeconds = 1.0f;
 
+	/** 최초 교전 위치에서 NPC와 표적 모두 벗어나지 않아야 하는 수평 추적 반경이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="100.0", UIMin="500.0", UIMax="10000.0", ForceUnits="cm"))
+	float PersonalWeaponCombatLeashRadius = 3000.0f;
+
+	/** 사거리 밖 판정이 이 시간 이상 이어질 때만 추적을 시작한다. 사거리 안 복귀는 즉시 정지·사격한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="0.0", UIMin="0.0", UIMax="1.0", ForceUnits="s"))
+	float PersonalWeaponOutOfRangeConfirmationSeconds = 0.20f;
+
+	/** MoveToActor가 실제 사거리 가장자리에서 흔들리지 않게 목표 사거리 안쪽에 두는 비율이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="0.1", ClampMax="0.95", UIMin="0.25", UIMax="0.9"))
+	float PersonalWeaponPursuitRangeRatio = 0.75f;
+
+	/** 움직이지 못하거나 같은 거리를 유지하면 추적을 포기하기까지 허용할 시간이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="0.1", UIMin="0.5", UIMax="10.0", ForceUnits="s"))
+	float PersonalWeaponPursuitNoProgressTimeoutSeconds = 2.5f;
+
+	/** 이 거리 이상 가까워졌을 때만 실제 추적 진행으로 간주한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="0.0", UIMin="0.0", UIMax="100.0", ForceUnits="cm"))
+	float PersonalWeaponPursuitProgressTolerance = 10.0f;
+
+	/** 이동 목표를 다시 계산하는 주기다. 매 Tick MoveTo 재요청으로 인한 경로 흔들림을 막는다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="0.05", UIMin="0.1", UIMax="2.0", ForceUnits="s"))
+	float PersonalWeaponPursuitRepathIntervalSeconds = 0.35f;
+
+	/** 투영된 지상 목표가 이 거리 이상 움직였을 때만 진행 중인 MoveTo 경로를 다시 만든다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="0.0", UIMin="0.0", UIMax="1000.0", ForceUnits="cm"))
+	float PersonalWeaponPursuitRepathDistance = 150.0f;
+
+	/** 공중 Drone 위치를 지상 NavMesh 추적점으로 내릴 때 사용하는 검색 범위다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	FVector PersonalWeaponPursuitNavigationProjectionExtent = FVector(500.0f, 500.0f, 2000.0f);
+
+	/** 포기한 표적을 바로 다시 감지해 추적/순찰을 왕복하지 않게 하는 시간이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="0.0", UIMin="0.0", UIMax="10.0", ForceUnits="s"))
+	float PersonalWeaponDisengageCooldownSeconds = 3.0f;
+
+	/** 포기한 표적은 기존 교전 원점의 이 비율 안으로 돌아와야 다시 감지한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="0.1", ClampMax="1.0", UIMin="0.5", UIMax="1.0"))
+	float PersonalWeaponDisengageReturnRadiusRatio = 0.85f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	FVector PersonalWeaponCombatOrigin = FVector::ZeroVector;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	bool bHasPersonalWeaponCombatOrigin = false;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	float PersonalWeaponPursuitNoProgressSeconds = 0.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	float PersonalWeaponPursuitRepathRemainingSeconds = 0.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	float PersonalWeaponOutOfRangeElapsedSeconds = 0.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	float LastPersonalWeaponPursuitDistance = 0.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	FVector PersonalWeaponPursuitNavigationDestination = FVector::ZeroVector;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	bool bHasPersonalWeaponPursuitNavigationDestination = false;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	float PersonalWeaponDisengageCooldownRemainingSeconds = 0.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	TWeakObjectPtr<AActor> IgnoredDisengagedDrone;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	FVector IgnoredDisengageCombatOrigin = FVector::ZeroVector;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	bool bHasIgnoredDisengageCombatOrigin = false;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	int32 PersonalWeaponPursuitStartCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	int32 PersonalWeaponPursuitMoveRequestCount = 0;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	int32 PersonalWeaponDisengageCount = 0;
+
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|State Stability")
 	float ResponseStateEnteredWorldTimeSeconds = 0.0f;
 
@@ -441,6 +584,11 @@ protected:
 	/** MG가 아닌 개인화기 교전 상태에서 병사 몸을 Drone 방향으로 돌린다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze")
 	bool bFaceDroneDuringPersonalWeaponResponse = true;
+
+	/** 추적 중 몸이 실제 수평 이동 벡터를 따라 도는 최대 속도다. 역할 Controller BP에서 조정한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze",
+		meta=(ClampMin="1.0", UIMin="90.0", UIMax="1080.0", ForceUnits="deg/s"))
+	float PursuitFacingTurnSpeedDegreesPerSecond = 720.0f;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Gaze")
 	FRotator SmoothedDroneLookRotation = FRotator::ZeroRotator;
