@@ -6,7 +6,8 @@
 /**
  * 조작 보조 수준이다. 기체 역할이나 속도 프리셋과 독립적으로 바꿀 수 있다.
  * ManualRealisticGreybox는 제한된 기울기와 관성을 사용하는 중간 단계다.
- * AcroRateRealisticGreybox는 스틱을 각속도 명령으로 해석하고 자동 수평 복귀를 끄는 FPV 검증 모드다.
+ * 두 Acro 모드는 스틱을 각속도 명령으로 해석하고 자동 수평 복귀를 끄며,
+ * 실제 RC 송신기의 Mode 1/Mode 2 수직축 배치를 각각 사용한다.
  * 두 실제 조작형 모두 모터별 추력/PID/공기역학을 1:1 시뮬레이션하지는 않는다.
  */
 UENUM(BlueprintType)
@@ -14,7 +15,9 @@ enum class EDroneControlMode : uint8
 {
 	AssistedEasy UMETA(DisplayName="쉬운 조작"),
 	ManualRealisticGreybox UMETA(DisplayName="실제 조작형 (그레이박스)"),
-	AcroRateRealisticGreybox UMETA(DisplayName="FPV Rate/Acro (그레이박스)")
+	AcroRateMode1Greybox UMETA(DisplayName="FPV Rate/Acro Mode 1 (그레이박스)"),
+	/** 기존 Asset 호환 이름이다. 동작 의미는 RC 송신기 Mode 2다. */
+	AcroRateRealisticGreybox UMETA(DisplayName="FPV Rate/Acro Mode 2 (그레이박스)")
 };
 
 /**
@@ -68,13 +71,13 @@ struct DRONE_API FDroneAcroRateSettings
 	float BodyRateResponseTimeSeconds = 0.08f;
 };
 
-/** 동일 기체에서도 바꿀 수 있는 반응성 프리셋이다. 기체 종류를 뜻하지 않는다. */
+/** 동일 기체에서도 바꿀 수 있는 속도 단계다. 기존 열거형 이름은 Asset 호환을 위해 유지한다. */
 UENUM(BlueprintType)
 enum class EDroneHandlingPreset : uint8
 {
-	Stable UMETA(DisplayName="안정"),
-	Balanced UMETA(DisplayName="균형"),
-	Agile UMETA(DisplayName="고기동")
+	Stable UMETA(DisplayName="느림"),
+	Balanced UMETA(DisplayName="보통"),
+	Agile UMETA(DisplayName="빠름")
 };
 
 /** 조작 방식이 이동 Component의 기본 수치를 얼마나 바꾸는지 정의한다. */
@@ -104,7 +107,7 @@ struct DRONE_API FDroneControlModeTuning
 	bool bTiltCollisionRoot = false;
 };
 
-/** 안정/균형/고기동 프리셋별 배율이다. 파생 Blueprint에서 수치를 조정할 수 있다. */
+/** 느림/보통/빠름 단계별 배율이다. 파생 Blueprint에서 수치를 조정할 수 있다. */
 USTRUCT(BlueprintType)
 struct DRONE_API FDroneHandlingPresetTuning
 {

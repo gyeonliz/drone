@@ -16,7 +16,7 @@
 2. PIE 시작 후 뷰포트에 키보드 포커스를 준다. 기존 기본값은 LightWind다.
 3. 숫자열 **9**: `RainStorm_Greybox`, **7**: `Clear`, **8**: `LightWind`. NumPad 7/8/9는 지원하지 않는다.
 4. RainStorm에서는 화면 `Rain / Spawn / Wet` 값에 비례한 임시 디버그 선분이 뷰 주변에 나타나고, 바람이 선분의 수평 이동 방향에 반영되는지 본다. Storm은 Rain 0.8, Clear는 Rain/Spawn/바람 0, LightWind는 비 없이 바람이 남아야 한다.
-5. 기존 **1/2/3**(NumPad 포함)으로 Easy/Manual/Rate-Acro 보정 차이를 비교한다.
+5. **1/2/3/4**(NumPad 포함)로 Easy/Manual/Rate-Acro Mode 1/Mode 2 보정 차이를 비교한다.
 6. 종료 후 맵·BP·Profile을 저장할 필요가 없다. 키는 World Snapshot만 즉시 바꾼다. Profile 전환의 자연스러운 보간 평가는 별도로 `ApplyWeatherProfile(Profile, false)`를 사용한다.
 
 `ADroneWeatherDebugVisualizer::ApplyTestWeatherPreset(0/1/2)`가 같은 진입 경로다. 전용 Weather 맵 이름(PIE prefix 포함)이 아니거나 인덱스가 잘못되면 변경 없이 false를 반환한다. Blueprint 인스턴스 `Enable Weather Preset Hotkeys`로 키를 끌 수 있다.

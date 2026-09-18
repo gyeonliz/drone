@@ -118,7 +118,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Definition|Runtime")
 	TSoftClassPtr<APawn> PawnClass;
 
-	/** 기체 역할은 조작 난이도 및 안정/균형/고기동 프리셋과 독립적이다. */
+	/** 기체 역할은 조작 방식 및 느림/보통/빠름 속도 단계와 독립적이다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Definition|Runtime")
 	EDroneMissionRole MissionRole = EDroneMissionRole::Reconnaissance;
 

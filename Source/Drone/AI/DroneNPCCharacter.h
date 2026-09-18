@@ -101,6 +101,9 @@ protected:
 	/** ABP의 Slot을 통해 임시 Sequence를 Dynamic Montage로 재생한다. Gameplay 판정은 건드리지 않는다. */
 	void PlayGreyboxWeaponAnimation(UAnimSequenceBase* Animation, float PlayRate);
 
+	/** Capsule 외의 장식·무기 Mesh가 역할 BP 값 때문에 NPC 이동을 막지 않게 런타임 계약을 재적용한다. */
+	void EnforceVisualOnlyCollision();
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone AI NPC Components")
 	TObjectPtr<UDroneNPCProfileComponent> NPCProfileComponent;
 

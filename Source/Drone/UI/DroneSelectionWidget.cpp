@@ -45,8 +45,10 @@ FText GetControlModeText(const EDroneControlMode Mode)
 	{
 	case EDroneControlMode::ManualRealisticGreybox:
 		return FText::FromString(TEXT("조작: 실제 조작형 (제한 자세)"));
+	case EDroneControlMode::AcroRateMode1Greybox:
+		return FText::FromString(TEXT("조작 3: FPV Rate/Acro · 송신기 Mode 1"));
 	case EDroneControlMode::AcroRateRealisticGreybox:
-		return FText::FromString(TEXT("조작: FPV Rate/Acro (그레이박스)"));
+		return FText::FromString(TEXT("조작 4: FPV Rate/Acro · 송신기 Mode 2"));
 	case EDroneControlMode::AssistedEasy:
 	default:
 		return FText::FromString(TEXT("조작: 쉬운 조작"));
@@ -58,12 +60,12 @@ FText GetHandlingText(const EDroneHandlingPreset Preset)
 	switch (Preset)
 	{
 	case EDroneHandlingPreset::Stable:
-		return FText::FromString(TEXT("반응성: 안정"));
+		return FText::FromString(TEXT("속도: 느림"));
 	case EDroneHandlingPreset::Agile:
-		return FText::FromString(TEXT("반응성: 고기동"));
+		return FText::FromString(TEXT("속도: 빠름"));
 	case EDroneHandlingPreset::Balanced:
 	default:
-		return FText::FromString(TEXT("반응성: 균형"));
+		return FText::FromString(TEXT("속도: 보통"));
 	}
 }
 }
@@ -161,6 +163,9 @@ void UDroneSelectionWidget::ToggleControlMode()
 		SelectedControlMode = EDroneControlMode::ManualRealisticGreybox;
 		break;
 	case EDroneControlMode::ManualRealisticGreybox:
+		SelectedControlMode = EDroneControlMode::AcroRateMode1Greybox;
+		break;
+	case EDroneControlMode::AcroRateMode1Greybox:
 		SelectedControlMode = EDroneControlMode::AcroRateRealisticGreybox;
 		break;
 	case EDroneControlMode::AcroRateRealisticGreybox:

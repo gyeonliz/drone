@@ -230,7 +230,7 @@ bool FDroneWeatherSystemsTestMapTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("Weather test map Visualizer uses the project native contract"), WeatherVisualizer);
 	TestEqual(TEXT("Weather Visualizer exposes twenty-four moving beads"), WeatherVisualizer ? WeatherVisualizer->GetFlowBeadCount() : 0, 24);
 	TestTrue(TEXT("Weather Visualizer shows the runtime readout by default"), WeatherVisualizer && WeatherVisualizer->bShowOnScreenReadout);
-	TestTrue(TEXT("Weather Visualizer enables the 1/2/3 mode comparison keys"), WeatherVisualizer && WeatherVisualizer->bEnableControlModeHotkeys);
+	TestTrue(TEXT("Weather Visualizer enables the 1/2/3/4 mode comparison keys"), WeatherVisualizer && WeatherVisualizer->bEnableControlModeHotkeys);
 	TestTrue(TEXT("Weather Visualizer smooths displayed wind instead of snapping"),
 		WeatherVisualizer && WeatherVisualizer->FlowVelocityResponseSeconds > 0.0f);
 	if (WeatherController)

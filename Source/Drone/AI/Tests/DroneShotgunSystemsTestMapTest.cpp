@@ -122,6 +122,25 @@ public:
 			&& Weapon->GetShotgunVolleyAttemptCount() >= 1
 			&& Weapon->GetShotgunProjectileSpawnCount() >= Weapon->GetShotgunPelletCount()
 			&& Weapon->GetWeaponFiredEventCount() >= 1;
+		if (Controller && Controller->HasDetectedDrone() && DetectionObservedAt == 0.0)
+		{
+			DetectionObservedAt = Now;
+			Test->TestEqual(
+				TEXT("Shotgun first-shot aim delay defaults to one second"),
+				Controller->GetPersonalWeaponInitialAimDelaySeconds(),
+				1.0f);
+		}
+		if (bVolleyObserved && Controller && !bInitialAimDelayVerified)
+		{
+			const float AimElapsed = Controller->GetPersonalWeaponInitialAimElapsedSeconds();
+			Test->TestTrue(
+				*FString::Printf(
+					TEXT("First Shotgun Volley waits for the initial aim delay (elapsed %.3fs, required %.3fs)"),
+					AimElapsed,
+					Controller->GetPersonalWeaponInitialAimDelaySeconds()),
+				AimElapsed + 0.02f >= Controller->GetPersonalWeaponInitialAimDelaySeconds());
+			bInitialAimDelayVerified = true;
+		}
 		if ((!ShotgunNPC || !Drone || !Controller || !Weapon || !bVolleyObserved)
 			&& Now - StartedAt <= 15.0)
 		{
@@ -233,7 +252,9 @@ private:
 
 	FAutomationTestBase* Test;
 	double StartedAt = 0.0;
+	double DetectionObservedAt = 0.0;
 	double VolleyObservedAt = 0.0;
+	bool bInitialAimDelayVerified = false;
 	TWeakObjectPtr<ADroneNPCCharacter> LastNPC;
 	TWeakObjectPtr<ADroneNPCAIController> LastController;
 	TWeakObjectPtr<UDroneNPCWeaponComponent> LastWeapon;
@@ -448,6 +469,81 @@ public:
 		{
 			return FinishWithError(Now, TEXT("Pursuit PIE actors are unavailable"));
 		}
+		const int32 CurrentResponseState = static_cast<int32>(Controller->GetResponseState());
+		if (CurrentResponseState != LastSpinResponseState)
+		{
+			// 상태 전환 전후의 서로 다른 회전 목적을 하나의 연속 회전으로 합산하지 않는다.
+			// 실제 빙글 회전은 같은 Pursue 상태 안에서 누적되는 회전으로 검출한다.
+			bHasPreviousBodyYaw = false;
+			ContinuousBodyYawTravelDegrees = 0.0f;
+			LastMeaningfulBodyYawDirection = 0;
+			LastMeaningfulBodyYawSampleAt = 0.0;
+			LastSpinResponseState = CurrentResponseState;
+		}
+		const float CurrentBodyYaw = ShotgunNPC->GetActorRotation().Yaw;
+		{
+			const FVector ImmediateMoveOffset =
+				Controller->GetImmediateMoveDestination() - ShotgunNPC->GetActorLocation();
+			const FVector TargetOffset = Drone->GetActorLocation() - ShotgunNPC->GetActorLocation();
+			const FVector HorizontalVelocity(
+				ShotgunNPC->GetVelocity().X,
+				ShotgunNPC->GetVelocity().Y,
+				0.0f);
+			SpinDiagnosticSamples.Add(FString::Printf(
+				TEXT("t=%.2f p=%d s=%d body=%.1f vel=%.1f speed=%.1f next=%.1f/%.0f target=%.1f/%.0f moves=%d"),
+				Now - StartedAt,
+				static_cast<int32>(Phase),
+				static_cast<int32>(Controller->GetResponseState()),
+				CurrentBodyYaw,
+				HorizontalVelocity.IsNearlyZero() ? 0.0f : HorizontalVelocity.Rotation().Yaw,
+				HorizontalVelocity.Size(),
+				ImmediateMoveOffset.IsNearlyZero() ? 0.0f : ImmediateMoveOffset.Rotation().Yaw,
+				ImmediateMoveOffset.Size2D(),
+				TargetOffset.IsNearlyZero() ? 0.0f : TargetOffset.Rotation().Yaw,
+				TargetOffset.Size2D(),
+				Controller->GetPersonalWeaponPursuitMoveRequestCount()));
+			if (SpinDiagnosticSamples.Num() > 16)
+			{
+				SpinDiagnosticSamples.RemoveAt(0);
+			}
+		}
+		if (bHasPreviousBodyYaw)
+		{
+			const float SignedYawDelta = FMath::FindDeltaAngleDegrees(PreviousBodyYaw, CurrentBodyYaw);
+			const float AbsoluteYawDelta = FMath::Abs(SignedYawDelta);
+			if (AbsoluteYawDelta > 0.5f)
+			{
+				const int32 TurnDirection = SignedYawDelta > 0.0f ? 1 : -1;
+				const bool bContinuesSameTurn = TurnDirection == LastMeaningfulBodyYawDirection
+					&& Now - LastMeaningfulBodyYawSampleAt <= 0.20;
+				ContinuousBodyYawTravelDegrees = bContinuesSameTurn
+					? ContinuousBodyYawTravelDegrees + AbsoluteYawDelta
+					: AbsoluteYawDelta;
+				MaxContinuousBodyYawTravelDegrees = FMath::Max(
+					MaxContinuousBodyYawTravelDegrees,
+					ContinuousBodyYawTravelDegrees);
+				LastMeaningfulBodyYawDirection = TurnDirection;
+				LastMeaningfulBodyYawSampleAt = Now;
+			}
+			if (ContinuousBodyYawTravelDegrees > 300.0f)
+			{
+				const FVector HorizontalVelocity(
+					ShotgunNPC->GetVelocity().X,
+					ShotgunNPC->GetVelocity().Y,
+					0.0f);
+				Test->AddError(FString::Printf(
+					TEXT("Shotgun NPC continuously spins through a near-full turn during engagement (yaw travel %.1fdeg, state=%d, bodyYaw=%.1f, velocityYaw=%.1f, speed=%.1f). Samples: %s"),
+					ContinuousBodyYawTravelDegrees,
+					static_cast<int32>(Controller->GetResponseState()),
+					CurrentBodyYaw,
+					HorizontalVelocity.IsNearlyZero() ? 0.0f : HorizontalVelocity.Rotation().Yaw,
+					HorizontalVelocity.Size(),
+					*FString::Join(SpinDiagnosticSamples, TEXT(" | "))));
+				return true;
+			}
+		}
+		PreviousBodyYaw = CurrentBodyYaw;
+		bHasPreviousBodyYaw = true;
 		LastControllerState = static_cast<int32>(Controller->GetResponseState());
 		LastDetected = Controller->HasDetectedDrone();
 		LastPursuitCount = Controller->GetPersonalWeaponPursuitStartCount();
@@ -503,8 +599,10 @@ public:
 				Controller->GetPersonalWeaponPursuitStartCount(),
 				PursuitCountBeforeBoundaryCheck);
 			{
+				// 0.45초 안정 경로 확인 중 NPC가 사거리 안으로 들어오지 않을 여유를 둔다.
+				// TestMap의 -X Navigation Floor 끝(-1,850cm) 안쪽은 유지한다.
 				const float PursuitDistance = FMath::Min(
-					Controller->GetPersonalWeaponRange() + 600.0f,
+					Controller->GetPersonalWeaponRange() + 500.0f,
 					Controller->GetPersonalWeaponCombatLeashRadius() * 0.75f);
 				FVector PursuitTarget = CombatOrigin + PursuitDirection * PursuitDistance;
 				PursuitTarget.Z = InitialPawnLocation.Z + 120.0f;
@@ -519,6 +617,12 @@ public:
 			{
 				const float PawnTravel = FVector::Dist2D(InitialPawnLocation, ShotgunNPC->GetActorLocation());
 				const float CurrentDistance = FVector::Dist(ShotgunNPC->GetActorLocation(), Drone->GetActorLocation());
+				MaxObservedPawnTravel = FMath::Max(MaxObservedPawnTravel, PawnTravel);
+				MinObservedTargetDistance = FMath::Min(MinObservedTargetDistance, CurrentDistance);
+				MaxObservedPawnSpeed = FMath::Max(MaxObservedPawnSpeed, ShotgunNPC->GetVelocity().Size2D());
+				LastObservedPawnLocation = ShotgunNPC->GetActorLocation();
+				LastObservedTargetLocation = Drone->GetActorLocation();
+				LastObservedMoveStatus = static_cast<int32>(Controller->GetMoveStatus());
 				if (Controller->GetResponseState() == EDroneNPCAIResponseState::PursueDrone
 					&& PawnTravel >= 50.0f
 					&& CurrentDistance <= InitialTargetDistance - 50.0f)
@@ -526,23 +630,26 @@ public:
 					Test->TestTrue(TEXT("Out-of-range Shotgun NPC enters PursueDrone"), true);
 					Test->TestTrue(TEXT("Pursuing NPC advances on the target"), true);
 					const FVector MoveDirection = ShotgunNPC->GetVelocity().GetSafeNormal2D();
+					const FVector PursuitGoalDirection =
+						(Drone->GetActorLocation() - ShotgunNPC->GetActorLocation()).GetSafeNormal2D();
 					const FVector BodyForward = ShotgunNPC->GetActorForwardVector().GetSafeNormal2D();
 					const float ViewYaw = ShotgunNPC->GetActorRotation().Yaw
 						+ Controller->GetSmoothedDroneLookRotation().Yaw;
 					const FVector ViewForward = FRotator(0.0f, ViewYaw, 0.0f).Vector().GetSafeNormal2D();
-					const float BodyMoveAlignment = FVector::DotProduct(BodyForward, MoveDirection);
-					const float ViewMoveAlignment = FVector::DotProduct(ViewForward, MoveDirection);
+					const float BodyMoveAlignment = FVector::DotProduct(BodyForward, PursuitGoalDirection);
+					const float ViewMoveAlignment = FVector::DotProduct(ViewForward, PursuitGoalDirection);
 					if (MoveDirection.IsNearlyZero()
+						|| PursuitGoalDirection.IsNearlyZero()
 						|| BodyMoveAlignment < 0.85f
 						|| ViewMoveAlignment < 0.85f)
 					{
-						return FinishWithError(Now, TEXT("Pursuit body and gaze did not converge on movement direction"));
+						return FinishWithError(Now, TEXT("Pursuit body and gaze did not converge on the stable pursuit goal"));
 					}
 					Test->TestTrue(
-						*FString::Printf(TEXT("Pursuit body faces its actual movement direction (dot %.3f)"), BodyMoveAlignment),
+						*FString::Printf(TEXT("Pursuit body faces the stable pursuit goal (dot %.3f)"), BodyMoveAlignment),
 						true);
 					Test->TestTrue(
-						*FString::Printf(TEXT("Pursuit gaze follows movement instead of fighting the path (dot %.3f)"), ViewMoveAlignment),
+						*FString::Printf(TEXT("Pursuit gaze follows the same stable pursuit goal (dot %.3f)"), ViewMoveAlignment),
 						true);
 					PursuitMoveRequestCountAtStableStart = Controller->GetPersonalWeaponPursuitMoveRequestCount();
 					bPursuitMoveWasActiveAtStableStart = Controller->IsPersonalWeaponPursuitMoveActive();
@@ -628,6 +735,11 @@ public:
 				&& !Controller->HasDetectedDrone());
 			Test->TestEqual(TEXT("Outside-leash target does not trigger immediate disengage loops"),
 				Controller->GetPersonalWeaponDisengageCount(), DisengageCountBefore + 1);
+			Test->TestTrue(
+				*FString::Printf(
+					TEXT("Shotgun engagement does not contain a continuous near-full body spin (max yaw travel %.1fdeg)"),
+					MaxContinuousBodyYawTravelDegrees),
+				MaxContinuousBodyYawTravelDegrees <= 300.0f);
 			return true;
 		}
 		return true;
@@ -651,12 +763,19 @@ private:
 		{
 			return false;
 		}
-		Test->AddError(FString::Printf(TEXT("%s (state=%d detected=%d pursuits=%d disengages=%d)"),
+		Test->AddError(FString::Printf(TEXT("%s (state=%d detected=%d pursuits=%d disengages=%d move=%d maxTravel=%.1f minDistance=%.1f maxSpeed=%.1f pawn=%s target=%s). Samples: %s"),
 			Reason,
 			LastControllerState,
 			LastDetected ? 1 : 0,
 			LastPursuitCount,
-			LastDisengageCount));
+			LastDisengageCount,
+			LastObservedMoveStatus,
+			MaxObservedPawnTravel,
+			MinObservedTargetDistance,
+			MaxObservedPawnSpeed,
+			*LastObservedPawnLocation.ToCompactString(),
+			*LastObservedTargetLocation.ToCompactString(),
+			*FString::Join(SpinDiagnosticSamples, TEXT(" | "))));
 		return true;
 	}
 
@@ -673,6 +792,20 @@ private:
 	int32 PursuitMoveRequestCountAtStableStart = 0;
 	bool bPursuitMoveWasActiveAtStableStart = false;
 	bool bUnexpectedBoundaryPursuit = false;
+	bool bHasPreviousBodyYaw = false;
+	float PreviousBodyYaw = 0.0f;
+	float ContinuousBodyYawTravelDegrees = 0.0f;
+	float MaxContinuousBodyYawTravelDegrees = 0.0f;
+	int32 LastMeaningfulBodyYawDirection = 0;
+	double LastMeaningfulBodyYawSampleAt = 0.0;
+	TArray<FString> SpinDiagnosticSamples;
+	float MaxObservedPawnTravel = 0.0f;
+	float MinObservedTargetDistance = TNumericLimits<float>::Max();
+	float MaxObservedPawnSpeed = 0.0f;
+	FVector LastObservedPawnLocation = FVector::ZeroVector;
+	FVector LastObservedTargetLocation = FVector::ZeroVector;
+	int32 LastObservedMoveStatus = -1;
+	int32 LastSpinResponseState = -1;
 	int32 LastControllerState = -1;
 	bool LastDetected = false;
 	int32 LastPursuitCount = 0;

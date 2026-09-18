@@ -60,6 +60,7 @@ FVector UDroneWeatherResponseComponent::CalculateTargetWindDriftVelocity(
 	case EDroneControlMode::ManualRealisticGreybox:
 		Compensation = LimitedAttitudeCompensation01;
 		break;
+	case EDroneControlMode::AcroRateMode1Greybox:
 	case EDroneControlMode::AcroRateRealisticGreybox:
 		Compensation = AcroCompensation01;
 		break;

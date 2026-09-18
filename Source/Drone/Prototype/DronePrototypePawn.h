@@ -105,7 +105,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Role Ability")
 	bool TriggerSecondaryRoleAbility();
 
-	/** 쉬운 조작, 제한 자세 Greybox, FPV Rate/Acro를 플레이 중에도 바꾼다. */
+	/** 쉬운 조작, 제한 자세, FPV Rate/Acro Mode 1/2를 플레이 중에도 바꾼다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control")
 	void SetControlMode(EDroneControlMode NewControlMode);
 
@@ -114,6 +114,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control")
 	EDroneControlMode GetControlMode() const { return CurrentControlMode; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control|Acro")
+	static bool IsAcroControlMode(EDroneControlMode ControlMode);
 
 	/** 현재 Data Asset에서 적용된 FPV Rate/Acro 감도와 속도 제한이다. */
 	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control|Acro")
@@ -147,7 +150,7 @@ public:
 		float MaximumRateDegreesPerSecond,
 		float Expo);
 
-	/** 안정/균형/고기동은 기체 종류가 아니라 독립된 반응성 프리셋이다. */
+	/** 느림/보통/빠름은 기체 종류와 독립된 속도 단계다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control")
 	void SetHandlingPreset(EDroneHandlingPreset NewHandlingPreset);
 
@@ -307,7 +310,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UInputAction> CameraPitchRateAction;
 
-	/** Acro 전용 입력은 공용 이동 Action과 분리해 키보드와 Mode 2 패드 축이 서로 덮어쓰지 않게 한다. */
+	/** Acro 전용 입력은 공용 이동 Action과 분리해 키보드와 Mode 1/2 패드 축이 서로 덮어쓰지 않게 한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input|Acro", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UInputAction> AcroPitchAction;
 
@@ -319,6 +322,14 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input|Acro", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UInputAction> AcroThrottleAction;
+
+	/** 송신기 왼쪽 Stick 수직축이다. Mode 1=Pitch, Mode 2=Throttle로 해석한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input|Acro", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UInputAction> AcroGamepadLeftVerticalAction;
+
+	/** 송신기 오른쪽 Stick 수직축이다. Mode 1=Throttle, Mode 2=Pitch로 해석한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input|Acro", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UInputAction> AcroGamepadRightVerticalAction;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Input", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UInputAction> ToggleViewAction;
@@ -495,6 +506,10 @@ private:
 	void ResetAcroYawInput(const FInputActionValue& Value);
 	void ChangeAcroThrottle(const FInputActionValue& Value);
 	void ResetAcroThrottleInput(const FInputActionValue& Value);
+	void ChangeAcroGamepadLeftVertical(const FInputActionValue& Value);
+	void ResetAcroGamepadLeftVertical(const FInputActionValue& Value);
+	void ChangeAcroGamepadRightVertical(const FInputActionValue& Value);
+	void ResetAcroGamepadRightVertical(const FInputActionValue& Value);
 	void ToggleViewFromInput(const FInputActionValue& Value);
 	void TriggerPrimaryRoleAbilityFromInput(const FInputActionValue& Value);
 	void TriggerSecondaryRoleAbilityFromInput(const FInputActionValue& Value);

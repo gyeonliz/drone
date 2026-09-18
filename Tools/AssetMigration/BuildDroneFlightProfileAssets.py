@@ -125,7 +125,7 @@ def configure_definition(
 
 
 # 기존의 Agile/Stable은 기체 종류처럼 잘못 분리했던 이번 작업의 임시 Asset이다.
-# 이름을 FPV/Drop 역할로 바꾸고 안정/균형/고기동은 FlightProfile 기본 프리셋으로 이동한다.
+# 이름을 FPV/Drop 역할로 바꾸고 느림/보통/빠름은 FlightProfile 기본 속도 단계로 이동한다.
 rename_legacy_asset(LEGACY_AGILE_PATH, FPV_STRIKE_PATH)
 rename_legacy_asset(LEGACY_STABLE_PATH, DROP_PATH)
 
@@ -159,7 +159,7 @@ configure_definition(
         14.0,
         False,
         make_acro_rates(),
-        ["쉬운/실제 조작형 전환 가능", "안정/균형/고기동 전환 가능", "거리/화각/시야 유지형 스캔"],
+        ["쉬운/실제 조작형 전환 가능", "느림/보통/빠름 전환 가능", "거리/화각/시야 유지형 스캔"],
     ),
 )
 
@@ -184,7 +184,7 @@ configure_definition(
         20.0,
         True,
         make_acro_rates(),
-        ["FPV Rate/Acro 기본 조작", "고기동 27 m/s 기준 속도", "Arm 뒤 속도 조건 충돌 자폭"],
+        ["FPV Rate/Acro Mode 2 기본 조작", "빠름 27 m/s 기준 속도", "Arm 뒤 속도 조건 충돌 자폭"],
     ),
 )
 
@@ -209,7 +209,7 @@ configure_definition(
         11.0,
         False,
         make_acro_rates(),
-        ["3인칭 이륙 검증", "안정 기본 프리셋", "탑뷰/1회 Payload/목표 접촉"],
+        ["3인칭 이륙 검증", "느림 기본 속도", "탑뷰/1회 Payload/목표 접촉"],
     ),
 )
 

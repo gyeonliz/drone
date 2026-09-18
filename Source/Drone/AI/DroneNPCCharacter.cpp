@@ -1,11 +1,13 @@
 #include "AI/DroneNPCCharacter.h"
 
+#include "Drone.h"
 #include "AI/DroneNPCAIController.h"
 #include "AI/DroneNPCProfileComponent.h"
 #include "AI/Weapons/DroneNPCWeaponComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimSequenceBase.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -69,6 +71,7 @@ ADroneNPCCharacter::ADroneNPCCharacter()
 void ADroneNPCCharacter::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
+	EnforceVisualOnlyCollision();
 	RefreshWeaponVisualAttachment();
 }
 
@@ -85,12 +88,45 @@ void ADroneNPCCharacter::BeginPlay()
 		Movement->bUseControllerDesiredRotation = false;
 		Movement->bOrientRotationToMovement = true;
 	}
+	EnforceVisualOnlyCollision();
 	RefreshWeaponVisualAttachment();
 
 	// Weapon Component의 판정 결과를 Character BP의 표현 Event로 한 번만 전달한다.
 	NPCWeaponComponent->OnWeaponFired.AddUniqueDynamic(this, &ADroneNPCCharacter::HandleWeaponFiredVisual);
 	NPCWeaponComponent->OnReloadCompleted.AddUniqueDynamic(this, &ADroneNPCCharacter::HandleReloadCompletedVisual);
 	HealthComponent->OnDeath.AddDynamic(this, &ADroneNPCCharacter::HandleDeath);
+}
+
+void ADroneNPCCharacter::EnforceVisualOnlyCollision()
+{
+	const UCapsuleComponent* MovementCapsule = GetCapsuleComponent();
+	TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents(this);
+	for (UPrimitiveComponent* Component : PrimitiveComponents)
+	{
+		if (!Component || Component == MovementCapsule)
+		{
+			continue;
+		}
+
+		if (Component->GetCollisionEnabled() != ECollisionEnabled::NoCollision
+			|| Component->GetGenerateOverlapEvents()
+			|| Component->CanEverAffectNavigation())
+		{
+			UE_LOG(
+				LogDrone,
+				Display,
+				TEXT("[NPC-COLLISION-FIX] pawn=%s component=%s collision=%d overlap=%d nav=%d -> VisualOnly"),
+				*GetNameSafe(this),
+				*GetNameSafe(Component),
+				static_cast<int32>(Component->GetCollisionEnabled()),
+				Component->GetGenerateOverlapEvents() ? 1 : 0,
+				Component->CanEverAffectNavigation() ? 1 : 0);
+		}
+
+		Component->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Component->SetGenerateOverlapEvents(false);
+		Component->SetCanEverAffectNavigation(false);
+	}
 }
 
 void ADroneNPCCharacter::RefreshWeaponVisualAttachment()

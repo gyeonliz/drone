@@ -20,6 +20,8 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/BlendSpace.h"
 #include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/StateTreeAIComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Editor.h"
@@ -304,6 +306,25 @@ public:
 			Test->TestTrue(
 				TEXT("Placed PIE NPC uses the role-appropriate Anim BP"),
 				NPC->GetMesh() && NPC->GetMesh()->GetAnimClass() == ExpectedAnimClass);
+			TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents(NPC);
+			for (const UPrimitiveComponent* Primitive : PrimitiveComponents)
+			{
+				if (!Primitive || Primitive == NPC->GetCapsuleComponent())
+				{
+					continue;
+				}
+				Test->TestEqual(
+					*FString::Printf(
+						TEXT("NPC visual component %s cannot block another patrol pawn"),
+						*Primitive->GetName()),
+					Primitive->GetCollisionEnabled(),
+					ECollisionEnabled::NoCollision);
+				Test->TestFalse(
+					*FString::Printf(
+						TEXT("NPC visual component %s cannot affect navigation"),
+						*Primitive->GetName()),
+					Primitive->CanEverAffectNavigation());
+			}
 			Test->TestTrue(TEXT("Controller exposes the possessed common Weapon Component"), Controller->GetPossessedWeaponComponent() == WeaponComponent);
 			Test->TestTrue(TEXT("Possession configures Weapon Component from NPC Profile"), WeaponComponent->GetWeaponType() == Profile.WeaponType);
 			Test->TestTrue(TEXT("Controller configures role-specific Activity Tags"), HasExpectedActivityTags(Controller, Profile));
@@ -353,6 +374,10 @@ public:
 	virtual bool Update() override
 	{
 		const double Now = FPlatformTime::Seconds();
+		const double SampleDeltaSeconds = LastSampleAt > 0.0
+			? FMath::Clamp(Now - LastSampleAt, 0.0, 0.1)
+			: 0.0;
+		LastSampleAt = Now;
 		if (StartedAt == 0.0)
 		{
 			StartedAt = Now;
@@ -402,6 +427,67 @@ public:
 		for (ADroneNPCCharacter* Hostile : Hostiles)
 		{
 			ADroneNPCAIController* Controller = Cast<ADroneNPCAIController>(Hostile->GetController());
+			const FVector HorizontalVelocity(Hostile->GetVelocity().X, Hostile->GetVelocity().Y, 0.0f);
+			const FVector MoveDirection = HorizontalVelocity.GetSafeNormal();
+			const float CurrentYaw = Hostile->GetActorRotation().Yaw;
+			FVector& LowProgressWindowStart = LowProgressWindowStartLocations.FindOrAdd(
+				Hostile,
+				Hostile->GetActorLocation());
+			double& LowProgressWindowStartedAt = LowProgressWindowStartedTimes.FindOrAdd(Hostile, Now);
+			float& LowProgressAngularTravel = CurrentLowProgressAngularTravelDegrees.FindOrAdd(Hostile);
+			if (const float* PreviousYaw = PreviousHostileYaws.Find(Hostile))
+			{
+				const float AbsoluteYawDelta = FMath::Abs(FMath::FindDeltaAngleDegrees(*PreviousYaw, CurrentYaw));
+				// A normal turn-in-place can rotate up to 180 degrees once. The reported regression
+				// continuously rotates the Shotgun NPC while translation is effectively stopped,
+				// so retain the whole stationary streak and reject more than one near-full turn.
+				float& StationaryAngularTravel = CurrentStationaryAngularTravelDegrees.FindOrAdd(Hostile);
+				StationaryAngularTravel = HorizontalVelocity.SizeSquared() <= FMath::Square(20.0f)
+					? StationaryAngularTravel + AbsoluteYawDelta
+					: 0.0f;
+				MaxStationaryAngularTravelDegrees.FindOrAdd(Hostile) = FMath::Max(
+					MaxStationaryAngularTravelDegrees.FindRef(Hostile),
+					StationaryAngularTravel);
+
+				// The visible Shotgun regression is not fully stationary: it rotates, takes one small
+				// step, then rotates again. A speed-based reset therefore hid it. Keep yaw travel
+				// across those small steps until the pawn has made meaningful world-space progress.
+				const float WindowProgress = FVector::Dist2D(
+					LowProgressWindowStart,
+					Hostile->GetActorLocation());
+				if (WindowProgress >= 100.0f || Now - LowProgressWindowStartedAt > 3.0)
+				{
+					LowProgressWindowStart = Hostile->GetActorLocation();
+					LowProgressWindowStartedAt = Now;
+					LowProgressAngularTravel = 0.0f;
+				}
+				LowProgressAngularTravel += AbsoluteYawDelta;
+				MaxLowProgressAngularTravelDegrees.FindOrAdd(Hostile) = FMath::Max(
+					MaxLowProgressAngularTravelDegrees.FindRef(Hostile),
+					LowProgressAngularTravel);
+			}
+			PreviousHostileYaws.FindOrAdd(Hostile) = CurrentYaw;
+			if (!MoveDirection.IsNearlyZero())
+			{
+				++MovingSampleCounts.FindOrAdd(Hostile);
+				const float Alignment = FVector::DotProduct(
+					Hostile->GetActorForwardVector().GetSafeNormal2D(),
+					MoveDirection);
+				WorstMovementAlignments.FindOrAdd(Hostile, 1.0f) = FMath::Min(
+					WorstMovementAlignments.FindRef(Hostile),
+					Alignment);
+				double& ReverseDuration = CurrentReverseMovementSeconds.FindOrAdd(Hostile);
+				ReverseDuration = Alignment < 0.0f
+					? ReverseDuration + SampleDeltaSeconds
+					: 0.0;
+				MaxReverseMovementSeconds.FindOrAdd(Hostile) = FMath::Max(
+					MaxReverseMovementSeconds.FindRef(Hostile),
+					ReverseDuration);
+			}
+			else
+			{
+				CurrentReverseMovementSeconds.FindOrAdd(Hostile) = 0.0;
+			}
 			bAllHostilesCompleted &= Controller
 				&& Controller->GetStateTreeAIComponent()
 				&& Controller->GetStateTreeAIComponent()->IsRunning()
@@ -430,12 +516,61 @@ public:
 		for (ADroneNPCCharacter* Hostile : Hostiles)
 		{
 			ADroneNPCAIController* Controller = Cast<ADroneNPCAIController>(Hostile->GetController());
-			Test->TestNotNull(TEXT("Hostile Patrol NPC keeps Drone AI Controller"), Controller);
+			const UDroneNPCProfileComponent* Profile = Hostile->GetNPCProfileComponent();
+			const FString RoleName = Profile && Profile->GetProfile().WeaponType == EDroneNPCWeaponType::Shotgun
+				? TEXT("Shotgun")
+				: TEXT("Rifle");
+			const FString ActorLabel = FString::Printf(
+				TEXT("%s %s"),
+				*RoleName,
+				*Hostile->GetName());
+			Test->TestNotNull(
+				*FString::Printf(TEXT("%s keeps Drone AI Controller"), *ActorLabel),
+				Controller);
 			if (Controller)
 			{
-				Test->TestTrue(TEXT("Hostile Patrol StateTree is running"), Controller->GetStateTreeAIComponent()->IsRunning());
-				Test->TestTrue(TEXT("Hostile completes at least two patrol cycles"), Controller->GetCompletedPatrolCycles() >= 2);
-				Test->TestTrue(TEXT("Hostile visits at least two distinct patrol slots"), Controller->GetVisitedPatrolSlotCount() >= 2);
+				const FString RuntimeState = FString::Printf(
+					TEXT("state=%d move=%d cycles=%d slots=%d location=%s velocity=%s"),
+					static_cast<int32>(Controller->GetResponseState()),
+					static_cast<int32>(Controller->GetMoveStatus()),
+					Controller->GetCompletedPatrolCycles(),
+					Controller->GetVisitedPatrolSlotCount(),
+					*Hostile->GetActorLocation().ToCompactString(),
+					*Hostile->GetVelocity().ToCompactString());
+				Test->TestTrue(
+					*FString::Printf(TEXT("%s StateTree is running (%s)"), *ActorLabel, *RuntimeState),
+					Controller->GetStateTreeAIComponent()->IsRunning());
+				Test->TestTrue(
+					*FString::Printf(TEXT("%s completes at least two patrol cycles (%s)"), *ActorLabel, *RuntimeState),
+					Controller->GetCompletedPatrolCycles() >= 2);
+				Test->TestTrue(
+					*FString::Printf(TEXT("%s visits at least two distinct patrol slots (%s)"), *ActorLabel, *RuntimeState),
+					Controller->GetVisitedPatrolSlotCount() >= 2);
+				Test->TestTrue(
+					*FString::Printf(
+						TEXT("%s has moving samples (samples=%d)"),
+						*ActorLabel,
+						MovingSampleCounts.FindRef(Hostile)),
+					MovingSampleCounts.FindRef(Hostile) > 0);
+				Test->TestTrue(
+					*FString::Printf(
+						TEXT("%s never sustains reverse-facing patrol movement (max=%.3fs worstDot=%.3f)"),
+						*ActorLabel,
+						MaxReverseMovementSeconds.FindRef(Hostile),
+						WorstMovementAlignments.FindRef(Hostile)),
+					MaxReverseMovementSeconds.FindRef(Hostile) <= 0.35);
+				Test->TestTrue(
+					*FString::Printf(
+						TEXT("%s never spins through a near-full turn while stationary (maxAngularTravel=%.1fdeg)"),
+						*ActorLabel,
+						MaxStationaryAngularTravelDegrees.FindRef(Hostile)),
+					MaxStationaryAngularTravelDegrees.FindRef(Hostile) <= 300.0f);
+				Test->TestTrue(
+					*FString::Printf(
+						TEXT("%s advances at least 100cm before accumulating a near-full turn (maxAngularTravel=%.1fdeg)"),
+						*ActorLabel,
+						MaxLowProgressAngularTravelDegrees.FindRef(Hostile)),
+					MaxLowProgressAngularTravelDegrees.FindRef(Hostile) <= 300.0f);
 			}
 		}
 
@@ -465,6 +600,18 @@ public:
 private:
 	FAutomationTestBase* Test;
 	double StartedAt = 0.0;
+	double LastSampleAt = 0.0;
+	TMap<TWeakObjectPtr<ADroneNPCCharacter>, int32> MovingSampleCounts;
+	TMap<TWeakObjectPtr<ADroneNPCCharacter>, float> WorstMovementAlignments;
+	TMap<TWeakObjectPtr<ADroneNPCCharacter>, double> CurrentReverseMovementSeconds;
+	TMap<TWeakObjectPtr<ADroneNPCCharacter>, double> MaxReverseMovementSeconds;
+	TMap<TWeakObjectPtr<ADroneNPCCharacter>, float> PreviousHostileYaws;
+	TMap<TWeakObjectPtr<ADroneNPCCharacter>, float> CurrentStationaryAngularTravelDegrees;
+	TMap<TWeakObjectPtr<ADroneNPCCharacter>, float> MaxStationaryAngularTravelDegrees;
+	TMap<TWeakObjectPtr<ADroneNPCCharacter>, FVector> LowProgressWindowStartLocations;
+	TMap<TWeakObjectPtr<ADroneNPCCharacter>, double> LowProgressWindowStartedTimes;
+	TMap<TWeakObjectPtr<ADroneNPCCharacter>, float> CurrentLowProgressAngularTravelDegrees;
+	TMap<TWeakObjectPtr<ADroneNPCCharacter>, float> MaxLowProgressAngularTravelDegrees;
 };
 
 class FValidateNPCPerceptionSearchPIECommand final : public IAutomationLatentCommand

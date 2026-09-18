@@ -49,6 +49,8 @@ constexpr const TCHAR* AcroPitchPath = TEXT("/Game/Drone/Prototype/Input/Actions
 constexpr const TCHAR* AcroRollPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroRoll.IA_DronePrototype_AcroRoll");
 constexpr const TCHAR* AcroYawPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroYaw.IA_DronePrototype_AcroYaw");
 constexpr const TCHAR* AcroThrottlePath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroThrottle.IA_DronePrototype_AcroThrottle");
+constexpr const TCHAR* AcroGamepadLeftVerticalPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroGamepadLeftVertical.IA_DronePrototype_AcroGamepadLeftVertical");
+constexpr const TCHAR* AcroGamepadRightVerticalPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroGamepadRightVertical.IA_DronePrototype_AcroGamepadRightVertical");
 constexpr const TCHAR* ToggleViewPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_ToggleView.IA_DronePrototype_ToggleView");
 constexpr const TCHAR* PrimaryAbilityPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_PrimaryAbility.IA_DronePrototype_PrimaryAbility");
 constexpr const TCHAR* SecondaryAbilityPath = TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_SecondaryAbility.IA_DronePrototype_SecondaryAbility");
@@ -779,6 +781,8 @@ private:
 		UInputAction* AcroRoll = LoadObject<UInputAction>(nullptr, AcroRollPath);
 		UInputAction* AcroYaw = LoadObject<UInputAction>(nullptr, AcroYawPath);
 		UInputAction* AcroThrottle = LoadObject<UInputAction>(nullptr, AcroThrottlePath);
+		UInputAction* AcroGamepadLeftVertical = LoadObject<UInputAction>(nullptr, AcroGamepadLeftVerticalPath);
+		UInputAction* AcroGamepadRightVertical = LoadObject<UInputAction>(nullptr, AcroGamepadRightVerticalPath);
 		UInputAction* ToggleView = LoadObject<UInputAction>(nullptr, ToggleViewPath);
 		UInputAction* PrimaryAbility = LoadObject<UInputAction>(nullptr, PrimaryAbilityPath);
 		UInputAction* SecondaryAbility = LoadObject<UInputAction>(nullptr, SecondaryAbilityPath);
@@ -792,6 +796,8 @@ private:
 			|| !AcroRoll
 			|| !AcroYaw
 			|| !AcroThrottle
+			|| !AcroGamepadLeftVertical
+			|| !AcroGamepadRightVertical
 			|| !ToggleView
 			|| !PrimaryAbility
 			|| !SecondaryAbility)
@@ -889,6 +895,8 @@ private:
 			AcroRoll,
 			AcroYaw,
 			AcroThrottle,
+			AcroGamepadLeftVertical,
+			AcroGamepadRightVertical,
 			ToggleView,
 			PrimaryAbility,
 			SecondaryAbility};
@@ -989,7 +997,9 @@ private:
 				|| Action == AcroPitch
 				|| Action == AcroRoll
 				|| Action == AcroYaw
-				|| Action == AcroThrottle;
+				|| Action == AcroThrottle
+				|| Action == AcroGamepadLeftVertical
+				|| Action == AcroGamepadRightVertical;
 			const bool bIsStartedAction = Action == ToggleView
 				|| Action == PrimaryAbility
 				|| Action == SecondaryAbility;

@@ -61,7 +61,7 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("FPV Strike starts in Rate/Acro control"),
 		FPVStrikeDefinition->FlightProfile.DefaultControlMode,
 		EDroneControlMode::AcroRateRealisticGreybox);
-	TestEqual(TEXT("FPV Strike uses the high-mobility handling preset"),
+	TestEqual(TEXT("FPV Strike uses the fast speed step"),
 		FPVStrikeDefinition->FlightProfile.DefaultHandlingPreset,
 		EDroneHandlingPreset::Agile);
 	TestTrue(TEXT("FPV Strike uses the 650 deg/s pitch rate reference"), FMath::IsNearlyEqual(
@@ -157,24 +157,32 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 		// 두 축을 명시적으로 바꿔 기체 역할과 무관하게 같은 API로 동작하는지 확인한다.
 		Pawn->SetControlMode(EDroneControlMode::AssistedEasy);
 		Pawn->SetHandlingPreset(EDroneHandlingPreset::Balanced);
-		TestTrue(TEXT("Balanced preset uses the Definition base max speed"), FMath::IsNearlyEqual(
+		TestTrue(TEXT("Normal speed uses the Definition base max speed"), FMath::IsNearlyEqual(
 			Pawn->GetPrototypeMovementComponent()->MaxSpeed,
 			Definition->FlightProfile.MaxSpeedCentimetersPerSecond));
 		TestTrue(TEXT("Assisted Easy uses the Definition base acceleration"), FMath::IsNearlyEqual(
 			Pawn->GetPrototypeMovementComponent()->Acceleration,
 			Definition->FlightProfile.AccelerationCentimetersPerSecondSquared));
-		TestTrue(TEXT("Balanced preset uses the Definition base yaw rate"), FMath::IsNearlyEqual(
+		TestTrue(TEXT("Normal speed uses the Definition base yaw rate"), FMath::IsNearlyEqual(
 			Pawn->GetPrototypeYawRateDegreesPerSecond(),
 			Definition->FlightProfile.YawRateDegreesPerSecond));
 
 		Pawn->SetHandlingPreset(EDroneHandlingPreset::Stable);
 		const float StableSpeed = Pawn->GetPrototypeMovementComponent()->MaxSpeed;
+		const float SlowAcceleration = Pawn->GetPrototypeMovementComponent()->Acceleration;
+		const float SlowYawRate = Pawn->GetPrototypeYawRateDegreesPerSecond();
 		Pawn->SetHandlingPreset(EDroneHandlingPreset::Agile);
 		const float AgileSpeed = Pawn->GetPrototypeMovementComponent()->MaxSpeed;
-		TestTrue(TEXT("Stable is slower than Balanced"),
+		TestTrue(TEXT("Slow is slower than Normal"),
 			StableSpeed < Definition->FlightProfile.MaxSpeedCentimetersPerSecond);
-		TestTrue(TEXT("Agile is faster than Balanced"),
+		TestTrue(TEXT("Fast is faster than Normal"),
 			AgileSpeed > Definition->FlightProfile.MaxSpeedCentimetersPerSecond);
+		TestTrue(TEXT("Speed steps do not secretly alter acceleration"), FMath::IsNearlyEqual(
+			SlowAcceleration,
+			Pawn->GetPrototypeMovementComponent()->Acceleration));
+		TestTrue(TEXT("Speed steps do not secretly alter yaw rate"), FMath::IsNearlyEqual(
+			SlowYawRate,
+			Pawn->GetPrototypeYawRateDegreesPerSecond()));
 
 		Pawn->SetHandlingPreset(EDroneHandlingPreset::Balanced);
 		const float AssistedDeceleration = Pawn->GetPrototypeMovementComponent()->Deceleration;
@@ -183,11 +191,15 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Manual mode preserves more inertia than Assisted Easy"),
 			Pawn->GetPrototypeMovementComponent()->Deceleration < AssistedDeceleration);
 		Pawn->ToggleControlMode();
-		TestEqual(TEXT("Control mode cycles from limited attitude to Rate/Acro"),
+		TestEqual(TEXT("Control mode 3 is Rate/Acro transmitter Mode 1"),
+			Pawn->GetControlMode(),
+			EDroneControlMode::AcroRateMode1Greybox);
+		Pawn->ToggleControlMode();
+		TestEqual(TEXT("Control mode 4 is Rate/Acro transmitter Mode 2"),
 			Pawn->GetControlMode(),
 			EDroneControlMode::AcroRateRealisticGreybox);
 		Pawn->ToggleControlMode();
-		TestEqual(TEXT("Control mode cycles from Rate/Acro to Assisted Easy"),
+		TestEqual(TEXT("Control mode cycles from Mode 2 to Assisted Easy"),
 			Pawn->GetControlMode(),
 			EDroneControlMode::AssistedEasy);
 

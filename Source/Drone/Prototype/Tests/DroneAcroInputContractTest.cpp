@@ -48,7 +48,7 @@ bool FDroneAcroInputContractTest::RunTest(const FString& Parameters)
 	const TArray<FExpectedAction> ExpectedActions{
 		{
 			TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroPitch.IA_DronePrototype_AcroPitch"),
-			{EKeys::W, EKeys::Gamepad_RightY},
+			{EKeys::W},
 			{EKeys::S}
 		},
 		{
@@ -63,8 +63,18 @@ bool FDroneAcroInputContractTest::RunTest(const FString& Parameters)
 		},
 		{
 			TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroThrottle.IA_DronePrototype_AcroThrottle"),
-			{EKeys::SpaceBar, EKeys::Gamepad_LeftY},
+			{EKeys::SpaceBar},
 			{EKeys::LeftControl}
+		},
+		{
+			TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroGamepadLeftVertical.IA_DronePrototype_AcroGamepadLeftVertical"),
+			{EKeys::Gamepad_LeftY},
+			{}
+		},
+		{
+			TEXT("/Game/Drone/Prototype/Input/Actions/IA_DronePrototype_AcroGamepadRightVertical.IA_DronePrototype_AcroGamepadRightVertical"),
+			{EKeys::Gamepad_RightY},
+			{}
 		}
 	};
 

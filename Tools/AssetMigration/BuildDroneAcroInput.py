@@ -1,8 +1,8 @@
 """Create the dedicated keyboard/gamepad Rate/Acro Enhanced Input contract.
 
 The shared Move/Altitude/Yaw actions remain untouched for Assisted and Manual modes.
-Acro gets four independent Axis1D actions so keyboard keys and Mode 2 gamepad axes
-can no longer be reinterpreted through the same aggregated action value.
+Keyboard Acro actions stay semantic and intuitive. Gamepad vertical axes are raw
+left/right-stick actions so C++ can apply real RC transmitter Mode 1 or Mode 2.
 """
 
 import unreal
@@ -16,7 +16,7 @@ ACTION_SPECS = (
     (
         "IA_DronePrototype_AcroPitch",
         "acro_pitch_action",
-        (("W", False), ("S", True), ("Gamepad_RightY", False)),
+        (("W", False), ("S", True)),
     ),
     (
         "IA_DronePrototype_AcroRoll",
@@ -31,7 +31,17 @@ ACTION_SPECS = (
     (
         "IA_DronePrototype_AcroThrottle",
         "acro_throttle_action",
-        (("SpaceBar", False), ("LeftControl", True), ("Gamepad_LeftY", False)),
+        (("SpaceBar", False), ("LeftControl", True)),
+    ),
+    (
+        "IA_DronePrototype_AcroGamepadLeftVertical",
+        "acro_gamepad_left_vertical_action",
+        (("Gamepad_LeftY", False),),
+    ),
+    (
+        "IA_DronePrototype_AcroGamepadRightVertical",
+        "acro_gamepad_right_vertical_action",
+        (("Gamepad_RightY", False),),
     ),
 )
 
@@ -156,6 +166,7 @@ require(len(saved_mappings) == 33, f"Prototype IMC has {len(saved_mappings)} map
 unreal.log(
     "DRONE_ACRO_INPUT|OK|"
     "keyboard=W/S Pitch,A/D Roll,Q/E Yaw,Space/Ctrl Throttle|"
-    "gamepad=RightY Pitch,RightX Roll,LeftX Yaw,LeftY Throttle|"
+    "gamepad=Mode1 LeftY Pitch/RightY Throttle,Mode2 LeftY Throttle/RightY Pitch,"
+    "LeftX Yaw,RightX Roll|"
     f"mappings={len(saved_mappings)}"
 )

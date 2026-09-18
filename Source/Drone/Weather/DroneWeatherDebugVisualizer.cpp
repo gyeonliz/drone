@@ -349,6 +349,10 @@ void ADroneWeatherDebugVisualizer::HandleControlModeHotkeys()
 	}
 	else if (PlayerController->WasInputKeyJustPressed(EKeys::Three) || PlayerController->WasInputKeyJustPressed(EKeys::NumPadThree))
 	{
+		Drone->SetControlMode(EDroneControlMode::AcroRateMode1Greybox);
+	}
+	else if (PlayerController->WasInputKeyJustPressed(EKeys::Four) || PlayerController->WasInputKeyJustPressed(EKeys::NumPadFour))
+	{
 		Drone->SetControlMode(EDroneControlMode::AcroRateRealisticGreybox);
 	}
 }
@@ -377,8 +381,11 @@ void ADroneWeatherDebugVisualizer::UpdateOnScreenReadout() const
 				case EDroneControlMode::ManualRealisticGreybox:
 					ControlMode = TEXT("MANUAL (25% correction)");
 					break;
+				case EDroneControlMode::AcroRateMode1Greybox:
+					ControlMode = TEXT("RATE/ACRO MODE 1 (0% correction)");
+					break;
 				case EDroneControlMode::AcroRateRealisticGreybox:
-					ControlMode = TEXT("RATE/ACRO (0% correction)");
+					ControlMode = TEXT("RATE/ACRO MODE 2 (0% correction)");
 					break;
 				case EDroneControlMode::AssistedEasy:
 				default:
@@ -407,7 +414,7 @@ void ADroneWeatherDebugVisualizer::UpdateOnScreenReadout() const
 		DroneWeatherDebug::HelpMessageKey,
 		0.15f,
 		FColor::Yellow,
-		TEXT("1 Easy / 2 Manual / 3 Rate-Acro | Weather TestMap: 7 Clear / 8 LightWind / 9 RainStorm + debug rain lines (not Niagara)."));
+		TEXT("1 Easy / 2 Manual / 3 Acro Mode 1 / 4 Acro Mode 2 | Weather: 7 Clear / 8 LightWind / 9 RainStorm + debug rain lines (not Niagara)."));
 }
 
 float ADroneWeatherDebugVisualizer::WrapCoordinate(const float Value, const float Extent)

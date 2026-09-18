@@ -118,6 +118,18 @@ public:
 		return PersonalWeaponOutOfRangeConfirmationSeconds;
 	}
 
+	/** Drone 최초 감지 뒤 개인화기 첫 발을 허용하기 전 조준 시간이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	float GetPersonalWeaponInitialAimDelaySeconds() const { return PersonalWeaponInitialAimDelaySeconds; }
+
+	/** 현재 표적을 처음 감지한 뒤 지난 시간이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	float GetPersonalWeaponInitialAimElapsedSeconds() const;
+
+	/** 현재 표적에 대한 최초 조준 지연이 끝났는지 반환한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	bool HasCompletedPersonalWeaponInitialAimDelay() const;
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
 	bool HasPersonalWeaponCombatOrigin() const { return bHasPersonalWeaponCombatOrigin; }
 
@@ -338,6 +350,8 @@ public:
 	FDroneTargetPerceptionChangedSignature OnDronePerceptionChanged;
 
 protected:
+	virtual void OnMoveCompleted(FAIRequestID RequestID, const FPathFollowingResult& Result) override;
+
 	virtual void BeginPlay() override;
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnUnPossess() override;
@@ -366,6 +380,9 @@ protected:
 	/** 추적 중 몸 Yaw를 실제 수평 이동 벡터에 맞춘다. */
 	void UpdatePursuitFacing(float DeltaSeconds);
 
+	/** 화면 재현 뒤 Saved/Logs/Drone.log에서 상태·경로·몸 방향을 함께 비교하는 저빈도 진단이다. */
+	void LogMovementDiagnostics(float DeltaSeconds);
+
 	/** 개인화기 교전 중 몸 Yaw를 Drone 쪽으로 돌려 상체 시선 제한 밖 표적도 바라보게 한다. */
 	void UpdatePersonalWeaponFacing(float DeltaSeconds);
 	float GetPersonalWeaponFacingDeadZoneDegrees() const;
@@ -388,6 +405,9 @@ protected:
 
 	/** 최초 감지 지점을 기준으로 한 개인화기 추적 진행값을 초기화한다. */
 	void ResetPersonalWeaponEngagement(bool bClearIgnoredDrone = true);
+
+	/** 새 표적을 감지한 시점을 기록해 첫 사격 전 조준 지연을 시작한다. */
+	void BeginPersonalWeaponInitialAimDelay(AActor* TargetActor);
 
 	/** 리시 초과·경로 정체 시 표적을 놓고 재감지 Cooldown 뒤 순찰 Tree로 복귀한다. */
 	void DisengagePersonalWeaponTarget();
@@ -458,10 +478,20 @@ protected:
 		meta=(ClampMin="0.0", UIMin="0.0", UIMax="1.0", ForceUnits="s"))
 	float PersonalWeaponOutOfRangeConfirmationSeconds = 0.20f;
 
-	/** MoveToActor가 실제 사거리 가장자리에서 흔들리지 않게 목표 사거리 안쪽에 두는 비율이다. */
+	/** Drone을 처음 감지한 뒤 Rifle/Shotgun 첫 발을 허용하기 전 조준 시간이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="0.0", UIMin="0.0", UIMax="5.0", ForceUnits="s"))
+	float PersonalWeaponInitialAimDelaySeconds = 1.0f;
+
+	/** Drone에서 이 사거리 비율만큼 떨어진 지상 정지점을 추적 목표로 계산한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
 		meta=(ClampMin="0.1", ClampMax="0.95", UIMin="0.25", UIMax="0.9"))
 	float PersonalWeaponPursuitRangeRatio = 0.75f;
+
+	/** 계산된 사거리 정지점에 대한 실제 Nav MoveTo 도착 반경이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="10.0", UIMin="25.0", UIMax="300.0", ForceUnits="cm"))
+	float PersonalWeaponPursuitDestinationAcceptanceRadius = 75.0f;
 
 	/** 움직이지 못하거나 같은 거리를 유지하면 추적을 포기하기까지 허용할 시간이다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
@@ -477,6 +507,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
 		meta=(ClampMin="0.05", UIMin="0.1", UIMax="2.0", ForceUnits="s"))
 	float PersonalWeaponPursuitRepathIntervalSeconds = 0.35f;
+
+	/** Nav 경로가 일시 정지됐을 때 같은 MoveTo를 다시 만들기 전에 기다리는 시간이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
+		meta=(ClampMin="0.0", UIMin="0.0", UIMax="3.0", ForceUnits="s"))
+	float PersonalWeaponPursuitPausedRecoverySeconds = 0.75f;
 
 	/** 투영된 지상 목표가 이 거리 이상 움직였을 때만 진행 중인 MoveTo 경로를 다시 만든다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement",
@@ -510,7 +545,16 @@ protected:
 	float PersonalWeaponPursuitRepathRemainingSeconds = 0.0f;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	float PersonalWeaponPursuitPausedElapsedSeconds = 0.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
 	float PersonalWeaponOutOfRangeElapsedSeconds = 0.0f;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	TWeakObjectPtr<AActor> PersonalWeaponInitialAimTarget;
+
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	float PersonalWeaponInitialAimStartedWorldTimeSeconds = 0.0f;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
 	float LastPersonalWeaponPursuitDistance = 0.0f;
@@ -520,6 +564,10 @@ protected:
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
 	bool bHasPersonalWeaponPursuitNavigationDestination = false;
+
+	/** 현재 투영 목표의 도달 가능한 끝점까지 성공적으로 이동해 같은 경로 재요청을 막는 상태다. */
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	bool bPersonalWeaponPursuitMoveSettled = false;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Engagement")
 	float PersonalWeaponDisengageCooldownRemainingSeconds = 0.0f;
@@ -589,10 +637,22 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze")
 	bool bFaceDroneDuringPersonalWeaponResponse = true;
 
-	/** 추적 중 몸이 실제 수평 이동 벡터를 따라 도는 최대 속도다. 역할 Controller BP에서 조정한다. */
+	/** 이동 중 몸을 진행 방향으로 돌리는 최대 속도다. Controller BP에서 조정한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze",
 		meta=(ClampMin="1.0", UIMin="90.0", UIMax="1080.0", ForceUnits="deg/s"))
 	float PursuitFacingTurnSpeedDegreesPerSecond = 720.0f;
+
+	/** 이 수평 속도보다 느린 잔류 움직임은 몸 방향 기준으로 사용하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Gaze",
+		meta=(ClampMin="0.0", UIMin="0.0", UIMax="200.0", ForceUnits="cm/s"))
+	float PursuitFacingMinimumSpeed = 20.0f;
+
+	/**
+	 * 개인화기 추적 중 Nav 요청 속도에 CharacterMovement 가속을 다시 적용할지 여부다.
+	 * false면 짧은 경로점을 지나쳐 공전하지 않으며 순찰 등 다른 상태에는 영향을 주지 않는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Engagement")
+	bool bUseAccelerationForPersonalWeaponPursuitMoves = false;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Gaze")
 	FRotator SmoothedDroneLookRotation = FRotator::ZeroRotator;
@@ -651,6 +711,17 @@ protected:
 	/** 직전 지점 바로 재선택을 막는 Greybox 기준값. 최종 맵 규모에 맞춰 조정한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Patrol", meta=(ClampMin="0.0", ForceUnits="cm"))
 	float PatrolRepeatAvoidanceRadius = 250.0f;
+
+	/** Greybox 수동 재현 동안 [NPC-MOVE]/[NPC-STATE] 로그를 남긴다. 원인 확정 뒤 BP에서 끌 수 있다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Diagnostics")
+	bool bEnableMovementDiagnostics = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Diagnostics",
+		meta=(ClampMin="0.1", UIMin="0.1", UIMax="2.0", ForceUnits="s"))
+	float MovementDiagnosticLogIntervalSeconds = 0.5f;
+
+	UPROPERTY(Transient)
+	float MovementDiagnosticLogRemainingSeconds = 0.0f;
 
 	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category="Drone|AI|Patrol")
 	int32 CompletedPatrolCycles = 0;

@@ -44,8 +44,8 @@ profile.set_editor_property(
 profile.set_editor_property(
     "feature_highlights",
     [
-        "FPV Rate/Acro 기본 조작",
-        "고기동 27 m/s 기준 속도",
+        "FPV Rate/Acro Mode 2 기본 조작",
+        "빠름 27 m/s 기준 속도",
         "Arm 뒤 속도 조건 충돌 자폭",
     ],
 )
