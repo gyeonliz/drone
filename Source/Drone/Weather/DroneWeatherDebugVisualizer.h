@@ -33,6 +33,13 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Weather|Debug")
 	FVector GetDisplayedWindVelocityCentimetersPerSecond() const { return DisplayedWindVelocity; }
 
+	/** TestMap 전용: 0=Clear, 1=LightWind, 2=RainStorm. 저장 자산/맵은 수정하지 않는다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Weather|Debug")
+	bool ApplyTestWeatherPreset(int32 PresetIndex);
+
+	/** 테스트 맵에서만 Snapshot의 강우·바람을 읽어 그리는 임시 디버그 빗줄기 개수다. Niagara 성능 수치가 아니다. */
+	static int32 CalculateRainPreviewStreakCount(float RainIntensity01, float RainSpawnScale01, int32 MaxStreakCount);
+
 	/** 풍향 변경 때 이전 누적 거리를 새 방향으로 재투영하지 않는 프레임 독립 적분 함수다. */
 	static FVector IntegrateFlowTravelOffset(
 		const FVector& CurrentOffset,
@@ -84,6 +91,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather|Debug|Input")
 	bool bEnableControlModeHotkeys = true;
 
+	/** 7=Clear, 8=LightWind, 9=RainStorm. 비 표현이 아닌 Snapshot 시험 키다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather|Debug|Input")
+	bool bEnableWeatherPresetHotkeys = true;
+
+	/** 전용 Weather TestMap에서만 켜지는 저비용 화면 확인용 선분 프리뷰다. 실제 Niagara 비 효과가 아니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather|Debug|Rain", meta=(ClampMin="0", ClampMax="80"))
+	int32 RainPreviewMaxStreakCount = 80;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -94,7 +109,8 @@ private:
 
 	void RebuildFlowBeads();
 	void UpdateFlowBeads(float DeltaSeconds);
-	void HandleControlModeHotkeys() const;
+	void UpdateRainDebugPreview(float DeltaSeconds);
+	void HandleControlModeHotkeys();
 	void UpdateOnScreenReadout() const;
 	static float WrapCoordinate(float Value, float Extent);
 
@@ -103,4 +119,8 @@ private:
 	TArray<FVector> BaseBeadLocations;
 	FVector DisplayedWindVelocity = FVector::ZeroVector;
 	FVector FlowTravelOffset = FVector::ZeroVector;
+	FRandomStream RainPreviewRandomStream;
+	float RainPreviewElapsedSeconds = 0.0f;
+	int32 CurrentRainPreviewStreakCount = 0;
+	bool bRainDebugPreviewMap = false;
 };

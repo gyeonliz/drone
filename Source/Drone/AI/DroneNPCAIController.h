@@ -130,6 +130,10 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
 	int32 GetPersonalWeaponPursuitMoveRequestCount() const { return PersonalWeaponPursuitMoveRequestCount; }
 
+	/** 현재 개인화기 추적 MoveTo가 실제로 진행 중인지 반환한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
+	bool IsPersonalWeaponPursuitMoveActive() const;
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI|Engagement")
 	int32 GetPersonalWeaponDisengageCount() const { return PersonalWeaponDisengageCount; }
 

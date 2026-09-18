@@ -149,6 +149,22 @@ EStateTreeRunStatus FDroneStateTreeMoveToPatrolSlotTask::EnterState(
 	}
 
 	InstanceData.Destination = SlotTransform.GetLocation();
+	InstanceData.IdleElapsedSeconds = 0.0f;
+	InstanceData.MoveRetryRemainingSeconds = 0.0f;
+	if (APawn* Pawn = Controller->GetPawn())
+	{
+		const FVector MoveDirection =
+			(InstanceData.Destination - Pawn->GetActorLocation()).GetSafeNormal2D();
+		if (!MoveDirection.IsNearlyZero())
+		{
+			// 첫 Nav 이동 프레임에는 CharacterMovement의 RotationRate가 아직 회전하지
+			// 않았을 수 있다. 출발 직전 목적지 방향을 한 번만 맞춰 BlendSpace가
+			// 후진/옆걸음 샘플로 시작하지 않게 한다. 이동 중 회전은 CharacterMovement가 담당한다.
+			const FRotator MoveFacing(0.0f, MoveDirection.Rotation().Yaw, 0.0f);
+			Controller->SetControlRotation(MoveFacing);
+			Pawn->SetActorRotation(MoveFacing);
+		}
+	}
 	const EPathFollowingRequestResult::Type MoveResult = Controller->MoveToLocation(
 		InstanceData.Destination,
 		InstanceData.AcceptanceRadius,
@@ -161,12 +177,10 @@ EStateTreeRunStatus FDroneStateTreeMoveToPatrolSlotTask::EnterState(
 
 	if (MoveResult == EPathFollowingRequestResult::AlreadyAtGoal)
 	{
-		if (Controller->AlignPawnToReservedSlot())
-		{
-			return EStateTreeRunStatus::Succeeded;
-		}
-		Controller->GetReservationComponent()->ReleaseReservation();
-		return EStateTreeRunStatus::Failed;
+		// 순찰 슬롯의 화살표는 상호작용/경계 방향일 수 있다. 순찰에서는 그 Yaw를
+		// 강제로 적용하면 다음 슬롯으로 이동할 때 로컬 속도가 뒤쪽으로 계산되어
+		// 후진 BlendSpace가 선택될 수 있으므로 CharacterMovement의 이동 방향 회전에 맡긴다.
+		return EStateTreeRunStatus::Succeeded;
 	}
 	if (MoveResult == EPathFollowingRequestResult::RequestSuccessful)
 	{
@@ -180,7 +194,7 @@ EStateTreeRunStatus FDroneStateTreeMoveToPatrolSlotTask::Tick(
 	FStateTreeExecutionContext& Context,
 	const float DeltaTime) const
 {
-	const FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	ADroneNPCAIController* Controller = GetDroneController(Context);
 	if (!Controller || Controller->HasDetectedDrone())
 	{
@@ -195,6 +209,8 @@ EStateTreeRunStatus FDroneStateTreeMoveToPatrolSlotTask::Tick(
 	if (Controller->GetMoveStatus() == EPathFollowingStatus::Moving
 		|| Controller->GetMoveStatus() == EPathFollowingStatus::Paused)
 	{
+		InstanceData.IdleElapsedSeconds = 0.0f;
+		InstanceData.MoveRetryRemainingSeconds = 0.0f;
 		return EStateTreeRunStatus::Running;
 	}
 
@@ -202,13 +218,40 @@ EStateTreeRunStatus FDroneStateTreeMoveToPatrolSlotTask::Tick(
 	const float ReachRadius = FMath::Max(10.0f, InstanceData.AcceptanceRadius) + 100.0f;
 	if (Pawn && FVector::DistSquared2D(Pawn->GetActorLocation(), InstanceData.Destination) <= FMath::Square(ReachRadius))
 	{
-		if (Controller->AlignPawnToReservedSlot())
+		// 도착한 순찰 NPC도 슬롯 Yaw가 아닌 실제 마지막 이동 방향을 유지한다.
+		// MG/Cover 도착은 별도 Task에서 AlignPawnToReservedSlot을 사용한다.
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// PathFollowing은 경로 재평가·NavMesh 갱신 중 잠깐 Idle을 보고할 수 있다.
+	// 기존 코드는 이 한 프레임을 즉시 실패로 처리해 Claim/Move를 반복했고,
+	// 화면에서는 NPC가 걷다 멈추고 다시 출발하는 것처럼 보였다. 짧은 유예 동안
+	// 같은 목적지로 재요청하고, 실제로 2초 이상 진전이 없을 때만 실패시킨다.
+	InstanceData.IdleElapsedSeconds += FMath::Max(0.0f, DeltaTime);
+	InstanceData.MoveRetryRemainingSeconds -= FMath::Max(0.0f, DeltaTime);
+	if (InstanceData.IdleElapsedSeconds >= 2.0f)
+	{
+		Controller->GetReservationComponent()->ReleaseReservation();
+		return EStateTreeRunStatus::Failed;
+	}
+	if (InstanceData.MoveRetryRemainingSeconds <= 0.0f)
+	{
+		InstanceData.MoveRetryRemainingSeconds = 0.25f;
+		const EPathFollowingRequestResult::Type RetryResult = Controller->MoveToLocation(
+			InstanceData.Destination,
+			InstanceData.AcceptanceRadius,
+			true,
+			true,
+			true,
+			true,
+			nullptr,
+			false);
+		if (RetryResult == EPathFollowingRequestResult::AlreadyAtGoal)
 		{
 			return EStateTreeRunStatus::Succeeded;
 		}
 	}
-	Controller->GetReservationComponent()->ReleaseReservation();
-	return EStateTreeRunStatus::Failed;
+	return EStateTreeRunStatus::Running;
 }
 
 void FDroneStateTreeMoveToPatrolSlotTask::ExitState(

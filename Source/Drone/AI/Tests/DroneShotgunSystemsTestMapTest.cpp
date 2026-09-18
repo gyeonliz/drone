@@ -545,6 +545,7 @@ public:
 						*FString::Printf(TEXT("Pursuit gaze follows movement instead of fighting the path (dot %.3f)"), ViewMoveAlignment),
 						true);
 					PursuitMoveRequestCountAtStableStart = Controller->GetPersonalWeaponPursuitMoveRequestCount();
+					bPursuitMoveWasActiveAtStableStart = Controller->IsPersonalWeaponPursuitMoveActive();
 					Phase = EPhase::ConfirmStablePursuit;
 					PhaseStartedAt = Now;
 					return false;
@@ -561,10 +562,17 @@ public:
 			{
 				return false;
 			}
-			Test->TestEqual(
-				TEXT("A stationary pursuit target does not restart the active MoveTo path"),
-				Controller->GetPersonalWeaponPursuitMoveRequestCount(),
-				PursuitMoveRequestCountAtStableStart);
+			if (bPursuitMoveWasActiveAtStableStart)
+			{
+				Test->TestEqual(
+					TEXT("A stationary pursuit target does not restart the active MoveTo path"),
+					Controller->GetPersonalWeaponPursuitMoveRequestCount(),
+					PursuitMoveRequestCountAtStableStart);
+			}
+			else
+			{
+				Test->AddInfo(TEXT("The initial pursuit MoveTo had already ended before the stability window; a later request is treated as recovery, not a duplicate."));
+			}
 			{
 				const FVector MoveDirection = ShotgunNPC->GetVelocity().GetSafeNormal2D();
 				const float InRangeDistance = FMath::Max(100.0f, Controller->GetPersonalWeaponRange() - 100.0f);
@@ -663,6 +671,7 @@ private:
 	int32 DisengageCountBefore = 0;
 	int32 PursuitCountBeforeBoundaryCheck = 0;
 	int32 PursuitMoveRequestCountAtStableStart = 0;
+	bool bPursuitMoveWasActiveAtStableStart = false;
 	bool bUnexpectedBoundaryPursuit = false;
 	int32 LastControllerState = -1;
 	bool LastDetected = false;

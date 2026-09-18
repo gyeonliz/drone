@@ -246,4 +246,61 @@ bool FDroneWeatherSystemsTestMapTest::RunTest(const FString& Parameters)
 	return !HasAnyErrors();
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDroneWeatherDebugPresetTest,
+	"Drone.Weather.DebugPresetEntry",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDroneWeatherDebugPresetTest::RunTest(const FString& Parameters)
+{
+	// Transient world only: no level loading/saving and no PIE timing dependency.
+	const UWorld::InitializationValues Values = UWorld::InitializationValues()
+		.AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false);
+	// CreateWorld initializes once; calling InitializeNewWorld again duplicates WorldSettings.
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false,
+		FName(TEXT("Lvl_DroneWeatherSystemsTest")), nullptr, true, ERHIFeatureLevel::Num, &Values);
+	if (!TestNotNull(TEXT("Transient weather test world exists"), World)) return false;
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	ADroneWeatherDebugVisualizer* Visualizer = World->SpawnActor<ADroneWeatherDebugVisualizer>(Params);
+	UDroneWeatherWorldSubsystem* Weather = World->GetSubsystem<UDroneWeatherWorldSubsystem>();
+	if (TestNotNull(TEXT("Visualizer exists"), Visualizer) && TestNotNull(TEXT("Subsystem exists"), Weather))
+	{
+		TestTrue(TEXT("Storm preset applies through the debug entry"), Visualizer->ApplyTestWeatherPreset(2));
+		const FDroneWeatherSnapshot Storm = Weather->GetSnapshot();
+		TestEqual(TEXT("Storm publishes its ID"), Storm.WeatherId, FName(TEXT("Weather.RainStorm.Greybox")));
+		TestEqual(TEXT("Storm publishes rain intensity"), Storm.RainIntensity01, 0.8f);
+		TestTrue(TEXT("Storm publishes nonzero spawn scale and shared wind"),
+			Storm.RainSpawnScale01 > 0.0f && !Storm.WindVelocityCentimetersPerSecond.IsNearlyZero());
+		TestTrue(TEXT("Storm drives a bounded nonzero debug preview"),
+			ADroneWeatherDebugVisualizer::CalculateRainPreviewStreakCount(
+				Storm.RainIntensity01, Storm.RainSpawnScale01, 80) > 0);
+		TestEqual(TEXT("Preview count respects its maximum"),
+			ADroneWeatherDebugVisualizer::CalculateRainPreviewStreakCount(1.0f, 1.0f, 80), 80);
+		TestFalse(TEXT("Invalid preset is rejected"), Visualizer->ApplyTestWeatherPreset(3));
+		TestEqual(TEXT("Invalid preset preserves snapshot"), Weather->GetSnapshot().WeatherId, Storm.WeatherId);
+		TestTrue(TEXT("LightWind applies"), Visualizer->ApplyTestWeatherPreset(1));
+		TestEqual(TEXT("LightWind keeps wind without rain"), Weather->GetSnapshot().RainIntensity01, 0.0f);
+		TestTrue(TEXT("Clear applies"), Visualizer->ApplyTestWeatherPreset(0));
+		TestTrue(TEXT("Clear removes wind and rain spawn"),
+			Weather->GetSnapshot().WindVelocityCentimetersPerSecond.IsNearlyZero()
+			&& FMath::IsNearlyZero(Weather->GetSnapshot().RainSpawnScale01));
+		TestEqual(TEXT("Clear produces no debug rain"),
+			ADroneWeatherDebugVisualizer::CalculateRainPreviewStreakCount(
+				Weather->GetSnapshot().RainIntensity01, Weather->GetSnapshot().RainSpawnScale01, 80), 0);
+	}
+	World->DestroyWorld(false);
+
+	// A second transient world proves the guard without changing the editor's current level.
+	UWorld* OtherWorld = UWorld::CreateWorld(EWorldType::Game, false,
+		FName(TEXT("NotWeatherTestMap")), nullptr, true, ERHIFeatureLevel::Num, &Values);
+	ADroneWeatherDebugVisualizer* OtherVisualizer = OtherWorld
+		? OtherWorld->SpawnActor<ADroneWeatherDebugVisualizer>(Params)
+		: nullptr;
+	TestTrue(TEXT("Debug entry cannot change another map"),
+		OtherVisualizer && !OtherVisualizer->ApplyTestWeatherPreset(2));
+	if (OtherWorld) OtherWorld->DestroyWorld(false);
+	return !HasAnyErrors();
+}
+
 #endif

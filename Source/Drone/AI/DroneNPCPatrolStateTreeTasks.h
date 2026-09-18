@@ -61,6 +61,14 @@ struct FDroneStateTreeMoveToPatrolSlotTaskInstanceData
 
 	UPROPERTY(Transient)
 	FVector Destination = FVector::ZeroVector;
+
+	/** PathFollowing이 한 프레임 Idle을 보고해도 예약을 즉시 버리지 않기 위한 유예 시간이다. */
+	UPROPERTY(Transient)
+	float IdleElapsedSeconds = 0.0f;
+
+	/** 일시 Idle 동안 재요청을 과도하게 반복하지 않기 위한 타이머다. */
+	UPROPERTY(Transient)
+	float MoveRetryRemainingSeconds = 0.0f;
 };
 
 USTRUCT(meta=(DisplayName="Move To Reserved Patrol Slot", Category="Drone|AI|Patrol"))

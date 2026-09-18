@@ -269,11 +269,9 @@ bool ADroneNPCAIController::MaintainCurrentResponseStateAction()
 
 	case EDroneNPCAIResponseState::DroneDetected:
 	case EDroneNPCAIResponseState::PursueDrone:
-		if (!HasDetectedDrone())
-		{
-			return false;
-		}
-		return UpdatePersonalWeaponEngagement(GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f);
+		// Controller Tick owns personal-weapon time, fire and movement updates. MG retry
+		// maintenance can run earlier in that same Tick; do not count its DeltaSeconds twice.
+		return IsHostileNPC() && GetPawn() && HasDetectedDrone();
 
 	case EDroneNPCAIResponseState::MoveToMGTurret:
 	case EDroneNPCAIResponseState::HoldMGTurret:
@@ -386,6 +384,13 @@ float ADroneNPCAIController::GetPersonalWeaponRange() const
 	return 0.0f;
 }
 
+bool ADroneNPCAIController::IsPersonalWeaponPursuitMoveActive() const
+{
+	const EPathFollowingStatus::Type MoveStatus = GetMoveStatus();
+	return MoveStatus == EPathFollowingStatus::Moving
+		|| MoveStatus == EPathFollowingStatus::Paused;
+}
+
 bool ADroneNPCAIController::UpdatePersonalWeaponEngagement(const float DeltaSeconds)
 {
 	APawn* ControlledPawn = GetPawn();
@@ -428,6 +433,16 @@ bool ADroneNPCAIController::UpdatePersonalWeaponEngagement(const float DeltaSeco
 		// 사거리 안에서도 계속 달려드는 동작을 만들지 않는다.
 		PersonalWeaponOutOfRangeElapsedSeconds = 0.0f;
 		StopMovement();
+		// PathFollowing 정지와 CharacterMovement 감속은 서로 다른 단계다. 직전
+		// Pursue 속도가 남은 채 조준 Yaw를 적용하면 잠깐 뒤로 걷거나 옆으로
+		// 미끄러지며 쏘는 모습이 생기므로, 실제 사격 상태에서는 수평 속도도 즉시 제거한다.
+		if (ACharacter* CharacterPawn = Cast<ACharacter>(ControlledPawn))
+		{
+			if (UCharacterMovementComponent* Movement = CharacterPawn->GetCharacterMovement())
+			{
+				Movement->StopMovementImmediately();
+			}
+		}
 		SetResponseState(EDroneNPCAIResponseState::DroneDetected);
 		PersonalWeaponPursuitNoProgressSeconds = 0.0f;
 		PersonalWeaponPursuitRepathRemainingSeconds = 0.0f;
@@ -689,6 +704,13 @@ void ADroneNPCAIController::EnterDroneDetectedResponse()
 	}
 	SetResponseState(EDroneNPCAIResponseState::DroneDetected);
 	StopMovement();
+	if (ACharacter* CharacterPawn = Cast<ACharacter>(GetPawn()))
+	{
+		if (UCharacterMovementComponent* Movement = CharacterPawn->GetCharacterMovement())
+		{
+			Movement->StopMovementImmediately();
+		}
+	}
 	ReservationComponent->ReleaseReservation();
 }
 
@@ -725,6 +747,13 @@ void ADroneNPCAIController::CompleteDroneSearch()
 	}
 
 	StopMovement();
+	if (ACharacter* CharacterPawn = Cast<ACharacter>(GetPawn()))
+	{
+		if (UCharacterMovementComponent* Movement = CharacterPawn->GetCharacterMovement())
+		{
+			Movement->StopMovementImmediately();
+		}
+	}
 	ClearDroneGameplayFocus();
 	++CompletedDroneSearchCount;
 	SetResponseState(EDroneNPCAIResponseState::Patrol);
@@ -1415,6 +1444,17 @@ void ADroneNPCAIController::UpdatePersonalWeaponFacing(const float DeltaSeconds)
 		bPersonalWeaponFacingTurnActive = false;
 		return;
 	}
+	// 개인화기 몸 Yaw는 정지 사격/엄폐에서만 담당한다. 실제 이동 중에는
+	// PursuitFacing 또는 CharacterMovement가 유일한 몸 방향 소유자여야 한다.
+	if (const ACharacter* CharacterPawn = Cast<ACharacter>(ControlledPawn))
+	{
+		if (const UCharacterMovementComponent* Movement = CharacterPawn->GetCharacterMovement();
+			Movement && Movement->Velocity.SizeSquared2D() > FMath::Square(20.0f))
+		{
+			bPersonalWeaponFacingTurnActive = false;
+			return;
+		}
+	}
 
 	FVector ToDrone = CurrentDrone->GetActorLocation() - ControlledPawn->GetActorLocation();
 	ToDrone.Z = 0.0f;
@@ -1463,8 +1503,13 @@ void ADroneNPCAIController::UpdatePursuitFacing(const float DeltaSeconds)
 	}
 
 	const bool bUsesVelocityFacing = ResponseState == EDroneNPCAIResponseState::PursueDrone;
+	const bool bUsesPersonalWeaponFacing = ResponseState == EDroneNPCAIResponseState::DroneDetected
+		|| ResponseState == EDroneNPCAIResponseState::UseCover;
 	Movement->bUseControllerDesiredRotation = false;
-	Movement->bOrientRotationToMovement = !bUsesVelocityFacing;
+	// 개인화기 정지 사격/엄폐는 Controller가 몸을 조준 방향으로 직접 돌린다.
+	// 이때 CharacterMovement가 이동 방향으로 다시 Yaw를 쓰면 두 회전 소유자가
+	// 서로 덮어써 도리도리·옆걸음 포즈가 생길 수 있다.
+	Movement->bOrientRotationToMovement = !bUsesVelocityFacing && !bUsesPersonalWeaponFacing;
 	if (!bUsesVelocityFacing)
 	{
 		return;
@@ -1492,8 +1537,16 @@ void ADroneNPCAIController::UpdateDroneGaze(const float DeltaSeconds)
 	APawn* ControlledPawn = GetPawn();
 	FVector LookTargetLocation = FVector::ZeroVector;
 	bool bHasTarget = false;
+	const bool bCanUpdateCombatGaze = ResponseState == EDroneNPCAIResponseState::DroneDetected
+		|| ResponseState == EDroneNPCAIResponseState::PursueDrone
+		|| ResponseState == EDroneNPCAIResponseState::MoveToMGTurret
+		|| ResponseState == EDroneNPCAIResponseState::HoldMGTurret
+		|| ResponseState == EDroneNPCAIResponseState::UseMGTurret
+		|| ResponseState == EDroneNPCAIResponseState::MoveToCover
+		|| ResponseState == EDroneNPCAIResponseState::UseCover
+		|| ResponseState == EDroneNPCAIResponseState::Search;
 
-	if (ResponseState != EDroneNPCAIResponseState::Dead && IsHostileNPC() && ControlledPawn)
+	if (bCanUpdateCombatGaze && IsHostileNPC() && ControlledPawn)
 	{
 		if (AActor* CurrentDrone = DetectedDrone.Get())
 		{

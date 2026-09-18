@@ -2,19 +2,40 @@
 
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
+#include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "InputCoreTypes.h"
+#include "Math/RotationMatrix.h"
 #include "Prototype/DronePrototypePawn.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Weather/DroneWeatherWorldSubsystem.h"
+#include "Weather/DroneWeatherProfile.h"
 
 namespace DroneWeatherDebug
 {
 constexpr uint64 SummaryMessageKey = 0x4452575401ULL;
 constexpr uint64 HelpMessageKey = 0x4452575402ULL;
+
+bool IsWeatherTestMap(const UWorld* World)
+{
+	if (!World)
+	{
+		return false;
+	}
+
+	const auto MatchesWeatherTestName = [](const FString& Name)
+	{
+		return Name == TEXT("Lvl_DroneWeatherSystemsTest")
+			|| Name.EndsWith(TEXT("_Lvl_DroneWeatherSystemsTest"));
+	};
+	// A loaded map uses its package name; transient automation worlds live in the Transient package,
+	// so also check the explicitly assigned world object name for the test-only entry path.
+	return MatchesWeatherTestName(World->GetMapName())
+		|| MatchesWeatherTestName(World->GetName());
+}
 }
 
 ADroneWeatherDebugVisualizer::ADroneWeatherDebugVisualizer()
@@ -53,6 +74,8 @@ void ADroneWeatherDebugVisualizer::BeginPlay()
 
 	if (UWorld* World = GetWorld())
 	{
+		bRainDebugPreviewMap = DroneWeatherDebug::IsWeatherTestMap(World);
+		RainPreviewRandomStream.Initialize(static_cast<int32>(GetUniqueID()));
 		if (UDroneWeatherWorldSubsystem* Subsystem = World->GetSubsystem<UDroneWeatherWorldSubsystem>())
 		{
 			WeatherSubsystem = Subsystem;
@@ -81,6 +104,7 @@ void ADroneWeatherDebugVisualizer::Tick(const float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	HandleControlModeHotkeys();
 	UpdateFlowBeads(DeltaSeconds);
+	UpdateRainDebugPreview(DeltaSeconds);
 	UpdateOnScreenReadout();
 }
 
@@ -179,6 +203,82 @@ void ADroneWeatherDebugVisualizer::UpdateFlowBeads(const float DeltaSeconds)
 	}
 }
 
+int32 ADroneWeatherDebugVisualizer::CalculateRainPreviewStreakCount(
+	const float RainIntensity01,
+	const float RainSpawnScale01,
+	const int32 MaxStreakCount)
+{
+	const int32 SafeMax = FMath::Clamp(MaxStreakCount, 0, 80);
+	const float EffectiveRain = FMath::Clamp(RainIntensity01, 0.0f, 1.0f)
+		* FMath::Clamp(RainSpawnScale01, 0.0f, 1.0f);
+	return FMath::Clamp(FMath::RoundToInt(EffectiveRain * SafeMax), 0, SafeMax);
+}
+
+void ADroneWeatherDebugVisualizer::UpdateRainDebugPreview(const float DeltaSeconds)
+{
+	if (!bRainDebugPreviewMap)
+	{
+		return;
+	}
+
+	CurrentRainPreviewStreakCount = CalculateRainPreviewStreakCount(
+		CachedSnapshot.RainIntensity01,
+		CachedSnapshot.RainSpawnScale01,
+		RainPreviewMaxStreakCount);
+	if (CurrentRainPreviewStreakCount <= 0)
+	{
+		// No new draw calls while rain is off; already drawn lines expire within one preview interval.
+		RainPreviewElapsedSeconds = 0.0f;
+		return;
+	}
+
+	RainPreviewElapsedSeconds += FMath::Max(0.0f, DeltaSeconds);
+	constexpr float PreviewUpdateIntervalSeconds = 0.2f;
+	if (RainPreviewElapsedSeconds < PreviewUpdateIntervalSeconds)
+	{
+		return;
+	}
+	RainPreviewElapsedSeconds = 0.0f;
+
+	UWorld* World = GetWorld();
+	APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+	const FRotationMatrix ViewMatrix(ViewRotation);
+	const FVector Forward = ViewMatrix.GetUnitAxis(EAxis::X);
+	const FVector Right = ViewMatrix.GetUnitAxis(EAxis::Y);
+	const FVector Up = ViewMatrix.GetUnitAxis(EAxis::Z);
+	const FVector WindDrift = CachedSnapshot.WindVelocityCentimetersPerSecond.GetClampedToMaxSize(65.0f);
+	constexpr float ViewDepthCentimeters = 1100.0f;
+	constexpr float HalfWidthCentimeters = 850.0f;
+	constexpr float HalfHeightCentimeters = 500.0f;
+	constexpr float DropLengthCentimeters = 135.0f;
+	constexpr float PreviewLineLifetimeSeconds = PreviewUpdateIntervalSeconds * 1.5f;
+	for (int32 Index = 0; Index < CurrentRainPreviewStreakCount; ++Index)
+	{
+		const FVector Start = ViewLocation
+			+ Forward * ViewDepthCentimeters
+			+ Right * RainPreviewRandomStream.FRandRange(-HalfWidthCentimeters, HalfWidthCentimeters)
+			+ Up * RainPreviewRandomStream.FRandRange(-HalfHeightCentimeters, HalfHeightCentimeters);
+		const FVector End = Start + FVector(0.0f, 0.0f, -DropLengthCentimeters) + WindDrift;
+		DrawDebugLine(
+			World,
+			Start,
+			End,
+			FColor(185, 220, 255),
+			false,
+			PreviewLineLifetimeSeconds,
+			SDPG_World,
+			1.0f);
+	}
+}
+
 FVector ADroneWeatherDebugVisualizer::IntegrateFlowTravelOffset(
 	const FVector& CurrentOffset,
 	const FVector& LocalWindVelocityCentimetersPerSecond,
@@ -191,9 +291,32 @@ FVector ADroneWeatherDebugVisualizer::IntegrateFlowTravelOffset(
 			* FMath::Max(0.05f, PlaybackScale);
 }
 
-void ADroneWeatherDebugVisualizer::HandleControlModeHotkeys() const
+bool ADroneWeatherDebugVisualizer::ApplyTestWeatherPreset(const int32 PresetIndex)
 {
-	if (!bEnableControlModeHotkeys)
+	// Restrict the development entry point to the existing dedicated map (PIE prefixes included).
+	UWorld* World = GetWorld();
+	if (!DroneWeatherDebug::IsWeatherTestMap(World))
+	{
+		return false;
+	}
+	static const TCHAR* ProfilePaths[] =
+	{
+		TEXT("/Game/Drone/Data/Weather/DA_Weather_Clear.DA_Weather_Clear"),
+		TEXT("/Game/Drone/Data/Weather/DA_Weather_LightWind.DA_Weather_LightWind"),
+		TEXT("/Game/Drone/Data/Weather/DA_Weather_RainStorm_Greybox.DA_Weather_RainStorm_Greybox")
+	};
+	if (PresetIndex < 0 || PresetIndex >= UE_ARRAY_COUNT(ProfilePaths))
+	{
+		return false;
+	}
+	UDroneWeatherWorldSubsystem* Subsystem = World->GetSubsystem<UDroneWeatherWorldSubsystem>();
+	UDroneWeatherProfile* Profile = LoadObject<UDroneWeatherProfile>(nullptr, ProfilePaths[PresetIndex]);
+	return Subsystem && Profile && Subsystem->ApplyWeatherProfile(Profile, true);
+}
+
+void ADroneWeatherDebugVisualizer::HandleControlModeHotkeys()
+{
+	if (!bEnableControlModeHotkeys && !bEnableWeatherPresetHotkeys)
 	{
 		return;
 	}
@@ -201,7 +324,17 @@ void ADroneWeatherDebugVisualizer::HandleControlModeHotkeys() const
 	UWorld* World = GetWorld();
 	APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
 	ADronePrototypePawn* Drone = PlayerController ? Cast<ADronePrototypePawn>(PlayerController->GetPawn()) : nullptr;
-	if (!PlayerController || !Drone)
+	if (!PlayerController)
+	{
+		return;
+	}
+	if (bEnableWeatherPresetHotkeys)
+	{
+		if (PlayerController->WasInputKeyJustPressed(EKeys::Seven)) ApplyTestWeatherPreset(0);
+		else if (PlayerController->WasInputKeyJustPressed(EKeys::Eight)) ApplyTestWeatherPreset(1);
+		else if (PlayerController->WasInputKeyJustPressed(EKeys::Nine)) ApplyTestWeatherPreset(2);
+	}
+	if (!bEnableControlModeHotkeys || !Drone)
 	{
 		return;
 	}
@@ -261,16 +394,20 @@ void ADroneWeatherDebugVisualizer::UpdateOnScreenReadout() const
 		0.15f,
 		FColor::Cyan,
 		FString::Printf(
-			TEXT("WEATHER TEST | %s | Wind %.1f m/s @ %.0f deg | Mode %s"),
+			TEXT("WEATHER TEST | %s | Wind %.1f m/s @ %.0f deg | Rain %.2f Spawn %.2f Wet %.2f | Debug streaks %d | Mode %s"),
 			*CachedSnapshot.WeatherId.ToString(),
 			SpeedMetersPerSecond,
 			DirectionDegrees,
+			CachedSnapshot.RainIntensity01,
+			CachedSnapshot.RainSpawnScale01,
+			CachedSnapshot.SurfaceWetness01,
+			CurrentRainPreviewStreakCount,
 			*ControlMode));
 	GEngine->AddOnScreenDebugMessage(
 		DroneWeatherDebug::HelpMessageKey,
 		0.15f,
 		FColor::Yellow,
-		TEXT("Release movement keys to observe drift. Press 1 Easy / 2 Manual / 3 Rate-Acro and compare displacement."));
+		TEXT("1 Easy / 2 Manual / 3 Rate-Acro | Weather TestMap: 7 Clear / 8 LightWind / 9 RainStorm + debug rain lines (not Niagara)."));
 }
 
 float ADroneWeatherDebugVisualizer::WrapCoordinate(const float Value, const float Extent)

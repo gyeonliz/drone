@@ -1,5 +1,7 @@
 #include "AI/Weapons/DroneNPCProjectile.h"
 
+#include "AI/DroneNPCCharacter.h"
+
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -125,6 +127,20 @@ void ADroneNPCProjectile::InitializeProjectile(
 				}
 				CollisionComponent->IgnoreActorWhenMoving(OtherProjectile, true);
 				OtherProjectile->CollisionComponent->IgnoreActorWhenMoving(this, true);
+			}
+		}
+	}
+
+	// NPC끼리의 탄환은 이동을 막는 물리 장애물이 되면 안 된다. 실제 피해 대상은
+	// IntendedTarget으로만 판정하므로, 다른 병사/아군 Character는 Sweep에서 제외한다.
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ADroneNPCCharacter> It(World); It; ++It)
+		{
+			ADroneNPCCharacter* OtherNPC = *It;
+			if (OtherNPC && OtherNPC != IntendedTarget.Get())
+			{
+				CollisionComponent->IgnoreActorWhenMoving(OtherNPC, true);
 			}
 		}
 	}
