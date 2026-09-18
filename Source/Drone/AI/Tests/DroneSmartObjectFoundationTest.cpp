@@ -79,6 +79,21 @@ bool FDroneSmartObjectFoundationTest::RunTest(const FString& Parameters)
 				MinimumStateDuration >= 0.5f);
 		}
 
+		const FFloatProperty* InitialAimDelayProperty = FindFProperty<FFloatProperty>(
+			ADroneNPCAIController::StaticClass(),
+			TEXT("PersonalWeaponInitialAimDelaySeconds"));
+		TestNotNull(TEXT("Controller exposes a Blueprint-tunable first-shot aim delay"), InitialAimDelayProperty);
+		if (InitialAimDelayProperty)
+		{
+			TestTrue(
+				TEXT("First-shot aim delay is editable on Controller Blueprints"),
+				InitialAimDelayProperty->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible));
+			TestEqual(
+				TEXT("Personal weapon first-shot aim delay defaults to one second"),
+				InitialAimDelayProperty->GetPropertyValue_InContainer(ControllerDefaults),
+				1.0f);
+		}
+
 		const FFloatProperty* CombatLeashProperty = FindFProperty<FFloatProperty>(
 			ADroneNPCAIController::StaticClass(),
 			TEXT("PersonalWeaponCombatLeashRadius"));
