@@ -1496,6 +1496,9 @@ void ADroneNPCAIController::HandleTargetPerceptionUpdated(AActor* Actor, const F
 		bHasLastKnownDroneLocation = true;
 		if (!bWasAlreadyDetected)
 		{
+			// 다른 Drone으로 표적이 교체되는 경우 이전 Weapon Timer가 새 표적의
+			// 최초 조준 지연을 우회하지 않도록 기존 사격부터 정리한다.
+			StopPersonalWeaponFire();
 			BeginPersonalWeaponInitialAimDelay(Actor);
 			// 순찰·대기 Slot을 붙잡은 채 전투로 넘어가지 않도록 첫 감지에서만 해제한다.
 			// 같은 Target의 반복 자극이 MG 이동·Claim을 취소하지 않게 한다.

@@ -125,20 +125,38 @@ public:
 		if (Controller && Controller->HasDetectedDrone() && DetectionObservedAt == 0.0)
 		{
 			DetectionObservedAt = Now;
+			AimElapsedAtDetectionObservation = Controller->GetPersonalWeaponInitialAimElapsedSeconds();
 			Test->TestEqual(
 				TEXT("Shotgun first-shot aim delay defaults to one second"),
 				Controller->GetPersonalWeaponInitialAimDelaySeconds(),
 				1.0f);
 		}
+		if (Controller
+			&& Weapon
+			&& Controller->HasDetectedDrone()
+			&& !Controller->HasCompletedPersonalWeaponInitialAimDelay()
+			&& Weapon->GetWeaponFiredEventCount() > 0)
+		{
+			Test->AddError(TEXT("Shotgun fired before the one-second initial aim delay completed"));
+			return true;
+		}
 		if (bVolleyObserved && Controller && !bInitialAimDelayVerified)
 		{
 			const float AimElapsed = Controller->GetPersonalWeaponInitialAimElapsedSeconds();
+			const double ExternallyObservedAimElapsed = DetectionObservedAt > 0.0
+				? AimElapsedAtDetectionObservation + (Now - DetectionObservedAt)
+				: 0.0;
 			Test->TestTrue(
 				*FString::Printf(
 					TEXT("First Shotgun Volley waits for the initial aim delay (elapsed %.3fs, required %.3fs)"),
 					AimElapsed,
 					Controller->GetPersonalWeaponInitialAimDelaySeconds()),
 				AimElapsed + 0.02f >= Controller->GetPersonalWeaponInitialAimDelaySeconds());
+			Test->TestTrue(
+				*FString::Printf(
+					TEXT("Externally observed detection-to-first-volley window respects the aim delay (observed %.3fs)"),
+					ExternallyObservedAimElapsed),
+				ExternallyObservedAimElapsed + 0.03 >= Controller->GetPersonalWeaponInitialAimDelaySeconds());
 			bInitialAimDelayVerified = true;
 		}
 		if ((!ShotgunNPC || !Drone || !Controller || !Weapon || !bVolleyObserved)
@@ -253,6 +271,7 @@ private:
 	FAutomationTestBase* Test;
 	double StartedAt = 0.0;
 	double DetectionObservedAt = 0.0;
+	double AimElapsedAtDetectionObservation = 0.0;
 	double VolleyObservedAt = 0.0;
 	bool bInitialAimDelayVerified = false;
 	TWeakObjectPtr<ADroneNPCCharacter> LastNPC;
