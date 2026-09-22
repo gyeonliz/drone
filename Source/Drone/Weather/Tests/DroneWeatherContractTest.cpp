@@ -3,6 +3,7 @@
 #include "Misc/AutomationTest.h"
 
 #include "Editor.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Prototype/DronePrototypeGameMode.h"
@@ -10,6 +11,7 @@
 #include "Tests/AutomationEditorCommon.h"
 #include "UObject/StrongObjectPtr.h"
 #include "Weather/DroneWeatherController.h"
+#include "Weather/DroneWeatherBlueprintLibrary.h"
 #include "Weather/DroneWeatherDebugVisualizer.h"
 #include "Weather/DroneWeatherProfile.h"
 #include "Weather/DroneWeatherResponseComponent.h"
@@ -94,6 +96,33 @@ bool FDroneWeatherContractTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Rain intensity is published"), FMath::IsNearlyEqual(Snapshot.RainIntensity01, 0.5f));
 	TestTrue(TEXT("Visibility converts meters to centimeters"),
 		FMath::IsNearlyEqual(Snapshot.VisibilityDistanceCentimeters, 30000.0f));
+	TestEqual(TEXT("East wind formats as E"),
+		UDroneWeatherBlueprintLibrary::GetWindCardinalLabel(FVector(500.0f, 0.0f, 0.0f)),
+		FString(TEXT("E")));
+	TestEqual(TEXT("North-east wind formats as NE"),
+		UDroneWeatherBlueprintLibrary::GetWindCardinalLabel(FVector(500.0f, 500.0f, 0.0f)),
+		FString(TEXT("NE")));
+	TestEqual(TEXT("No wind formats as CALM"),
+		UDroneWeatherBlueprintLibrary::GetWindCardinalLabel(FVector::ZeroVector),
+		FString(TEXT("CALM")));
+	TestTrue(TEXT("Wind UI converts centimeters per second to meters per second"),
+		FMath::IsNearlyEqual(
+			UDroneWeatherBlueprintLibrary::GetHorizontalWindSpeedMetersPerSecond(FVector(300.0f, 400.0f, 0.0f)),
+			5.0f));
+	Weather->SetRuntimeWindOverride(180.0f, 7.0f);
+	Weather->ForceWeatherUpdate(0.1f);
+	const FDroneWeatherSnapshot WestOverride = Weather->GetSnapshot();
+	TestTrue(TEXT("Runtime wind override changes the active Profile to west at 7 m/s"),
+		FMath::IsNearlyEqual(WestOverride.WindVelocityCentimetersPerSecond.X, -700.0f, 0.2f)
+			&& FMath::Abs(WestOverride.WindVelocityCentimetersPerSecond.Y) < 0.2f);
+	Weather->SetRuntimeWindOverride(0.0f, 0.0f);
+	Weather->ForceWeatherUpdate(0.1f);
+	TestTrue(TEXT("Runtime CALM override produces actual zero horizontal wind"),
+		FVector2D(
+			Weather->GetSnapshot().WindVelocityCentimetersPerSecond.X,
+			Weather->GetSnapshot().WindVelocityCentimetersPerSecond.Y).IsNearlyZero(0.2f));
+	Weather->ClearRuntimeWindOverride();
+	Weather->ForceWeatherUpdate(0.1f);
 
 	FActorSpawnParameters Params;
 	Params.ObjectFlags |= RF_Transient;
@@ -118,7 +147,26 @@ bool FDroneWeatherContractTest::RunTest(const FString& Parameters)
 	}
 
 	ADroneWeatherController* Controller = World->SpawnActor<ADroneWeatherController>(Params);
-	TestTrue(TEXT("Placed weather controller does not Tick"), Controller && !Controller->PrimaryActorTick.bCanEverTick);
+	TestTrue(TEXT("Weather Controller supports random-wind interpolation Tick"),
+		Controller && Controller->PrimaryActorTick.bCanEverTick);
+	TestTrue(TEXT("Weather Controller never participates in gameplay collision"),
+		Controller && !Controller->GetActorEnableCollision());
+#if WITH_EDITORONLY_DATA
+	TestNotNull(TEXT("Weather Controller has an editor-only placement Cone"),
+		Controller ? Controller->EditorPlacementCone.Get() : nullptr);
+	if (Controller && Controller->EditorPlacementCone)
+	{
+		TestNotNull(TEXT("Weather placement Cone has a visible mesh"),
+			Controller->EditorPlacementCone->GetStaticMesh().Get());
+		TestTrue(TEXT("Weather placement Cone is hidden during Play"),
+			Controller->EditorPlacementCone->bHiddenInGame);
+		TestEqual(TEXT("Weather placement Cone has no collision"),
+			Controller->EditorPlacementCone->GetCollisionEnabled(),
+			ECollisionEnabled::NoCollision);
+		TestFalse(TEXT("Weather placement Cone does not generate overlap events"),
+			Controller->EditorPlacementCone->GetGenerateOverlapEvents());
+	}
+#endif
 
 	Weather->ClearWeather(true);
 	TestTrue(TEXT("Clearing weather removes wind and rain"),
@@ -241,6 +289,28 @@ bool FDroneWeatherSystemsTestMapTest::RunTest(const FString& Parameters)
 			Profile ? Profile->WeatherId : NAME_None,
 			FName(TEXT("Weather.LightWind")));
 		TestTrue(TEXT("Weather test applies immediately for repeatable PIE"), WeatherController->bApplyInstantly);
+		TestTrue(TEXT("Weather test map enables eight-direction random wind"), WeatherController->bEnableRandomWind);
+		TestTrue(TEXT("Weather test map includes CALM as the ninth wind state"), WeatherController->bIncludeCalm);
+		TestTrue(TEXT("Weather direction interval is valid"),
+			WeatherController->MinimumDirectionChangeIntervalSeconds
+				<= WeatherController->MaximumDirectionChangeIntervalSeconds);
+		TestTrue(TEXT("Weather speed interval is valid"),
+			WeatherController->MinimumSpeedChangeIntervalSeconds
+				<= WeatherController->MaximumSpeedChangeIntervalSeconds);
+		TestFalse(TEXT("Placed Weather Manager has actor collision disabled"),
+			WeatherController->GetActorEnableCollision());
+#if WITH_EDITORONLY_DATA
+		TestNotNull(TEXT("Placed Weather Manager inherits its editor placement Cone"),
+			WeatherController->EditorPlacementCone.Get());
+		if (WeatherController->EditorPlacementCone)
+		{
+			TestTrue(TEXT("Placed Weather Manager Cone is hidden in Play"),
+				WeatherController->EditorPlacementCone->bHiddenInGame);
+			TestEqual(TEXT("Placed Weather Manager Cone has no collision"),
+				WeatherController->EditorPlacementCone->GetCollisionEnabled(),
+				ECollisionEnabled::NoCollision);
+		}
+#endif
 	}
 
 	return !HasAnyErrors();

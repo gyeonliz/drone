@@ -131,6 +131,12 @@ void ADroneNPCAIController::Tick(const float DeltaSeconds)
 void ADroneNPCAIController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
+	if (ReservationComponent)
+	{
+		ReservationComponent->SetSearchBounds(
+			PatrolSmartObjectSearchRadius,
+			PatrolSmartObjectSearchHalfHeight);
+	}
 	ClearDroneGameplayFocus();
 	CancelPendingDroneLost();
 	DetectedDrone.Reset();

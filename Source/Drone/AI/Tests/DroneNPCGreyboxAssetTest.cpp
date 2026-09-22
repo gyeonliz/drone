@@ -1686,7 +1686,9 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 		TestTrue(*FString::Printf(TEXT("BP_NPC_%s Faction matches"), Expectation.Name), Profile.Faction == Expectation.Faction);
 		TestTrue(*FString::Printf(TEXT("BP_NPC_%s Weapon matches"), Expectation.Name), Profile.WeaponType == Expectation.Weapon);
 		TestTrue(*FString::Printf(TEXT("BP_NPC_%s MG permission matches"), Expectation.Name), Profile.bCanUseMGTurret == Expectation.bCanUseMG);
-		TestTrue(*FString::Printf(TEXT("BP_NPC_%s uses project AI Controller"), Expectation.Name), CDO->AIControllerClass == ADroneNPCAIController::StaticClass());
+		TestTrue(
+			*FString::Printf(TEXT("BP_NPC_%s uses project AI Controller family"), Expectation.Name),
+			CDO->AIControllerClass && CDO->AIControllerClass->IsChildOf(ADroneNPCAIController::StaticClass()));
 		TestTrue(*FString::Printf(TEXT("BP_NPC_%s auto-possesses AI"), Expectation.Name), CDO->AutoPossessAI == EAutoPossessAI::PlacedInWorldOrSpawned);
 		TestTrue(
 			*FString::Printf(TEXT("BP_NPC_%s uses the assigned role Character Mesh"), Expectation.Name),

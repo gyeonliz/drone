@@ -93,6 +93,13 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|AI|SmartObject")
 	float GetSearchHalfHeight() const { return SearchHalfHeight; }
 
+	UFUNCTION(BlueprintCallable, Category="Drone|AI|SmartObject")
+	void SetSearchBounds(float InSearchRadius, float InSearchHalfHeight)
+	{
+		SearchRadius = FMath::Max(100.0f, InSearchRadius);
+		SearchHalfHeight = FMath::Max(100.0f, InSearchHalfHeight);
+	}
+
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 

@@ -22,6 +22,10 @@ VISUALIZER_BLUEPRINT_FOLDER = "/Game/Drone/Weather/Blueprints"
 VISUALIZER_BLUEPRINT_NAME = "BP_DroneWeatherDebugVisualizer"
 VISUALIZER_BLUEPRINT_PATH = f"{VISUALIZER_BLUEPRINT_FOLDER}/{VISUALIZER_BLUEPRINT_NAME}"
 VISUALIZER_PARENT_CLASS_PATH = "/Script/Drone.DroneWeatherDebugVisualizer"
+CONTROLLER_BLUEPRINT_FOLDER = "/Game/Drone/Weather/Blueprints"
+CONTROLLER_BLUEPRINT_NAME = "BP_DroneRandomWeatherController"
+CONTROLLER_BLUEPRINT_PATH = f"{CONTROLLER_BLUEPRINT_FOLDER}/{CONTROLLER_BLUEPRINT_NAME}"
+CONTROLLER_PARENT_CLASS_PATH = "/Script/Drone.DroneWeatherController"
 CUBE_PATH = "/Engine/BasicShapes/Cube"
 
 OWNED_TAG = unreal.Name("DroneWeatherSystemsTest.Owned")
@@ -85,6 +89,49 @@ def ensure_visualizer_blueprint(editor_assets: unreal.EditorAssetSubsystem) -> u
     return blueprint.generated_class()
 
 
+def ensure_random_weather_controller_blueprint(
+    editor_assets: unreal.EditorAssetSubsystem,
+) -> unreal.Class:
+    parent_class = unreal.load_class(None, CONTROLLER_PARENT_CLASS_PATH)
+    require(parent_class is not None, f"Weather Controller native Class unavailable: {CONTROLLER_PARENT_CLASS_PATH}")
+    unreal.EditorAssetLibrary.make_directory(CONTROLLER_BLUEPRINT_FOLDER)
+    blueprint = editor_assets.load_asset(CONTROLLER_BLUEPRINT_PATH)
+    if blueprint is None:
+        factory = unreal.BlueprintFactory()
+        factory.set_editor_property("parent_class", parent_class)
+        blueprint = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+            CONTROLLER_BLUEPRINT_NAME,
+            CONTROLLER_BLUEPRINT_FOLDER,
+            unreal.Blueprint.static_class(),
+            factory,
+            overwrite_existing=False,
+        )
+        log(f"CREATED_RANDOM_WEATHER_BLUEPRINT|{CONTROLLER_BLUEPRINT_PATH}")
+    require(isinstance(blueprint, unreal.Blueprint), f"Missing Weather Controller Blueprint: {CONTROLLER_BLUEPRINT_PATH}")
+    require(
+        unreal.BlueprintEditorLibrary.get_blueprint_parent_class(blueprint) == parent_class,
+        f"Weather Controller parent mismatch: {CONTROLLER_BLUEPRINT_PATH}",
+    )
+    unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+    cdo = unreal.get_default_object(blueprint.generated_class())
+    profile = editor_assets.load_asset(LIGHT_WIND_PROFILE_PATH)
+    require(cdo is not None and profile is not None, "Weather Controller CDO/Profile unavailable")
+    cdo.set_editor_property("weather_profile", profile)
+    cdo.set_editor_property("apply_instantly", True)
+    cdo.set_editor_property("enable_random_wind", True)
+    cdo.set_editor_property("include_calm", True)
+    cdo.set_editor_property("minimum_direction_change_interval_seconds", 8.0)
+    cdo.set_editor_property("maximum_direction_change_interval_seconds", 18.0)
+    cdo.set_editor_property("minimum_speed_change_interval_seconds", 5.0)
+    cdo.set_editor_property("maximum_speed_change_interval_seconds", 12.0)
+    cdo.set_editor_property("minimum_wind_speed_meters_per_second", 1.0)
+    cdo.set_editor_property("maximum_wind_speed_meters_per_second", 9.0)
+    unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+    require(blueprint.get_editor_property("status") != unreal.BlueprintStatus.BS_ERROR, "Weather Controller compile failed")
+    require(editor_assets.save_loaded_asset(blueprint, only_if_is_dirty=False), "Could not save Weather Controller Blueprint")
+    return blueprint.generated_class()
+
+
 def actor_by_label(actors: unreal.EditorActorSubsystem, label: str) -> unreal.Actor | None:
     matches = [actor for actor in actors.get_all_level_actors() if actor.get_actor_label() == label]
     require(len(matches) <= 1, f"Duplicate actor label: {label}")
@@ -130,6 +177,7 @@ def create_map(level_editor, actors, rebuild: bool) -> None:
     require(isinstance(cube, unreal.StaticMesh), f"Missing Engine Cube: {CUBE_PATH}")
     require(isinstance(profile, unreal.DroneWeatherProfile), f"Missing Weather Profile: {LIGHT_WIND_PROFILE_PATH}")
     visualizer_class = ensure_visualizer_blueprint(editor_assets)
+    controller_class = ensure_random_weather_controller_blueprint(editor_assets)
 
     floor = spawn_actor(actors, unreal.StaticMeshActor, FLOOR_LABEL, (1500.0, 0.0, -35.0))
     configure_cube(floor, cube, (100.0, 65.0, 0.20), unreal.CollisionEnabled.QUERY_AND_PHYSICS)
@@ -146,8 +194,6 @@ def create_map(level_editor, actors, rebuild: bool) -> None:
     configure_cube(left, cube, (7.0, 1.2, 0.08), unreal.CollisionEnabled.NO_COLLISION)
     configure_cube(right, cube, (7.0, 1.2, 0.08), unreal.CollisionEnabled.NO_COLLISION)
 
-    controller_class = unreal.load_class(None, "/Script/Drone.DroneWeatherController")
-    require(controller_class is not None, "DroneWeatherController native Class is unavailable")
     controller = spawn_actor(actors, controller_class, CONTROLLER_LABEL, (0.0, 0.0, 100.0))
     controller.set_editor_property("weather_profile", profile)
     controller.set_editor_property("apply_instantly", True)
@@ -172,6 +218,18 @@ def validate_map(level_editor, actors) -> None:
     profile = controller.get_editor_property("weather_profile") if controller else None
     require(profile is not None and profile.get_path_name().startswith(LIGHT_WIND_PROFILE_PATH), "LightWind Profile is not configured")
     require(controller.get_editor_property("apply_instantly"), "Weather Controller should apply instantly in the test map")
+    require(controller.get_editor_property("enable_random_wind"), "Weather Controller should enable random wind")
+    require(controller.get_editor_property("include_calm"), "Random wind should include CALM")
+    require(
+        controller.get_editor_property("minimum_direction_change_interval_seconds")
+        <= controller.get_editor_property("maximum_direction_change_interval_seconds"),
+        "Random wind direction interval is reversed",
+    )
+    require(
+        controller.get_editor_property("minimum_speed_change_interval_seconds")
+        <= controller.get_editor_property("maximum_speed_change_interval_seconds"),
+        "Random wind speed interval is reversed",
+    )
     visualizer = actor_by_label(actors, VISUALIZER_LABEL)
     require(visualizer is not None and VISUALIZER_TAG in visualizer.get_editor_property("tags"), "Weather Visualizer tag is missing")
     require(visualizer.get_flow_bead_count() >= 12, "Weather Visualizer needs enough moving beads to read wind")
@@ -184,7 +242,7 @@ def validate_map(level_editor, actors) -> None:
     )
     unreal.SystemLibrary.execute_console_command(world, "MAP CHECK")
     log(f"MAP_CHECK_EXECUTED|{MAP_PATH}")
-    log("VALIDATION_OK|profile=Weather.LightWind|controller=1|wind_arrow=1|wind_beads=24|mode_keys=1,2,3|production_map_touched=0")
+    log("VALIDATION_OK|profile=Weather.LightWind|random=8dir+calm|controller=1|wind_arrow=1|wind_beads=24|mode_keys=1,2,3,4|production_map_touched=0")
 
 
 def main() -> None:
@@ -193,6 +251,7 @@ def main() -> None:
     actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     require(editor_assets is not None and level_editor is not None and actors is not None, "Editor subsystems are unavailable")
     ensure_visualizer_blueprint(editor_assets)
+    ensure_random_weather_controller_blueprint(editor_assets)
     map_exists = editor_assets.does_asset_exist(MAP_PATH)
     rebuild = os.environ.get("DRONE_WEATHER_TESTMAP_REBUILD") == "1"
     if not map_exists or rebuild:

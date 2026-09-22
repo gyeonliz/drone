@@ -3,11 +3,13 @@
 #include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SplineComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "Math/RotationMatrix.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Vehicles/DroneVehicleSplineRoute.h"
 
 namespace DroneGroundVehicle
 {
@@ -77,7 +79,8 @@ void ADroneGroundConformingVehicle::Tick(const float DeltaSeconds)
 	InitializeDriveReference();
 	const FVector PreviousLocation = GetActorLocation();
 
-	if (bGreyboxAutoDriveEnabled)
+	const bool bFollowingSpline = UpdateSplineRoute(DeltaSeconds);
+	if (!bFollowingSpline && bGreyboxAutoDriveEnabled)
 	{
 		const float DistanceAlongRoute = FVector::DotProduct(
 			GetActorLocation() - GreyboxAutoDriveOrigin,
@@ -100,6 +103,7 @@ void ADroneGroundConformingVehicle::Tick(const float DeltaSeconds)
 	DesiredHeadingYaw = FMath::UnwindDegrees(
 		DesiredHeadingYaw + DriveSteering * MaximumTurnRateDegreesPerSecond * DeltaSeconds);
 	UpdateGroundConforming(DeltaSeconds, false);
+	bHasSplineRouteCandidate = false;
 	UpdateWheelRollingVisuals(PreviousLocation, GetActorLocation(), DeltaSeconds);
 }
 
@@ -134,6 +138,111 @@ bool ADroneGroundConformingVehicle::RefreshGroundConformNow(const bool bSnapToGr
 	return UpdateGroundConforming(0.0f, bSnapToGround);
 }
 
+void ADroneGroundConformingVehicle::SetSplineRoute(
+	ADroneVehicleSplineRoute* InSplineRoute,
+	const bool bStartFollowing)
+{
+	SplineRoute = InSplineRoute;
+	bFollowSplineRoute = bStartFollowing && IsValid(InSplineRoute);
+	bSplineRouteDistanceInitialized = false;
+	SplineRouteDirection = 1.0f;
+	if (bFollowSplineRoute)
+	{
+		bGreyboxAutoDriveEnabled = false;
+		InitializeSplineRouteDistance();
+	}
+}
+
+void ADroneGroundConformingVehicle::SetSplineFollowingEnabled(const bool bEnabled)
+{
+	bFollowSplineRoute = bEnabled && IsValid(SplineRoute);
+	bSplineRouteDistanceInitialized = false;
+	SplineRouteDirection = 1.0f;
+	if (bFollowSplineRoute)
+	{
+		bGreyboxAutoDriveEnabled = false;
+		InitializeSplineRouteDistance();
+	}
+}
+
+void ADroneGroundConformingVehicle::InitializeSplineRouteDistance()
+{
+	const USplineComponent* Spline = IsValid(SplineRoute) ? SplineRoute->GetRouteSpline() : nullptr;
+	if (!Spline || Spline->GetNumberOfSplinePoints() < 2)
+	{
+		bSplineRouteDistanceInitialized = false;
+		return;
+	}
+	const float InputKey = Spline->FindInputKeyClosestToWorldLocation(GetActorLocation());
+	SplineRouteDistance = Spline->GetDistanceAlongSplineAtSplineInputKey(InputKey);
+	bSplineRouteDistanceInitialized = true;
+}
+
+bool ADroneGroundConformingVehicle::UpdateSplineRoute(const float DeltaSeconds)
+{
+	USplineComponent* Spline = IsValid(SplineRoute) ? SplineRoute->GetRouteSpline() : nullptr;
+	if (!bFollowSplineRoute || !Spline || Spline->GetNumberOfSplinePoints() < 2)
+	{
+		return false;
+	}
+	if (!bSplineRouteDistanceInitialized)
+	{
+		InitializeSplineRouteDistance();
+	}
+	const float RouteLength = Spline->GetSplineLength();
+	if (!bSplineRouteDistanceInitialized || RouteLength <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	SplineRouteDistance += FMath::Max(0.0f, SplineFollowSpeed) * FMath::Max(0.0f, DeltaSeconds) * SplineRouteDirection;
+	if (Spline->IsClosedLoop())
+	{
+		SplineRouteDistance = FMath::Fmod(SplineRouteDistance, RouteLength);
+		if (SplineRouteDistance < 0.0f)
+		{
+			SplineRouteDistance += RouteLength;
+		}
+	}
+	else if (SplineRouteDistance >= RouteLength || SplineRouteDistance <= 0.0f)
+	{
+		const bool bReachedEnd = SplineRouteDirection > 0.0f && SplineRouteDistance >= RouteLength;
+		const bool bReachedStart = SplineRouteDirection < 0.0f && SplineRouteDistance <= 0.0f;
+		SplineRouteDistance = FMath::Clamp(SplineRouteDistance, 0.0f, RouteLength);
+		if (bReachedEnd || bReachedStart)
+		{
+			OnSplineRouteReachedEnd.Broadcast();
+		}
+		if (bReverseAtSplineEnd)
+		{
+			SplineRouteDirection *= -1.0f;
+		}
+		else if (bLoopOpenSpline)
+		{
+			SplineRouteDistance = SplineRouteDirection > 0.0f ? 0.0f : RouteLength;
+		}
+		else
+		{
+			bFollowSplineRoute = false;
+		}
+	}
+
+	SplineRouteCandidateLocation = Spline->GetLocationAtDistanceAlongSpline(
+		SplineRouteDistance,
+		ESplineCoordinateSpace::World);
+	const FVector Direction = Spline->GetDirectionAtDistanceAlongSpline(
+		SplineRouteDistance,
+		ESplineCoordinateSpace::World) * SplineRouteDirection;
+	if (!Direction.IsNearlyZero())
+	{
+		DesiredHeadingYaw = Direction.Rotation().Yaw;
+	}
+	bHasSplineRouteCandidate = true;
+	DriveThrottle = 0.0f;
+	DriveSteering = 0.0f;
+	return true;
+}
+
 void ADroneGroundConformingVehicle::InitializeDriveReference()
 {
 	if (bDriveReferenceInitialized)
@@ -157,9 +266,14 @@ bool ADroneGroundConformingVehicle::UpdateGroundConforming(
 		return false;
 	}
 
-	FVector CandidateLocation = GetActorLocation();
+	FVector CandidateLocation = bHasSplineRouteCandidate
+		? FVector(SplineRouteCandidateLocation.X, SplineRouteCandidateLocation.Y, GetActorLocation().Z)
+		: GetActorLocation();
 	const FRotator HeadingRotation(0.0f, DesiredHeadingYaw, 0.0f);
-	CandidateLocation += HeadingRotation.Vector() * DriveThrottle * MaximumDriveSpeed * DeltaSeconds;
+	if (!bHasSplineRouteCandidate)
+	{
+		CandidateLocation += HeadingRotation.Vector() * DriveThrottle * MaximumDriveSpeed * DeltaSeconds;
+	}
 
 	const FVector LocalSamples[4] = {
 		FVector(HalfWheelbase, -HalfTrackWidth, 0.0f),

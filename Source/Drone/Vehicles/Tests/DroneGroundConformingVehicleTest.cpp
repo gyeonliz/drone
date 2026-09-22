@@ -7,6 +7,8 @@
 #include "Engine/World.h"
 #include "Tests/AutomationEditorCommon.h"
 #include "Vehicles/DroneGroundConformingVehicle.h"
+#include "Vehicles/DroneVehicleSplineRoute.h"
+#include "Components/SplineComponent.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FDroneGroundConformingVehicleTest,
@@ -194,6 +196,30 @@ bool FDroneGroundConformingVehicleTest::RunTest(const FString& Parameters)
 					*FString::Printf(TEXT("Saved wheel %d rolls around the vehicle lateral axis"), Index),
 					DeltaAngle > KINDA_SMALL_NUMBER
 						&& FVector::DotProduct(DeltaAxis.GetSafeNormal(), FVector::RightVector) > 0.99f);
+			}
+
+			ADroneVehicleSplineRoute* Route = World->SpawnActor<ADroneVehicleSplineRoute>(
+				FVector(800.0f, 0.0f, 0.0f),
+				FRotator::ZeroRotator);
+			TestNotNull(TEXT("Vehicle spline route spawns"), Route);
+			if (Route && Route->GetRouteSpline())
+			{
+				USplineComponent* Spline = Route->GetRouteSpline();
+				Spline->ClearSplinePoints(false);
+				Spline->AddSplinePoint(FVector(0.0f, 0.0f, 0.0f), ESplineCoordinateSpace::Local, false);
+				Spline->AddSplinePoint(FVector(400.0f, 0.0f, 0.0f), ESplineCoordinateSpace::Local, false);
+				Spline->UpdateSpline();
+				SavedVehicle->SetActorLocation(FVector(800.0f, 0.0f, 180.0f));
+				SavedVehicle->RefreshGroundConformNow(true);
+				SavedVehicle->SetSplineRoute(Route, true);
+				const FVector RouteStart = SavedVehicle->GetActorLocation();
+				SavedVehicle->Tick(0.25f);
+				TestTrue(TEXT("Vehicle follows the assigned spline route"),
+					SavedVehicle->IsFollowingSplineRoute()
+						&& SavedVehicle->GetSplineRouteDistance() > 0.0f
+						&& SavedVehicle->GetActorLocation().X > RouteStart.X);
+				TestTrue(TEXT("Spline route keeps four-point ground conforming active"),
+					SavedVehicle->GetLastGroundContactCount() >= 3);
 			}
 		}
 	}

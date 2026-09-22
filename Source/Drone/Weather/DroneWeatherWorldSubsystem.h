@@ -33,6 +33,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Weather|Debug")
 	void ForceWeatherUpdate(float DeltaSeconds);
 
+	/** 배치형 Weather Controller가 Profile의 비 설정은 유지한 채 바람만 실시간 제어한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Weather|Wind")
+	void SetRuntimeWindOverride(float DirectionYawDegrees, float SpeedMetersPerSecond);
+
+	UFUNCTION(BlueprintCallable, Category="Drone|Weather|Wind")
+	void ClearRuntimeWindOverride();
+
+	UFUNCTION(BlueprintPure, Category="Drone|Weather|Wind")
+	bool HasRuntimeWindOverride() const { return bHasRuntimeWindOverride; }
+
 	UPROPERTY(BlueprintAssignable, Category="Drone|Weather")
 	FDroneWeatherSnapshotChangedSignature OnWeatherSnapshotChanged;
 
@@ -62,4 +72,7 @@ private:
 	float CurrentVerticalGustMetersPerSecond = 0.0f;
 	float TargetVerticalGustMetersPerSecond = 0.0f;
 	bool bClearingWeather = false;
+	bool bHasRuntimeWindOverride = false;
+	float RuntimeWindDirectionYawDegrees = 0.0f;
+	float RuntimeWindSpeedMetersPerSecond = 0.0f;
 };

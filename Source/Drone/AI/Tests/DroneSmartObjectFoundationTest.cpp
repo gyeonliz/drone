@@ -121,6 +121,23 @@ bool FDroneSmartObjectFoundationTest::RunTest(const FString& Parameters)
 		}
 	}
 
+	UClass* OutdoorControllerClass = LoadClass<ADroneNPCAIController>(
+		nullptr,
+		TEXT("/Game/Drone/AI/Blueprints/BP_DroneNPCAIController_Outdoor.BP_DroneNPCAIController_Outdoor_C"));
+	TestNotNull(TEXT("Outdoor hostile Controller Blueprint loads"), OutdoorControllerClass);
+	const ADroneNPCAIController* OutdoorDefaults = OutdoorControllerClass
+		? Cast<ADroneNPCAIController>(OutdoorControllerClass->GetDefaultObject())
+		: nullptr;
+	if (OutdoorDefaults)
+	{
+		TestEqual(TEXT("Outdoor hostile sight range is 60m"), OutdoorDefaults->GetDroneSightRadius(), 6000.0f);
+		TestEqual(TEXT("Outdoor hostile lose-sight range is 70m"), OutdoorDefaults->GetDroneLoseSightRadius(), 7000.0f);
+		TestEqual(TEXT("Outdoor patrol Smart Object search radius is 80m"),
+			OutdoorDefaults->GetPatrolSmartObjectSearchRadius(), 8000.0f);
+		TestEqual(TEXT("Outdoor patrol recent-point avoidance radius is 15m"),
+			OutdoorDefaults->GetPatrolRepeatAvoidanceRadius(), 1500.0f);
+	}
+
 	const ADroneSmartObjectStation* StationDefaults = GetDefault<ADroneSmartObjectStation>();
 	TestNotNull(TEXT("Smart Object Station CDO exists"), StationDefaults);
 	if (StationDefaults)

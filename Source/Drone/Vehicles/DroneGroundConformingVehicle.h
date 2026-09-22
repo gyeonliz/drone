@@ -7,6 +7,9 @@
 class UBoxComponent;
 class USceneComponent;
 class UStaticMeshComponent;
+class ADroneVehicleSplineRoute;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FDroneVehicleRouteEndSignature);
 
 /**
  * Chaos Vehicle을 사용하지 않는 Greybox용 4점 지면 추종 차량이다.
@@ -78,6 +81,22 @@ public:
 	/** 테스트·Construction 도구가 한 프레임을 기다리지 않고 현재 지면에 맞출 때 사용한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Vehicle|GroundConforming")
 	bool RefreshGroundConformNow(bool bSnapToGround = true);
+
+	/** 배치한 Route Actor를 지정하고 가장 가까운 Spline 위치에서 추종을 시작한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Vehicle|SplineRoute")
+	void SetSplineRoute(ADroneVehicleSplineRoute* InSplineRoute, bool bStartFollowing = true);
+
+	UFUNCTION(BlueprintCallable, Category="Drone|Vehicle|SplineRoute")
+	void SetSplineFollowingEnabled(bool bEnabled);
+
+	UFUNCTION(BlueprintPure, Category="Drone|Vehicle|SplineRoute")
+	bool IsFollowingSplineRoute() const { return bFollowSplineRoute && SplineRoute != nullptr; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Vehicle|SplineRoute")
+	float GetSplineRouteDistance() const { return SplineRouteDistance; }
+
+	UPROPERTY(BlueprintAssignable, Category="Drone|Vehicle|SplineRoute")
+	FDroneVehicleRouteEndSignature OnSplineRouteReachedEnd;
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|Components", meta=(AllowPrivateAccess="true"))
@@ -155,6 +174,24 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|Greybox", meta=(ClampMin="100.0", ForceUnits="cm"))
 	float GreyboxAutoDriveDistance = 1050.0f;
 
+	/** 맵에 배치한 BP_DroneVehicleSplineRoute를 Instance Picker로 지정한다. */
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category="Drone|Vehicle|SplineRoute")
+	TObjectPtr<ADroneVehicleSplineRoute> SplineRoute;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|SplineRoute")
+	bool bFollowSplineRoute = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|SplineRoute", meta=(ClampMin="0.0", ForceUnits="cm/s"))
+	float SplineFollowSpeed = 300.0f;
+
+	/** 열린 Spline 끝에서 반대 방향으로 왕복한다. Closed Loop에서는 무시한다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|SplineRoute")
+	bool bReverseAtSplineEnd = true;
+
+	/** 열린 Spline 끝에서 왕복하지 않을 경우 처음으로 되돌아간다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Vehicle|SplineRoute")
+	bool bLoopOpenSpline = false;
+
 private:
 	struct FGroundContact
 	{
@@ -168,6 +205,8 @@ private:
 	void CaptureWheelVisualBaseRotations();
 	void UpdateWheelRollingVisuals(const FVector& PreviousLocation, const FVector& CurrentLocation, float DeltaSeconds);
 	void InitializeDriveReference();
+	bool UpdateSplineRoute(float DeltaSeconds);
+	void InitializeSplineRouteDistance();
 
 	float DriveThrottle = 0.0f;
 	float DriveSteering = 0.0f;
@@ -176,6 +215,11 @@ private:
 	FVector GreyboxAutoDriveOrigin = FVector::ZeroVector;
 	FVector GreyboxAutoDriveForward = FVector::ForwardVector;
 	float GreyboxAutoDriveDirection = 1.0f;
+	float SplineRouteDistance = 0.0f;
+	float SplineRouteDirection = 1.0f;
+	bool bSplineRouteDistanceInitialized = false;
+	bool bHasSplineRouteCandidate = false;
+	FVector SplineRouteCandidateLocation = FVector::ZeroVector;
 	FQuat WheelVisualBaseRotations[4] = {FQuat::Identity, FQuat::Identity, FQuat::Identity, FQuat::Identity};
 	bool bWheelVisualBaseRotationsCaptured = false;
 

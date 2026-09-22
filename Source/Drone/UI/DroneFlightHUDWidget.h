@@ -5,6 +5,7 @@
 #include "Telemetry/DroneTelemetryTypes.h"
 #include "Signal/DroneSignalTypes.h"
 #include "Tutorial/DroneTrainingRecordTypes.h"
+#include "Weather/DroneWeatherTypes.h"
 #include "DroneFlightHUDWidget.generated.h"
 
 class UBorder;
@@ -13,6 +14,7 @@ class UDroneSignalComponent;
 class UDroneTelemetryComponent;
 class UDroneTrainingLapRecorderComponent;
 class UTextBlock;
+class UDroneWeatherWorldSubsystem;
 
 /**
  * Drone Prototype의 비행 정보를 표시하는 공용 HUD 기반 클래스.
@@ -87,6 +89,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|HUD|Signal")
 	FText GetSignalDisplayText() const { return SignalDisplayText; }
 
+	UFUNCTION(BlueprintPure, Category="Drone|HUD|Weather")
+	FText GetWeatherDisplayText() const { return WeatherDisplayText; }
+
 	/** WBP에서 Noise Material의 불투명도 등을 조절할 때 사용한다. Native HUD는 신호 경고 Text를 제공한다. */
 	UFUNCTION(BlueprintImplementableEvent, Category="Drone|HUD|Signal")
 	void ReceiveSignalSnapshotDisplayed(FDroneSignalSnapshot Snapshot);
@@ -154,6 +159,9 @@ private:
 	void HandleSignalSnapshotChanged(FDroneSignalSnapshot Snapshot);
 
 	UFUNCTION()
+	void HandleWeatherSnapshotChanged(FDroneWeatherSnapshot Snapshot);
+
+	UFUNCTION()
 	void HandleTrainingLapStarted();
 
 	UFUNCTION()
@@ -179,6 +187,10 @@ private:
 	void RefreshHealthDisplay();
 	void BuildSignalLayout();
 	void ApplySignalSnapshot(const FDroneSignalSnapshot& Snapshot);
+	void BuildWeatherLayout();
+	void BindWeatherSource();
+	void ClearWeatherSource();
+	void ApplyWeatherSnapshot(const FDroneWeatherSnapshot& Snapshot);
 
 	/** Snapshot 값 자체를 다시 계산하지 않고 표시 문자열만 만든다. */
 	void ApplySnapshot(const FDroneTelemetrySnapshot& Snapshot);
@@ -230,6 +242,14 @@ private:
 
 	UPROPERTY(Transient)
 	FText SignalDisplayText;
+
+	TWeakObjectPtr<UDroneWeatherWorldSubsystem> WeatherSource;
+
+	UPROPERTY(Transient)
+	FDroneWeatherSnapshot DisplayedWeatherSnapshot;
+
+	UPROPERTY(Transient)
+	FText WeatherDisplayText;
 
 	UPROPERTY(Transient)
 	TArray<FDroneTrainingSegmentRecord> DisplayedTrainingSegments;
@@ -298,6 +318,12 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> SignalValueText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBorder> WeatherReadoutPanel;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> WeatherValueText;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UBorder> TrainingReadoutPanel;

@@ -13,6 +13,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Weather/DroneWeatherWorldSubsystem.h"
 #include "Weather/DroneWeatherProfile.h"
+#include "Weather/DroneWeatherBlueprintLibrary.h"
 
 namespace DroneWeatherDebug
 {
@@ -365,10 +366,8 @@ void ADroneWeatherDebugVisualizer::UpdateOnScreenReadout() const
 	}
 
 	const FVector WindVelocity = CachedSnapshot.WindVelocityCentimetersPerSecond;
-	const float SpeedMetersPerSecond = WindVelocity.Size() / 100.0f;
-	const float DirectionDegrees = WindVelocity.IsNearlyZero()
-		? 0.0f
-		: FMath::RadiansToDegrees(FMath::Atan2(WindVelocity.Y, WindVelocity.X));
+	const float SpeedMetersPerSecond = UDroneWeatherBlueprintLibrary::GetHorizontalWindSpeedMetersPerSecond(WindVelocity);
+	const FString DirectionLabel = UDroneWeatherBlueprintLibrary::GetWindCardinalLabel(WindVelocity);
 	FString ControlMode(TEXT("NO DRONE"));
 	if (const UWorld* World = GetWorld())
 	{
@@ -401,10 +400,10 @@ void ADroneWeatherDebugVisualizer::UpdateOnScreenReadout() const
 		0.15f,
 		FColor::Cyan,
 		FString::Printf(
-			TEXT("WEATHER TEST | %s | Wind %.1f m/s @ %.0f deg | Rain %.2f Spawn %.2f Wet %.2f | Debug streaks %d | Mode %s"),
+			TEXT("WEATHER TEST | %s | Wind %s %.1f m/s | Rain %.2f Spawn %.2f Wet %.2f | Debug streaks %d | Mode %s"),
 			*CachedSnapshot.WeatherId.ToString(),
+			*DirectionLabel,
 			SpeedMetersPerSecond,
-			DirectionDegrees,
 			CachedSnapshot.RainIntensity01,
 			CachedSnapshot.RainSpawnScale01,
 			CachedSnapshot.SurfaceWetness01,

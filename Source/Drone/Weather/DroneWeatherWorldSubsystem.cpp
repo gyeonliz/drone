@@ -30,7 +30,22 @@ void UDroneWeatherWorldSubsystem::Deinitialize()
 		World->GetTimerManager().ClearTimer(WeatherUpdateTimer);
 	}
 	ActiveProfile = nullptr;
+	bHasRuntimeWindOverride = false;
 	Super::Deinitialize();
+}
+
+void UDroneWeatherWorldSubsystem::SetRuntimeWindOverride(
+	const float DirectionYawDegrees,
+	const float SpeedMetersPerSecond)
+{
+	bHasRuntimeWindOverride = true;
+	RuntimeWindDirectionYawDegrees = FMath::UnwindDegrees(DirectionYawDegrees);
+	RuntimeWindSpeedMetersPerSecond = FMath::Max(0.0f, SpeedMetersPerSecond);
+}
+
+void UDroneWeatherWorldSubsystem::ClearRuntimeWindOverride()
+{
+	bHasRuntimeWindOverride = false;
 }
 
 bool UDroneWeatherWorldSubsystem::ApplyWeatherProfile(
@@ -184,16 +199,27 @@ FDroneWeatherSnapshot UDroneWeatherWorldSubsystem::BuildTargetSnapshot(const flo
 		TargetVerticalGustMetersPerSecond,
 		DroneWeather::ResponseAlpha(DeltaSeconds, VerticalResponseSeconds));
 
-	const float WindYawRadians = FMath::DegreesToRadians(Wind.DirectionYawDegrees + CurrentGustYawOffsetDegrees);
+	const float BaseDirectionYawDegrees = bHasRuntimeWindOverride
+		? RuntimeWindDirectionYawDegrees
+		: Wind.DirectionYawDegrees;
+	const float BaseSpeedMetersPerSecond = bHasRuntimeWindOverride
+		? RuntimeWindSpeedMetersPerSecond
+		: Wind.BaseSpeedMetersPerSecond;
+	// Runtime Random Controller가 켜진 동안에는 Profile Gust를 겹쳐 더하지 않는다.
+	// 그래야 8방향 선택의 CALM이 실제 0 m/s가 되고, 속도 변경 주기도 Controller 한 곳이 소유한다.
+	const float EffectiveGustYawDegrees = bHasRuntimeWindOverride ? 0.0f : CurrentGustYawOffsetDegrees;
+	const float EffectiveGustSpeedMetersPerSecond = bHasRuntimeWindOverride ? 0.0f : CurrentGustSpeedMetersPerSecond;
+	const float EffectiveVerticalGustMetersPerSecond = bHasRuntimeWindOverride ? 0.0f : CurrentVerticalGustMetersPerSecond;
+	const float WindYawRadians = FMath::DegreesToRadians(BaseDirectionYawDegrees + EffectiveGustYawDegrees);
 	const float HorizontalSpeedCentimetersPerSecond =
-		(Wind.BaseSpeedMetersPerSecond + CurrentGustSpeedMetersPerSecond) * 100.0f;
+		(BaseSpeedMetersPerSecond + EffectiveGustSpeedMetersPerSecond) * 100.0f;
 
 	FDroneWeatherSnapshot Target;
 	Target.WeatherId = ActiveProfile->WeatherId;
 	Target.WindVelocityCentimetersPerSecond = FVector(
 		FMath::Cos(WindYawRadians) * HorizontalSpeedCentimetersPerSecond,
 		FMath::Sin(WindYawRadians) * HorizontalSpeedCentimetersPerSecond,
-		CurrentVerticalGustMetersPerSecond * 100.0f);
+		EffectiveVerticalGustMetersPerSecond * 100.0f);
 	Target.DroneWindResponseMultiplier = Wind.DroneWindResponseMultiplier;
 	Target.RainIntensity01 = ActiveProfile->Rain.Intensity01;
 	Target.RainSpawnScale01 = ActiveProfile->Rain.SpawnScale01;

@@ -13,6 +13,8 @@
 #include "Styling/CoreStyle.h"
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Tutorial/DroneTrainingLapRecorderComponent.h"
+#include "Weather/DroneWeatherBlueprintLibrary.h"
+#include "Weather/DroneWeatherWorldSubsystem.h"
 
 namespace DroneFlightHUD
 {
@@ -33,7 +35,9 @@ void UDroneFlightHUDWidget::NativeOnInitialized()
 	BuildDefaultLayout();
 	BuildHealthLayout();
 	BuildSignalLayout();
+	BuildWeatherLayout();
 	BuildTrainingLayout();
+	BindWeatherSource();
 	if (UDroneTelemetryComponent* CurrentSource = TelemetrySource.Get())
 	{
 		// 첫 주기 Event를 기다리지 않고 현재 값을 바로 보여 준다.
@@ -52,6 +56,7 @@ void UDroneFlightHUDWidget::NativeDestruct()
 	ClearTrainingRecordSource();
 	ClearHealthSource();
 	ClearSignalSource();
+	ClearWeatherSource();
 	ClearTelemetrySource();
 	Super::NativeDestruct();
 }
@@ -154,6 +159,53 @@ void UDroneFlightHUDWidget::ClearSignalSource()
 void UDroneFlightHUDWidget::HandleSignalSnapshotChanged(const FDroneSignalSnapshot Snapshot)
 {
 	ApplySignalSnapshot(Snapshot);
+}
+
+void UDroneFlightHUDWidget::BindWeatherSource()
+{
+	UDroneWeatherWorldSubsystem* Subsystem = GetWorld()
+		? GetWorld()->GetSubsystem<UDroneWeatherWorldSubsystem>()
+		: nullptr;
+	if (WeatherSource.Get() == Subsystem)
+	{
+		return;
+	}
+	ClearWeatherSource();
+	WeatherSource = Subsystem;
+	if (Subsystem)
+	{
+		Subsystem->OnWeatherSnapshotChanged.AddUniqueDynamic(
+			this,
+			&UDroneFlightHUDWidget::HandleWeatherSnapshotChanged);
+		ApplyWeatherSnapshot(Subsystem->GetSnapshot());
+	}
+}
+
+void UDroneFlightHUDWidget::ClearWeatherSource()
+{
+	if (UDroneWeatherWorldSubsystem* Subsystem = WeatherSource.Get())
+	{
+		Subsystem->OnWeatherSnapshotChanged.RemoveDynamic(
+			this,
+			&UDroneFlightHUDWidget::HandleWeatherSnapshotChanged);
+	}
+	WeatherSource.Reset();
+}
+
+void UDroneFlightHUDWidget::HandleWeatherSnapshotChanged(const FDroneWeatherSnapshot Snapshot)
+{
+	ApplyWeatherSnapshot(Snapshot);
+}
+
+void UDroneFlightHUDWidget::ApplyWeatherSnapshot(const FDroneWeatherSnapshot& Snapshot)
+{
+	DisplayedWeatherSnapshot = Snapshot;
+	WeatherDisplayText = UDroneWeatherBlueprintLibrary::FormatWindReadout(
+		Snapshot.WindVelocityCentimetersPerSecond);
+	if (WeatherValueText)
+	{
+		WeatherValueText->SetText(WeatherDisplayText);
+	}
 }
 
 void UDroneFlightHUDWidget::HandleHealthChanged(
@@ -421,6 +473,37 @@ void UDroneFlightHUDWidget::BuildSignalLayout()
 	SignalValueText->SetColorAndOpacity(FSlateColor(FLinearColor(0.74f, 0.94f, 1.0f, 1.0f)));
 	SignalReadoutPanel->SetContent(SignalValueText);
 	ApplySignalSnapshot(DisplayedSignalSnapshot);
+}
+
+void UDroneFlightHUDWidget::BuildWeatherLayout()
+{
+	if (!WidgetTree || WeatherReadoutPanel)
+	{
+		return;
+	}
+	UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree->RootWidget);
+	if (!RootCanvas)
+	{
+		return;
+	}
+	WeatherReadoutPanel = WidgetTree->ConstructWidget<UBorder>(
+		UBorder::StaticClass(),
+		TEXT("WeatherReadoutPanel"));
+	WeatherReadoutPanel->SetBrushColor(FLinearColor(0.025f, 0.055f, 0.075f, 0.84f));
+	WeatherReadoutPanel->SetPadding(FMargin(14.0f, 9.0f));
+	WeatherReadoutPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+	UCanvasPanelSlot* WeatherSlot = RootCanvas->AddChildToCanvas(WeatherReadoutPanel);
+	WeatherSlot->SetAnchors(FAnchors(1.0f, 0.0f));
+	WeatherSlot->SetAlignment(FVector2D(1.0f, 0.0f));
+	WeatherSlot->SetPosition(FVector2D(-24.0f, 128.0f));
+	WeatherSlot->SetAutoSize(true);
+	WeatherValueText = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(),
+		TEXT("WeatherValueText"));
+	WeatherValueText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 16.0f));
+	WeatherValueText->SetColorAndOpacity(FSlateColor(FLinearColor(0.65f, 0.90f, 1.0f, 1.0f)));
+	WeatherReadoutPanel->SetContent(WeatherValueText);
+	ApplyWeatherSnapshot(DisplayedWeatherSnapshot);
 }
 
 void UDroneFlightHUDWidget::ApplySignalSnapshot(const FDroneSignalSnapshot& Snapshot)

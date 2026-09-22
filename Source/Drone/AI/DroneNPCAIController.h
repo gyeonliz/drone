@@ -65,6 +65,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|AI|Perception")
 	void RefreshDroneSightTuning();
 
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	float GetDroneSightRadius() const { return DroneSightRadius; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Perception")
+	float GetDroneLoseSightRadius() const { return DroneLoseSightRadius; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Patrol")
+	float GetPatrolRepeatAvoidanceRadius() const { return PatrolRepeatAvoidanceRadius; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Patrol")
+	float GetPatrolSmartObjectSearchRadius() const { return PatrolSmartObjectSearchRadius; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|AI|Patrol")
+	float GetPatrolSmartObjectSearchHalfHeight() const { return PatrolSmartObjectSearchHalfHeight; }
+
 	UFUNCTION(BlueprintPure, Category="Drone|AI")
 	UDroneSmartObjectReservationComponent* GetReservationComponent() const { return ReservationComponent; }
 
@@ -441,6 +456,13 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Perception|Sight", meta=(ClampMin="0.0", ForceUnits="s"))
 	float DroneSightStimulusMaxAgeSeconds = 3.0f;
+
+	/** 역할 Controller Blueprint가 넓은 야외/실내별 순찰점 검색 범위를 정한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Patrol", meta=(ClampMin="100.0", ForceUnits="cm"))
+	float PatrolSmartObjectSearchRadius = 2500.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Patrol", meta=(ClampMin="100.0", ForceUnits="cm"))
+	float PatrolSmartObjectSearchHalfHeight = 1000.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|AI|Perception|Sight")
 	bool bDroneSightDetectEnemies = true;
