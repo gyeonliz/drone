@@ -28,6 +28,7 @@ const FName ControlModeButtonTextName(TEXT("ControlModeButtonText"));
 const FName HandlingPresetButtonName(TEXT("HandlingPresetButton"));
 const FName HandlingPresetButtonTextName(TEXT("HandlingPresetButtonText"));
 const FName LaunchButtonName(TEXT("LaunchDroneButton"));
+constexpr int32 MaximumDroneButtons = 5;
 
 FName GetDroneButtonName(const int32 Index)
 {
@@ -88,6 +89,14 @@ void UDroneSelectionWidget::NativeOnInitialized()
 	{
 		DroneButtons[2]->OnClicked.AddUniqueDynamic(this, &UDroneSelectionWidget::HandleDroneButton2Clicked);
 	}
+	if (DroneButtons.IsValidIndex(3) && DroneButtons[3])
+	{
+		DroneButtons[3]->OnClicked.AddUniqueDynamic(this, &UDroneSelectionWidget::HandleDroneButton3Clicked);
+	}
+	if (DroneButtons.IsValidIndex(4) && DroneButtons[4])
+	{
+		DroneButtons[4]->OnClicked.AddUniqueDynamic(this, &UDroneSelectionWidget::HandleDroneButton4Clicked);
+	}
 	if (ControlModeButton)
 	{
 		ControlModeButton->OnClicked.AddUniqueDynamic(this, &UDroneSelectionWidget::HandleControlModeClicked);
@@ -116,6 +125,14 @@ void UDroneSelectionWidget::NativeDestruct()
 	if (DroneButtons.IsValidIndex(2) && DroneButtons[2])
 	{
 		DroneButtons[2]->OnClicked.RemoveDynamic(this, &UDroneSelectionWidget::HandleDroneButton2Clicked);
+	}
+	if (DroneButtons.IsValidIndex(3) && DroneButtons[3])
+	{
+		DroneButtons[3]->OnClicked.RemoveDynamic(this, &UDroneSelectionWidget::HandleDroneButton3Clicked);
+	}
+	if (DroneButtons.IsValidIndex(4) && DroneButtons[4])
+	{
+		DroneButtons[4]->OnClicked.RemoveDynamic(this, &UDroneSelectionWidget::HandleDroneButton4Clicked);
 	}
 	if (ControlModeButton)
 	{
@@ -221,6 +238,16 @@ void UDroneSelectionWidget::HandleDroneButton2Clicked()
 	SelectDisplayedButton(2);
 }
 
+void UDroneSelectionWidget::HandleDroneButton3Clicked()
+{
+	SelectDisplayedButton(3);
+}
+
+void UDroneSelectionWidget::HandleDroneButton4Clicked()
+{
+	SelectDisplayedButton(4);
+}
+
 void UDroneSelectionWidget::HandleControlModeClicked()
 {
 	ToggleControlMode();
@@ -250,7 +277,7 @@ bool UDroneSelectionWidget::TryBindBlueprintLayout()
 	DroneProfileText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneSelectionUI::DroneProfileName));
 	DroneButtons.Reset();
 	DroneButtonTexts.Reset();
-	for (int32 Index = 0; Index < 3; ++Index)
+	for (int32 Index = 0; Index < DroneSelectionUI::MaximumDroneButtons; ++Index)
 	{
 		DroneButtons.Add(Cast<UButton>(WidgetTree->FindWidget(DroneSelectionUI::GetDroneButtonName(Index))));
 		DroneButtonTexts.Add(Cast<UTextBlock>(WidgetTree->FindWidget(DroneSelectionUI::GetDroneButtonTextName(Index))));
@@ -265,13 +292,17 @@ bool UDroneSelectionWidget::TryBindBlueprintLayout()
 		&& DroneNameText
 		&& DroneDescriptionText
 		&& DroneProfileText
-		&& DroneButtons.Num() == 3
+		&& DroneButtons.Num() == DroneSelectionUI::MaximumDroneButtons
 		&& DroneButtons[0]
 		&& DroneButtons[1]
 		&& DroneButtons[2]
+		&& DroneButtons[3]
+		&& DroneButtons[4]
 		&& DroneButtonTexts[0]
 		&& DroneButtonTexts[1]
 		&& DroneButtonTexts[2]
+		&& DroneButtonTexts[3]
+		&& DroneButtonTexts[4]
 		&& ControlModeButton
 		&& ControlModeButtonText
 		&& HandlingPresetButton
@@ -342,7 +373,7 @@ void UDroneSelectionWidget::BuildDefaultLayout()
 
 	DroneButtons.Reset();
 	DroneButtonTexts.Reset();
-	for (int32 Index = 0; Index < 3; ++Index)
+	for (int32 Index = 0; Index < DroneSelectionUI::MaximumDroneButtons; ++Index)
 	{
 		UButton* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), DroneSelectionUI::GetDroneButtonName(Index));
 		UTextBlock* ButtonText = WidgetTree->ConstructWidget<UTextBlock>(

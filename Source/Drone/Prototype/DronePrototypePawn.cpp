@@ -7,6 +7,8 @@
 #include "Abilities/DroneReconScanComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SphereComponent.h"
+#include "Components/SplineComponent.h"
+#include "Components/SplineMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Drone.h"
 #include "Engine/LocalPlayer.h"
@@ -21,12 +23,45 @@
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
+#include "Materials/MaterialInterface.h"
 #include "Mission/DroneDefinition.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Signal/DroneSignalComponent.h"
 #include "Weather/DroneWeatherResponseComponent.h"
+#include "UObject/ConstructorHelpers.h"
+
+namespace DronePrototypeSurfaceTrace
+{
+	bool Trace(
+		UWorld* World,
+		FHitResult& OutHit,
+		const FVector& Start,
+		const FVector& End,
+		const ECollisionChannel Channel,
+		const FCollisionQueryParams& QueryParams)
+	{
+		if (!World)
+		{
+			return false;
+		}
+		if (World->LineTraceSingleByChannel(OutHit, Start, End, Channel, QueryParams))
+		{
+			return true;
+		}
+
+		FCollisionObjectQueryParams ObjectQueryParams;
+		ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldStatic);
+		ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+		return World->LineTraceSingleByObjectType(
+			OutHit,
+			Start,
+			End,
+			ObjectQueryParams,
+			QueryParams);
+	}
+}
 
 ADronePrototypePawn::ADronePrototypePawn()
 {
@@ -57,6 +92,29 @@ ADronePrototypePawn::ADronePrototypePawn()
 	VisualMeshComponent->SetupAttachment(VisualTiltPivot);
 	VisualMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	VisualMeshComponent->SetSimulatePhysics(false);
+
+	FiberSpoolMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("FiberSpoolMeshComponent"));
+	FiberSpoolMeshComponent->SetupAttachment(VisualTiltPivot);
+	FiberSpoolMeshComponent->SetRelativeLocation(FVector(-32.0f, 0.0f, -18.0f));
+	FiberSpoolMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	FiberSpoolMeshComponent->SetGenerateOverlapEvents(false);
+	FiberSpoolMeshComponent->SetCanEverAffectNavigation(false);
+	FiberSpoolMeshComponent->SetCastShadow(false);
+	FiberSpoolMeshComponent->ComponentTags.Add(TEXT("FiberSpoolVisual"));
+	FiberSpoolMeshComponent->SetHiddenInGame(true);
+
+	FiberOpticSplineComponent = CreateDefaultSubobject<USplineComponent>(TEXT("FiberOpticSplineComponent"));
+	FiberOpticSplineComponent->SetupAttachment(CollisionComponent);
+	FiberOpticSplineComponent->ClearSplinePoints(false);
+	FiberOpticSplineComponent->SetClosedLoop(false, false);
+	FiberOpticSplineComponent->ComponentTags.Add(TEXT("FiberOpticSpline"));
+
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> FiberSegmentMeshFinder(
+		TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	if (FiberSegmentMeshFinder.Succeeded())
+	{
+		FiberCableSegmentMesh = FiberSegmentMeshFinder.Object;
+	}
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(CollisionComponent);
@@ -169,6 +227,19 @@ bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definitio
 		Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::PayloadDrop));
 	SignalComponent->ConfigureJammingImmunity(
 		Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::JammingImmunity));
+	bGroundDriveModeActive = Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::GroundDrive);
+	bGroundSurfaceAcquired = false;
+	GroundThrottleInput = 0.0f;
+	GroundSteeringInput = 0.0f;
+	GroundYawInput = 0.0f;
+	WeatherResponseComponent->SetWindResponseEnabled(!bGroundDriveModeActive);
+	SetFiberTetherActive(Definition->MissionRole == EDroneMissionRole::FiberOpticStrike);
+	if (bGroundDriveModeActive)
+	{
+		CurrentControlMode = EDroneControlMode::AssistedEasy;
+		SetVisualTiltInputGreybox(0.0f, 0.0f);
+		ApplyRuntimeFlightTuning();
+	}
 	AppliedDroneId = Definition->DroneId;
 
 	UE_LOG(
@@ -238,7 +309,10 @@ bool ADronePrototypePawn::TriggerSecondaryRoleAbility()
 
 void ADronePrototypePawn::SetControlMode(const EDroneControlMode NewControlMode)
 {
-	const bool bChanged = CurrentControlMode != NewControlMode;
+	const EDroneControlMode ResolvedControlMode = bGroundDriveModeActive
+		? EDroneControlMode::AssistedEasy
+		: NewControlMode;
+	const bool bChanged = CurrentControlMode != ResolvedControlMode;
 	if (bChanged)
 	{
 		// 서로 의미가 다른 Action 축의 이전 프레임 값을 새 모드로 넘기지 않는다.
@@ -248,7 +322,7 @@ void ADronePrototypePawn::SetControlMode(const EDroneControlMode NewControlMode)
 		AcroThrottleInput = 0.0f;
 		CurrentAcroBodyRateDegreesPerSecond = FRotator::ZeroRotator;
 	}
-	CurrentControlMode = NewControlMode;
+	CurrentControlMode = ResolvedControlMode;
 	ApplyRuntimeFlightTuning();
 	if (bChanged)
 	{
@@ -418,6 +492,8 @@ void ADronePrototypePawn::Tick(const float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	UpdateDamageShake(DeltaSeconds);
+	UpdateGroundDrive(DeltaSeconds);
+	UpdateFiberTether();
 	UpdateControlAttitude(DeltaSeconds);
 	UpdateAcroFlightPhysics(DeltaSeconds);
 	LimitAcroVerticalSpeed();
@@ -723,6 +799,16 @@ void ADronePrototypePawn::Move(const FInputActionValue& Value)
 	}
 
 	const FVector2D MovementValue = Value.Get<FVector2D>();
+	if (bGroundDriveModeActive)
+	{
+		GroundThrottleInput = FMath::Clamp(MovementValue.Y, -1.0f, 1.0f);
+		GroundSteeringInput = FMath::Clamp(MovementValue.X, -1.0f, 1.0f);
+		SetVisualTiltInputGreybox(0.0f, 0.0f);
+		const FVector GroundForward = FVector::VectorPlaneProject(
+			GetActorForwardVector(), FVector::UpVector).GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
+		AddMovementInput(GroundForward, GroundThrottleInput);
+		return;
+	}
 	if (IsAcroControlMode(CurrentControlMode))
 	{
 		// Acro는 전용 1D Action을 사용한다. 공용 Move를 재해석하면 키보드 W/S와 Space/Ctrl이
@@ -738,6 +824,12 @@ void ADronePrototypePawn::Move(const FInputActionValue& Value)
 
 void ADronePrototypePawn::ResetMoveVisualInput(const FInputActionValue&)
 {
+	if (bGroundDriveModeActive)
+	{
+		GroundThrottleInput = 0.0f;
+		GroundSteeringInput = 0.0f;
+		return;
+	}
 	if (IsAcroControlMode(CurrentControlMode))
 	{
 		return;
@@ -1010,8 +1102,374 @@ void ADronePrototypePawn::UpdateRotorVisuals(const float DeltaSeconds)
 	}
 }
 
+bool ADronePrototypePawn::TryFindGroundSurface(
+	const FVector& WorldLocation,
+	const float TraceDistanceCentimeters,
+	FHitResult& OutHit) const
+{
+	if (!GetWorld())
+	{
+		return false;
+	}
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(DroneGroundSurfaceTrace), false, this);
+	const FVector TraceStart = WorldLocation + FVector::UpVector * GroundTraceStartHeightCentimeters;
+	const FVector TraceEnd = WorldLocation - FVector::UpVector * FMath::Max(100.0f, TraceDistanceCentimeters);
+	return DronePrototypeSurfaceTrace::Trace(
+		GetWorld(),
+		OutHit,
+		TraceStart,
+		TraceEnd,
+		GroundTraceChannel,
+		QueryParams);
+}
+
+void ADronePrototypePawn::SetFiberTetherActive(const bool bActive)
+{
+	bFiberTetherActive = bActive;
+	if (FiberSpoolMeshComponent)
+	{
+		FiberSpoolMeshComponent->SetHiddenInGame(!bFiberTetherActive, true);
+		FiberSpoolMeshComponent->SetVisibility(bFiberTetherActive, true);
+	}
+	if (!bFiberTetherActive)
+	{
+		FiberLaidPointsWorld.Reset();
+		if (FiberOpticSplineComponent)
+		{
+			FiberOpticSplineComponent->ClearSplinePoints(true);
+		}
+		for (USplineMeshComponent* Segment : FiberCableSegments)
+		{
+			if (Segment)
+			{
+				Segment->SetVisibility(false, true);
+			}
+		}
+		return;
+	}
+
+	InitializeFiberTether();
+}
+
+bool ADronePrototypePawn::FindFiberGroundPoint(
+	const FVector& WorldLocation,
+	FVector& OutGroundPoint) const
+{
+	if (!GetWorld())
+	{
+		return false;
+	}
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(DroneFiberGroundTrace), false, this);
+	const FVector TraceStart = WorldLocation + FVector::UpVector * GroundTraceStartHeightCentimeters;
+	const FVector TraceEnd = WorldLocation - FVector::UpVector * FMath::Max(
+		100.0f,
+		FiberGroundTraceDistanceCentimeters);
+	FHitResult Hit;
+	if (!DronePrototypeSurfaceTrace::Trace(
+		GetWorld(),
+		Hit,
+		TraceStart,
+		TraceEnd,
+		GroundTraceChannel,
+		QueryParams))
+	{
+		return false;
+	}
+
+	OutGroundPoint = Hit.ImpactPoint + Hit.ImpactNormal * FMath::Max(0.0f, FiberGroundClearanceCentimeters);
+	return true;
+}
+
+void ADronePrototypePawn::InitializeFiberTether()
+{
+	FiberLaidPointsWorld.Reset();
+	if (!FiberSpoolMeshComponent || !FiberOpticSplineComponent)
+	{
+		return;
+	}
+
+	const FVector SpoolExit = FiberSpoolMeshComponent->GetComponentTransform().TransformPosition(
+		FiberSpoolExitOffset);
+	FVector InitialGroundPoint;
+	if (!FindFiberGroundPoint(SpoolExit, InitialGroundPoint))
+	{
+		InitialGroundPoint = SpoolExit - FVector::UpVector * FMath::Min(
+			100.0f,
+			FMath::Max(0.0f, FiberSagDepthCentimeters));
+	}
+	FiberLaidPointsWorld.Add(InitialGroundPoint);
+	RebuildFiberSpline(SpoolExit);
+}
+
+void ADronePrototypePawn::UpdateFiberTether()
+{
+	if (!bFiberTetherActive || !FiberSpoolMeshComponent || !FiberOpticSplineComponent)
+	{
+		return;
+	}
+
+	const FVector SpoolExit = FiberSpoolMeshComponent->GetComponentTransform().TransformPosition(
+		FiberSpoolExitOffset);
+	if (FiberLaidPointsWorld.IsEmpty())
+	{
+		InitializeFiberTether();
+		return;
+	}
+
+	FVector GroundPoint;
+	if (FindFiberGroundPoint(SpoolExit, GroundPoint))
+	{
+		const FVector2D LastGroundXY(FiberLaidPointsWorld.Last());
+		const FVector2D NewGroundXY(GroundPoint);
+		if (FVector2D::Distance(LastGroundXY, NewGroundXY)
+			>= FMath::Max(20.0f, FiberPointSpacingCentimeters))
+		{
+			FiberLaidPointsWorld.Add(GroundPoint);
+			const int32 MaximumPoints = FMath::Clamp(FiberMaximumLaidPoints, 2, 256);
+			if (FiberLaidPointsWorld.Num() > MaximumPoints)
+			{
+				FiberLaidPointsWorld.RemoveAt(
+					0,
+					FiberLaidPointsWorld.Num() - MaximumPoints,
+					EAllowShrinking::No);
+			}
+		}
+	}
+
+	RebuildFiberSpline(SpoolExit);
+}
+
+void ADronePrototypePawn::RebuildFiberSpline(const FVector& SpoolExitWorldLocation)
+{
+	if (!FiberOpticSplineComponent || FiberLaidPointsWorld.IsEmpty())
+	{
+		return;
+	}
+
+	TArray<FVector> SplinePoints = FiberLaidPointsWorld;
+	const FVector LastGroundPoint = FiberLaidPointsWorld.Last();
+	if (!LastGroundPoint.Equals(SpoolExitWorldLocation, 1.0f))
+	{
+		FVector SagPoint = FMath::Lerp(LastGroundPoint, SpoolExitWorldLocation, 0.55f);
+		SagPoint.Z = FMath::Max(
+			LastGroundPoint.Z,
+			SagPoint.Z - FMath::Max(0.0f, FiberSagDepthCentimeters));
+		SplinePoints.Add(SagPoint);
+	}
+	SplinePoints.Add(SpoolExitWorldLocation);
+
+	FiberOpticSplineComponent->SetSplinePoints(
+		SplinePoints,
+		ESplineCoordinateSpace::World,
+		false);
+	for (int32 PointIndex = 0; PointIndex < SplinePoints.Num(); ++PointIndex)
+	{
+		FiberOpticSplineComponent->SetSplinePointType(
+			PointIndex,
+			ESplinePointType::CurveClamped,
+			false);
+	}
+	FiberOpticSplineComponent->UpdateSpline();
+	UpdateFiberCableSegments();
+}
+
+void ADronePrototypePawn::UpdateFiberCableSegments()
+{
+	if (!FiberOpticSplineComponent)
+	{
+		return;
+	}
+
+	const int32 RequiredSegments = FMath::Max(0, FiberOpticSplineComponent->GetNumberOfSplinePoints() - 1);
+	while (FiberCableSegments.Num() < RequiredSegments)
+	{
+		USplineMeshComponent* Segment = NewObject<USplineMeshComponent>(
+			this,
+			*FString::Printf(TEXT("FiberCableSegment_%02d"), FiberCableSegments.Num()));
+		if (!Segment)
+		{
+			break;
+		}
+		Segment->SetupAttachment(FiberOpticSplineComponent);
+		Segment->SetMobility(EComponentMobility::Movable);
+		Segment->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Segment->SetGenerateOverlapEvents(false);
+		Segment->SetCanEverAffectNavigation(false);
+		Segment->SetCastShadow(false);
+		Segment->ComponentTags.Add(TEXT("FiberOpticCableSegment"));
+		Segment->SetForwardAxis(ESplineMeshAxis::Z, false);
+		AddInstanceComponent(Segment);
+		Segment->RegisterComponent();
+		FiberCableSegments.Add(Segment);
+	}
+
+	const FVector2D CrossSectionScale(
+		FMath::Max(0.001f, FiberCableThicknessScale),
+		FMath::Max(0.001f, FiberCableThicknessScale));
+	for (int32 SegmentIndex = 0; SegmentIndex < FiberCableSegments.Num(); ++SegmentIndex)
+	{
+		USplineMeshComponent* Segment = FiberCableSegments[SegmentIndex];
+		const bool bShouldShow = bFiberTetherActive
+			&& SegmentIndex < RequiredSegments
+			&& FiberCableSegmentMesh;
+		if (!Segment)
+		{
+			continue;
+		}
+		Segment->SetVisibility(bShouldShow, true);
+		if (!bShouldShow)
+		{
+			continue;
+		}
+
+		Segment->SetStaticMesh(FiberCableSegmentMesh);
+		if (FiberCableMaterial)
+		{
+			Segment->SetMaterial(0, FiberCableMaterial);
+		}
+		FVector StartLocation;
+		FVector StartTangent;
+		FVector EndLocation;
+		FVector EndTangent;
+		FiberOpticSplineComponent->GetLocationAndTangentAtSplinePoint(
+			SegmentIndex,
+			StartLocation,
+			StartTangent,
+			ESplineCoordinateSpace::Local);
+		FiberOpticSplineComponent->GetLocationAndTangentAtSplinePoint(
+			SegmentIndex + 1,
+			EndLocation,
+			EndTangent,
+			ESplineCoordinateSpace::Local);
+		Segment->SetStartScale(CrossSectionScale, false);
+		Segment->SetEndScale(CrossSectionScale, false);
+		Segment->SetStartAndEnd(
+			StartLocation,
+			StartTangent,
+			EndLocation,
+			EndTangent,
+			true);
+	}
+}
+
+void ADronePrototypePawn::UpdateGroundDrive(const float DeltaSeconds)
+{
+	if (!bGroundDriveModeActive
+		|| !GetWorld()
+		|| !PrototypeMovementComponent
+		|| (HealthComponent && HealthComponent->IsDead()))
+	{
+		return;
+	}
+
+	const float SafeDeltaSeconds = FMath::Max(0.0f, DeltaSeconds);
+	const float SteeringInput = FMath::Clamp(GroundSteeringInput + GroundYawInput, -1.0f, 1.0f);
+	if (!FMath::IsNearlyZero(SteeringInput))
+	{
+		AddActorWorldRotation(FRotator(
+			0.0f,
+			SteeringInput * GroundSteeringRateDegreesPerSecond * SafeDeltaSeconds,
+			0.0f));
+	}
+
+	FVector Velocity = PrototypeMovementComponent->Velocity;
+	Velocity.Z = 0.0f;
+	PrototypeMovementComponent->Velocity = Velocity;
+
+	const FVector HorizontalForward = FVector::VectorPlaneProject(
+		GetActorForwardVector(), FVector::UpVector).GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
+	const FVector HorizontalRight = FVector::CrossProduct(FVector::UpVector, HorizontalForward).GetSafeNormal();
+	FVector ActorLocation = GetActorLocation();
+	if (!bGroundSurfaceAcquired)
+	{
+		FHitResult AcquisitionHit;
+		if (!TryFindGroundSurface(
+			ActorLocation,
+			GroundInitialAcquireDistanceCentimeters,
+			AcquisitionHit))
+		{
+			return;
+		}
+
+		FVector AcquiredLocation = ActorLocation;
+		AcquiredLocation.Z = AcquisitionHit.ImpactPoint.Z + GroundClearanceCentimeters;
+		SetActorLocation(AcquiredLocation, true);
+		ActorLocation = GetActorLocation();
+		bGroundSurfaceAcquired = true;
+	}
+	const float HalfLength = FMath::Max(10.0f, GroundSampleHalfLengthCentimeters);
+	const float HalfWidth = FMath::Max(10.0f, GroundSampleHalfWidthCentimeters);
+	const FVector SampleOffsets[4] =
+	{
+		HorizontalForward * HalfLength + HorizontalRight * HalfWidth,
+		HorizontalForward * HalfLength - HorizontalRight * HalfWidth,
+		-HorizontalForward * HalfLength + HorizontalRight * HalfWidth,
+		-HorizontalForward * HalfLength - HorizontalRight * HalfWidth
+	};
+
+	FVector HitLocations[4] = {ActorLocation, ActorLocation, ActorLocation, ActorLocation};
+	bool bHitSamples[4] = {false, false, false, false};
+	int32 HitCount = 0;
+	float HitHeightSum = 0.0f;
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		const FVector SampleLocation = ActorLocation + SampleOffsets[Index];
+		FHitResult Hit;
+		if (TryFindGroundSurface(SampleLocation, GroundTraceDistanceCentimeters, Hit))
+		{
+			bHitSamples[Index] = true;
+			HitLocations[Index] = Hit.ImpactPoint;
+			HitHeightSum += Hit.ImpactPoint.Z;
+			++HitCount;
+		}
+	}
+	if (HitCount == 0)
+	{
+		bGroundSurfaceAcquired = false;
+		return;
+	}
+
+	FVector TargetLocation = ActorLocation;
+	TargetLocation.Z = HitHeightSum / static_cast<float>(HitCount) + GroundClearanceCentimeters;
+	SetActorLocation(FMath::VInterpTo(
+		ActorLocation,
+		TargetLocation,
+		SafeDeltaSeconds,
+		GroundHeightInterpolationSpeed), true);
+
+	if (bHitSamples[0] && bHitSamples[1] && bHitSamples[2] && bHitSamples[3])
+	{
+		const FVector FrontCenter = (HitLocations[0] + HitLocations[1]) * 0.5f;
+		const FVector RearCenter = (HitLocations[2] + HitLocations[3]) * 0.5f;
+		const FVector RightCenter = (HitLocations[0] + HitLocations[2]) * 0.5f;
+		const FVector LeftCenter = (HitLocations[1] + HitLocations[3]) * 0.5f;
+		const FVector SurfaceForward = (FrontCenter - RearCenter).GetSafeNormal();
+		const FVector SurfaceRight = (RightCenter - LeftCenter).GetSafeNormal();
+		FVector SurfaceNormal = FVector::CrossProduct(SurfaceForward, SurfaceRight).GetSafeNormal(
+			UE_SMALL_NUMBER, FVector::UpVector);
+		if (SurfaceNormal.Z < 0.0f)
+		{
+			SurfaceNormal *= -1.0f;
+		}
+		const FVector AlignedForward = FVector::VectorPlaneProject(
+			GetActorForwardVector(), SurfaceNormal).GetSafeNormal(UE_SMALL_NUMBER, HorizontalForward);
+		const FRotator TargetRotation = FRotationMatrix::MakeFromXZ(AlignedForward, SurfaceNormal).Rotator();
+		SetActorRotation(FMath::RInterpTo(
+			GetActorRotation(),
+			TargetRotation,
+			SafeDeltaSeconds,
+			GroundRotationInterpolationSpeed));
+	}
+}
+
 void ADronePrototypePawn::UpdateControlAttitude(const float DeltaSeconds)
 {
+	if (bGroundDriveModeActive)
+	{
+		return;
+	}
 	if (IsAcroControlMode(CurrentControlMode))
 	{
 		// Rate/Acro의 핵심 계약: 각 Stick은 Body 각속도이며 Stick 중앙은 현재 자세를 유지한다.
@@ -1076,7 +1534,8 @@ void ADronePrototypePawn::UpdateControlAttitude(const float DeltaSeconds)
 
 void ADronePrototypePawn::UpdateAcroFlightPhysics(const float DeltaSeconds)
 {
-	if (!IsAcroControlMode(CurrentControlMode)
+	if (bGroundDriveModeActive
+		|| !IsAcroControlMode(CurrentControlMode)
 		|| !PrototypeMovementComponent
 		|| (HealthComponent && HealthComponent->IsDead()))
 	{
@@ -1112,7 +1571,7 @@ void ADronePrototypePawn::UpdateAcroFlightPhysics(const float DeltaSeconds)
 
 void ADronePrototypePawn::LimitAcroVerticalSpeed()
 {
-	if (!IsAcroControlMode(CurrentControlMode) || !PrototypeMovementComponent)
+	if (bGroundDriveModeActive || !IsAcroControlMode(CurrentControlMode) || !PrototypeMovementComponent)
 	{
 		return;
 	}
@@ -1136,10 +1595,10 @@ void ADronePrototypePawn::UpdateVisualBank(const float DeltaSeconds)
 
 	const FDroneControlModeTuning& ControlTuning = ResolveCurrentControlModeTuning();
 	// 실제 조작형은 Root가 이미 기울어지므로 외형 Pivot에는 중복 기울기를 적용하지 않는다.
-	const float TargetPitch = ControlTuning.bTiltCollisionRoot
+	const float TargetPitch = bGroundDriveModeActive || ControlTuning.bTiltCollisionRoot
 		? 0.0f
 		: -VisualTiltForwardInput * MaximumVisualTiltPitchDegrees;
-	const float TargetRoll = ControlTuning.bTiltCollisionRoot
+	const float TargetRoll = bGroundDriveModeActive || ControlTuning.bTiltCollisionRoot
 		? 0.0f
 		: VisualBankLateralInput * MaximumVisualBankRollDegrees;
 	const float PitchInterpolationSpeed = FMath::IsNearlyZero(VisualTiltForwardInput)
@@ -1274,7 +1733,7 @@ void ADronePrototypePawn::ChangeAltitude(const FInputActionValue& Value)
 	{
 		return;
 	}
-	if (IsAcroControlMode(CurrentControlMode))
+	if (bGroundDriveModeActive || IsAcroControlMode(CurrentControlMode))
 	{
 		return;
 	}
@@ -1298,6 +1757,11 @@ void ADronePrototypePawn::ChangeYaw(const FInputActionValue& Value)
 	{
 		return;
 	}
+	if (bGroundDriveModeActive)
+	{
+		GroundYawInput = FMath::Clamp(Value.Get<float>(), -1.0f, 1.0f);
+		return;
+	}
 
 	const UWorld* World = GetWorld();
 	if (!World)
@@ -1312,6 +1776,11 @@ void ADronePrototypePawn::ChangeYaw(const FInputActionValue& Value)
 
 void ADronePrototypePawn::ResetYawInput(const FInputActionValue&)
 {
+	if (bGroundDriveModeActive)
+	{
+		GroundYawInput = 0.0f;
+		return;
+	}
 	if (IsAcroControlMode(CurrentControlMode))
 	{
 		return;

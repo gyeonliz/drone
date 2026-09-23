@@ -7,6 +7,7 @@
 #include "Engine/World.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Weather/DroneWeatherProfile.h"
+#include "Weather/DroneRainVisualActor.h"
 #include "Weather/DroneWeatherWorldSubsystem.h"
 
 ADroneWeatherController::ADroneWeatherController()
@@ -17,6 +18,7 @@ ADroneWeatherController::ADroneWeatherController()
 
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
+	RainVisualClass = ADroneRainVisualActor::StaticClass();
 
 #if WITH_EDITORONLY_DATA
 	EditorPlacementCone = CreateEditorOnlyDefaultSubobject<UStaticMeshComponent>(TEXT("EditorPlacementCone"));
@@ -47,6 +49,21 @@ void ADroneWeatherController::BeginPlay()
 {
 	Super::BeginPlay();
 	ApplyConfiguredWeather();
+	SetRainEnabled(bEnableRain);
+	if (bSpawnRainVisual && RainVisualClass && GetWorld())
+	{
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.Owner = this;
+		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		SpawnedRainVisual = GetWorld()->SpawnActor<ADroneRainVisualActor>(
+			RainVisualClass,
+			GetActorTransform(),
+			SpawnParameters);
+		if (SpawnedRainVisual)
+		{
+			SpawnedRainVisual->SetRainEnabled(bEnableRain);
+		}
+	}
 	if (bEnableRandomWind)
 	{
 		InitializeRandomWind();
@@ -61,9 +78,31 @@ void ADroneWeatherController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		if (UDroneWeatherWorldSubsystem* Subsystem = World->GetSubsystem<UDroneWeatherWorldSubsystem>())
 		{
 			Subsystem->ClearRuntimeWindOverride();
+			Subsystem->ClearRuntimeRainOverride();
 		}
 	}
+	if (SpawnedRainVisual)
+	{
+		SpawnedRainVisual->Destroy();
+		SpawnedRainVisual = nullptr;
+	}
 	Super::EndPlay(EndPlayReason);
+}
+
+void ADroneWeatherController::SetRainEnabled(const bool bEnabled)
+{
+	bEnableRain = bEnabled;
+	if (UWorld* World = GetWorld())
+	{
+		if (UDroneWeatherWorldSubsystem* Subsystem = World->GetSubsystem<UDroneWeatherWorldSubsystem>())
+		{
+			Subsystem->SetRuntimeRainEnabled(bEnableRain);
+		}
+	}
+	if (SpawnedRainVisual)
+	{
+		SpawnedRainVisual->SetRainEnabled(bEnableRain);
+	}
 }
 
 void ADroneWeatherController::Tick(const float DeltaSeconds)

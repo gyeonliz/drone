@@ -11,7 +11,9 @@ const TCHAR* DefaultDronePaths[] =
 {
 	TEXT("/Game/Drone/Data/Drones/DA_Drone_Scout_Greybox.DA_Drone_Scout_Greybox"),
 	TEXT("/Game/Drone/Data/Drones/DA_Drone_FPVStrike_Greybox.DA_Drone_FPVStrike_Greybox"),
-	TEXT("/Game/Drone/Data/Drones/DA_Drone_Drop_Greybox.DA_Drone_Drop_Greybox")
+	TEXT("/Game/Drone/Data/Drones/DA_Drone_Drop_Greybox.DA_Drone_Drop_Greybox"),
+	TEXT("/Game/Drone/Data/Drones/DA_Drone_FiberOptic_Greybox.DA_Drone_FiberOptic_Greybox"),
+	TEXT("/Game/Drone/Data/Drones/DA_Drone_GroundUGV_Greybox.DA_Drone_GroundUGV_Greybox")
 };
 const TCHAR* DefaultMissionPath =
 	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Training.DA_Mission_Tutorial_Training");

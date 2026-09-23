@@ -217,8 +217,9 @@ int32 ADroneWeatherDebugVisualizer::CalculateRainPreviewStreakCount(
 
 void ADroneWeatherDebugVisualizer::UpdateRainDebugPreview(const float DeltaSeconds)
 {
-	if (!bRainDebugPreviewMap)
+	if (!bRainDebugPreviewMap || !bEnableRainDebugPreview)
 	{
+		CurrentRainPreviewStreakCount = 0;
 		return;
 	}
 
@@ -400,20 +401,19 @@ void ADroneWeatherDebugVisualizer::UpdateOnScreenReadout() const
 		0.15f,
 		FColor::Cyan,
 		FString::Printf(
-			TEXT("WEATHER TEST | %s | Wind %s %.1f m/s | Rain %.2f Spawn %.2f Wet %.2f | Debug streaks %d | Mode %s"),
+			TEXT("WEATHER TEST | %s | Wind %s %.1f m/s | Rain %.2f Spawn %.2f Wet %.2f | Mode %s"),
 			*CachedSnapshot.WeatherId.ToString(),
 			*DirectionLabel,
 			SpeedMetersPerSecond,
 			CachedSnapshot.RainIntensity01,
 			CachedSnapshot.RainSpawnScale01,
 			CachedSnapshot.SurfaceWetness01,
-			CurrentRainPreviewStreakCount,
 			*ControlMode));
 	GEngine->AddOnScreenDebugMessage(
 		DroneWeatherDebug::HelpMessageKey,
 		0.15f,
 		FColor::Yellow,
-		TEXT("1 Easy / 2 Manual / 3 Acro Mode 1 / 4 Acro Mode 2 | Weather: 7 Clear / 8 LightWind / 9 RainStorm + debug rain lines (not Niagara)."));
+		TEXT("1 Easy / 2 Manual / 3 Acro Mode 1 / 4 Acro Mode 2 | Weather: 7 Clear / 8 LightWind / 9 RainStorm."));
 }
 
 float ADroneWeatherDebugVisualizer::WrapCoordinate(const float Value, const float Extent)

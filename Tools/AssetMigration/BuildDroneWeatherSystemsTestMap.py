@@ -1,7 +1,7 @@
 """지속풍 체감용 독립 TestMap을 생성하거나 검증한다.
 
-Production Training 맵은 열거나 저장하지 않는다. 기본값은 LightWind이며, 비 Niagara가
-아직 없는 상태에서도 쉬운 조작/Rate-Acro의 Drift 차이를 바로 시험할 수 있게 한다.
+Production Training 맵은 열거나 저장하지 않는다. 기본값은 LightWind이며, OilRig의
+빗물 마스크를 참조하는 프로젝트 소유 Rain Material과 조작 모드별 Drift를 시험한다.
 """
 
 from __future__ import annotations
@@ -26,6 +26,14 @@ CONTROLLER_BLUEPRINT_FOLDER = "/Game/Drone/Weather/Blueprints"
 CONTROLLER_BLUEPRINT_NAME = "BP_DroneRandomWeatherController"
 CONTROLLER_BLUEPRINT_PATH = f"{CONTROLLER_BLUEPRINT_FOLDER}/{CONTROLLER_BLUEPRINT_NAME}"
 CONTROLLER_PARENT_CLASS_PATH = "/Script/Drone.DroneWeatherController"
+RAIN_BLUEPRINT_NAME = "BP_DroneRainVisual"
+RAIN_BLUEPRINT_PATH = f"{CONTROLLER_BLUEPRINT_FOLDER}/{RAIN_BLUEPRINT_NAME}"
+RAIN_PARENT_CLASS_PATH = "/Script/Drone.DroneRainVisualActor"
+RAIN_MATERIAL_FOLDER = "/Game/Drone/Weather/Materials"
+RAIN_MATERIAL_NAME = "M_DroneRainStreak_OilRigMask"
+RAIN_MATERIAL_PATH = f"{RAIN_MATERIAL_FOLDER}/{RAIN_MATERIAL_NAME}"
+OIL_RIG_RAIN_MASK_PATH = "/Game/Drone/ThirdParty/OilRig/Rain/Texture/T_rain_Mask"
+RAIN_PLANE_MESH_PATH = "/Engine/BasicShapes/Plane"
 CUBE_PATH = "/Engine/BasicShapes/Cube"
 
 OWNED_TAG = unreal.Name("DroneWeatherSystemsTest.Owned")
@@ -83,9 +91,13 @@ def ensure_visualizer_blueprint(editor_assets: unreal.EditorAssetSubsystem) -> u
         f"Visualizer Blueprint parent mismatch: {VISUALIZER_BLUEPRINT_PATH}",
     )
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+    cdo = unreal.get_default_object(blueprint.generated_class())
+    require(cdo is not None, "Visualizer CDO unavailable")
+    cdo.set_editor_property("enable_rain_debug_preview", False)
+    cdo.set_editor_property("rain_preview_max_streak_count", 0)
+    unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
     require(blueprint.get_editor_property("status") != unreal.BlueprintStatus.BS_ERROR, "Visualizer Blueprint compile failed")
-    if created_blueprint:
-        require(editor_assets.save_loaded_asset(blueprint, only_if_is_dirty=False), "Could not save Visualizer Blueprint")
+    require(editor_assets.save_loaded_asset(blueprint, only_if_is_dirty=False), "Could not save Visualizer Blueprint")
     return blueprint.generated_class()
 
 
@@ -126,9 +138,116 @@ def ensure_random_weather_controller_blueprint(
     cdo.set_editor_property("maximum_speed_change_interval_seconds", 12.0)
     cdo.set_editor_property("minimum_wind_speed_meters_per_second", 1.0)
     cdo.set_editor_property("maximum_wind_speed_meters_per_second", 9.0)
+    cdo.set_editor_property("enable_rain", True)
+    cdo.set_editor_property("spawn_rain_visual", True)
+    cdo.set_editor_property("rain_visual_class", ensure_rain_visual_blueprint(editor_assets))
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
     require(blueprint.get_editor_property("status") != unreal.BlueprintStatus.BS_ERROR, "Weather Controller compile failed")
     require(editor_assets.save_loaded_asset(blueprint, only_if_is_dirty=False), "Could not save Weather Controller Blueprint")
+    return blueprint.generated_class()
+
+
+def ensure_rain_streak_material(editor_assets: unreal.EditorAssetSubsystem) -> unreal.Material:
+    material = editor_assets.load_asset(RAIN_MATERIAL_PATH)
+    if material is not None:
+        require(isinstance(material, unreal.Material), f"Rain Material has wrong type: {RAIN_MATERIAL_PATH}")
+        return material
+
+    mask_texture = editor_assets.load_asset(OIL_RIG_RAIN_MASK_PATH)
+    require(isinstance(mask_texture, unreal.Texture2D), f"Missing OilRig rain mask: {OIL_RIG_RAIN_MASK_PATH}")
+    unreal.EditorAssetLibrary.make_directory(RAIN_MATERIAL_FOLDER)
+    material = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+        RAIN_MATERIAL_NAME,
+        RAIN_MATERIAL_FOLDER,
+        unreal.Material.static_class(),
+        unreal.MaterialFactoryNew(),
+        overwrite_existing=False,
+    )
+    require(isinstance(material, unreal.Material), f"Could not create Rain Material: {RAIN_MATERIAL_PATH}")
+    material.modify()
+    material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
+    material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
+    material.set_editor_property("two_sided", True)
+
+    mask = unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionTextureSample, -620, -20
+    )
+    tint = unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionConstant3Vector, -620, -180
+    )
+    emissive = unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionMultiply, -300, -150
+    )
+    opacity_strength = unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionConstant, -620, 170
+    )
+    opacity = unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionMultiply, -300, 80
+    )
+    require(all(node is not None for node in (mask, tint, emissive, opacity_strength, opacity)), "Rain Material nodes failed")
+    mask.set_editor_property("texture", mask_texture)
+    mask.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_MASKS)
+    tint.set_editor_property("constant", unreal.LinearColor(0.38, 0.58, 0.78, 1.0))
+    opacity_strength.set_editor_property("r", 0.22)
+    require(unreal.MaterialEditingLibrary.connect_material_expressions(mask, "R", emissive, "A"), "Rain mask emissive link failed")
+    require(unreal.MaterialEditingLibrary.connect_material_expressions(tint, "", emissive, "B"), "Rain tint link failed")
+    require(unreal.MaterialEditingLibrary.connect_material_expressions(mask, "R", opacity, "A"), "Rain mask opacity link failed")
+    require(unreal.MaterialEditingLibrary.connect_material_expressions(opacity_strength, "", opacity, "B"), "Rain opacity link failed")
+    require(unreal.MaterialEditingLibrary.connect_material_property(emissive, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR), "Rain emissive output failed")
+    require(unreal.MaterialEditingLibrary.connect_material_property(opacity, "", unreal.MaterialProperty.MP_OPACITY), "Rain opacity output failed")
+    unreal.MaterialEditingLibrary.recompile_material(material)
+    require(editor_assets.save_loaded_asset(material, only_if_is_dirty=False), "Could not save Rain Material")
+    log(f"CREATED_RAIN_MATERIAL|{RAIN_MATERIAL_PATH}|source={OIL_RIG_RAIN_MASK_PATH}|opacity=0.22")
+    return material
+
+
+def ensure_rain_visual_blueprint(editor_assets: unreal.EditorAssetSubsystem) -> unreal.Class:
+    parent_class = unreal.load_class(None, RAIN_PARENT_CLASS_PATH)
+    require(parent_class is not None, f"Rain visual native Class unavailable: {RAIN_PARENT_CLASS_PATH}")
+    unreal.EditorAssetLibrary.make_directory(CONTROLLER_BLUEPRINT_FOLDER)
+    blueprint = editor_assets.load_asset(RAIN_BLUEPRINT_PATH)
+    if blueprint is None:
+        factory = unreal.BlueprintFactory()
+        factory.set_editor_property("parent_class", parent_class)
+        blueprint = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+            RAIN_BLUEPRINT_NAME,
+            CONTROLLER_BLUEPRINT_FOLDER,
+            unreal.Blueprint.static_class(),
+            factory,
+            overwrite_existing=False,
+        )
+        log(f"CREATED_RAIN_BLUEPRINT|{RAIN_BLUEPRINT_PATH}")
+    require(isinstance(blueprint, unreal.Blueprint), f"Missing Rain visual Blueprint: {RAIN_BLUEPRINT_PATH}")
+    require(
+        unreal.BlueprintEditorLibrary.get_blueprint_parent_class(blueprint) == parent_class,
+        f"Rain visual Blueprint parent mismatch: {RAIN_BLUEPRINT_PATH}",
+    )
+    unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+    cdo = unreal.get_default_object(blueprint.generated_class())
+    require(cdo is not None, "Rain visual CDO unavailable")
+    cdo.set_editor_property("rain_enabled", True)
+    cdo.set_editor_property("suppress_rain_indoors", True)
+    cdo.set_editor_property("maximum_streak_count", 112)
+    cdo.set_editor_property("follow_radius_centimeters", 1200.0)
+    cdo.set_editor_property("follow_half_height_centimeters", 700.0)
+    cdo.set_editor_property("streak_length_centimeters", 65.0)
+    cdo.set_editor_property("streak_width_centimeters", 2.4)
+    cdo.set_editor_property("fall_speed_centimeters_per_second", 2600.0)
+    cdo.set_editor_property("indoor_trace_distance_centimeters", 10000.0)
+    cdo.set_editor_property("indoor_check_interval_seconds", 0.20)
+    cdo.set_editor_property("indoor_blend_seconds", 0.35)
+    cdo.set_editor_property("clip_streaks_against_ceilings", True)
+    cdo.set_editor_property("ceiling_trace_budget_per_frame", 8)
+    cdo.set_editor_property("ceiling_surface_clearance_centimeters", 10.0)
+    cdo.set_editor_property("use_complex_ceiling_traces", True)
+    rain_plane = editor_assets.load_asset(RAIN_PLANE_MESH_PATH)
+    require(isinstance(rain_plane, unreal.StaticMesh), f"Missing rain Plane Mesh: {RAIN_PLANE_MESH_PATH}")
+    cdo.set_editor_property("streak_mesh", rain_plane)
+    cdo.set_editor_property("streak_material", ensure_rain_streak_material(editor_assets))
+    log(f"RAIN_VISUAL|mesh={RAIN_PLANE_MESH_PATH}|material={RAIN_MATERIAL_PATH}|oilrig_source=reference_only")
+    unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+    require(blueprint.get_editor_property("status") != unreal.BlueprintStatus.BS_ERROR, "Rain visual Blueprint compile failed")
+    require(editor_assets.save_loaded_asset(blueprint, only_if_is_dirty=False), "Could not save Rain visual Blueprint")
     return blueprint.generated_class()
 
 
@@ -220,6 +339,9 @@ def validate_map(level_editor, actors) -> None:
     require(controller.get_editor_property("apply_instantly"), "Weather Controller should apply instantly in the test map")
     require(controller.get_editor_property("enable_random_wind"), "Weather Controller should enable random wind")
     require(controller.get_editor_property("include_calm"), "Random wind should include CALM")
+    require(controller.get_editor_property("enable_rain"), "Weather Controller should allow Profile rain")
+    require(controller.get_editor_property("spawn_rain_visual"), "Weather Controller should spawn one local rain visual")
+    require(controller.get_editor_property("rain_visual_class") is not None, "Weather Controller rain visual class is missing")
     require(
         controller.get_editor_property("minimum_direction_change_interval_seconds")
         <= controller.get_editor_property("maximum_direction_change_interval_seconds"),
@@ -233,6 +355,7 @@ def validate_map(level_editor, actors) -> None:
     visualizer = actor_by_label(actors, VISUALIZER_LABEL)
     require(visualizer is not None and VISUALIZER_TAG in visualizer.get_editor_property("tags"), "Weather Visualizer tag is missing")
     require(visualizer.get_flow_bead_count() >= 12, "Weather Visualizer needs enough moving beads to read wind")
+    require(not visualizer.get_editor_property("enable_rain_debug_preview"), "Legacy blue rain debug lines must stay disabled")
 
     world = unreal.EditorLevelLibrary.get_editor_world()
     require(world is not None, "Editor World is unavailable during validation")
@@ -251,6 +374,7 @@ def main() -> None:
     actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     require(editor_assets is not None and level_editor is not None and actors is not None, "Editor subsystems are unavailable")
     ensure_visualizer_blueprint(editor_assets)
+    ensure_rain_visual_blueprint(editor_assets)
     ensure_random_weather_controller_blueprint(editor_assets)
     map_exists = editor_assets.does_asset_exist(MAP_PATH)
     rebuild = os.environ.get("DRONE_WEATHER_TESTMAP_REBUILD") == "1"

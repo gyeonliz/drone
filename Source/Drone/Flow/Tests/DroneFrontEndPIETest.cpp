@@ -146,7 +146,7 @@ public:
 		Test->TestNotNull(TEXT("Front-end PIE has its GameInstance Flow"), Flow);
 		if (Flow)
 		{
-			Test->TestEqual(TEXT("PIE Catalog contains three functional Drone profiles"), Flow->GetRegisteredDroneCount(), 3);
+			Test->TestEqual(TEXT("PIE Catalog contains five functional Drone profiles"), Flow->GetRegisteredDroneCount(), 5);
 			Test->TestEqual(TEXT("PIE Catalog contains one Mission"), Flow->GetRegisteredMissionCount(), 1);
 		}
 

@@ -30,6 +30,13 @@ public:
 		const FDroneWeatherSnapshot& WeatherSnapshot,
 		EDroneControlMode ControlMode) const;
 
+	/** Ground UGV처럼 바람 위치 Drift를 받지 않는 Pawn이 Definition 적용 시 끈다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Weather|Wind")
+	void SetWindResponseEnabled(bool bEnabled);
+
+	UFUNCTION(BlueprintPure, Category="Drone|Weather|Wind")
+	bool IsWindResponseEnabled() const { return bWindResponseEnabled; }
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|Weather|Wind", meta=(ClampMin="0.0", ClampMax="2.0"))
 	float DroneWindResponseMultiplier = 1.0f;
 
@@ -58,4 +65,6 @@ private:
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|Weather|Wind")
 	FVector CurrentWindDriftVelocity = FVector::ZeroVector;
+
+	bool bWindResponseEnabled = true;
 };

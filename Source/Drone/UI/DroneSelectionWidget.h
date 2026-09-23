@@ -84,6 +84,12 @@ private:
 	void HandleDroneButton2Clicked();
 
 	UFUNCTION()
+	void HandleDroneButton3Clicked();
+
+	UFUNCTION()
+	void HandleDroneButton4Clicked();
+
+	UFUNCTION()
 	void HandleControlModeClicked();
 
 	UFUNCTION()

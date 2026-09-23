@@ -41,7 +41,7 @@ bool FDroneFrontEndContractTest::RunTest(const FString& Parameters)
 	UGameInstance* GameInstance = NewObject<UGameInstance>();
 	UDroneGameFlowSubsystem* Flow = NewObject<UDroneGameFlowSubsystem>(GameInstance);
 	TestTrue(TEXT("Default Catalog loads for the Front-end"), Flow && Flow->EnsureDefaultCatalog());
-	TestEqual(TEXT("Default Catalog has three functional Drone profiles"), Flow ? Flow->GetRegisteredDroneCount() : 0, 3);
+	TestEqual(TEXT("Default Catalog has five functional Drone profiles"), Flow ? Flow->GetRegisteredDroneCount() : 0, 5);
 	TestEqual(TEXT("Default Catalog has one Mission"), Flow ? Flow->GetRegisteredMissionCount() : 0, 1);
 	TestTrue(TEXT("Opening Trailer begins once"), Flow && Flow->BeginOpeningTrailer());
 	TestFalse(TEXT("Opening Trailer cannot be started twice"), Flow && Flow->BeginOpeningTrailer());

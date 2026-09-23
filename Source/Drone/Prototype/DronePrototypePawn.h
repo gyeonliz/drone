@@ -20,8 +20,11 @@ class UEnhancedInputLocalPlayerSubsystem;
 class UFloatingPawnMovement;
 class UInputAction;
 class UInputMappingContext;
+class UMaterialInterface;
 class USphereComponent;
 class USceneComponent;
+class USplineComponent;
+class USplineMeshComponent;
 class USpringArmComponent;
 class UStaticMeshComponent;
 class UAIPerceptionStimuliSourceComponent;
@@ -64,6 +67,8 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Drop|Pickup")
 	USceneComponent* GetPayloadCarryAnchor() const { return PayloadCarryAnchor; }
 	UStaticMeshComponent* GetVisualMeshComponent() const { return VisualMeshComponent; }
+	UStaticMeshComponent* GetFiberSpoolMeshComponent() const { return FiberSpoolMeshComponent; }
+	USplineComponent* GetFiberOpticSplineComponent() const { return FiberOpticSplineComponent; }
 	USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 	UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 	UFloatingPawnMovement* GetPrototypeMovementComponent() const { return PrototypeMovementComponent; }
@@ -93,6 +98,18 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|Flight|Profile")
 	bool UsesBlueprintFlightProfileOverride() const { return bOverrideDefinitionFlightProfileInBlueprint; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|GroundDrive")
+	bool IsGroundDriveModeActive() const { return bGroundDriveModeActive; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|GroundDrive")
+	float GetGroundThrottleInput() const { return GroundThrottleInput; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|GroundDrive")
+	float GetGroundSteeringInput() const { return GroundSteeringInput; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|FiberOptic")
+	bool IsFiberTetherActive() const { return bFiberTetherActive; }
 
 	/**
 	 * 현재 Definition의 역할에 맞는 공통 1차 기능을 실행한다.
@@ -251,6 +268,14 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UStaticMeshComponent> VisualMeshComponent;
 
+	/** 광섬유 통을 나중에 지정하는 빈 Static Mesh 슬롯. Fiber BP에서 Mesh와 Transform을 교체한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components|FiberOptic", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UStaticMeshComponent> FiberSpoolMeshComponent;
+
+	/** 통 출구부터 지나온 지면까지 광섬유 경로를 유지하는 Runtime Spline이다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components|FiberOptic", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<USplineComponent> FiberOpticSplineComponent;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
 
@@ -347,6 +372,70 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Movement", meta=(ClampMin="0.0", AllowPrivateAccess="true"))
 	float PrototypeYawRateDegreesPerSecond = 90.0f;
+
+	/** GroundDrive Capability가 있는 Definition에서 A/D가 좌우 이동 대신 차체 조향이 된다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive", meta=(ClampMin="0.0", ForceUnits="deg/s", AllowPrivateAccess="true"))
+	float GroundSteeringRateDegreesPerSecond = 95.0f;
+
+	/** 차체 중심에서 앞/뒤 지면 샘플까지 거리다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Suspension", meta=(ClampMin="10.0", ForceUnits="cm", AllowPrivateAccess="true"))
+	float GroundSampleHalfLengthCentimeters = 105.0f;
+
+	/** 차체 중심에서 좌/우 지면 샘플까지 거리다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Suspension", meta=(ClampMin="10.0", ForceUnits="cm", AllowPrivateAccess="true"))
+	float GroundSampleHalfWidthCentimeters = 75.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Suspension", meta=(ClampMin="1.0", ForceUnits="cm", AllowPrivateAccess="true"))
+	float GroundClearanceCentimeters = 58.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Suspension", meta=(ClampMin="10.0", ForceUnits="cm", AllowPrivateAccess="true"))
+	float GroundTraceStartHeightCentimeters = 120.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Suspension", meta=(ClampMin="50.0", ForceUnits="cm", AllowPrivateAccess="true"))
+	float GroundTraceDistanceCentimeters = 360.0f;
+
+	/** 높은 PlayerStart에서도 최초 한 번은 아래 지면을 찾아 UGV를 공중에 남기지 않는다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Suspension", meta=(ClampMin="100.0", ForceUnits="cm", AllowPrivateAccess="true"))
+	float GroundInitialAcquireDistanceCentimeters = 10000.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Suspension", meta=(ClampMin="0.1", AllowPrivateAccess="true"))
+	float GroundHeightInterpolationSpeed = 14.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Suspension", meta=(ClampMin="0.1", AllowPrivateAccess="true"))
+	float GroundRotationInterpolationSpeed = 9.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Suspension", meta=(AllowPrivateAccess="true"))
+	TEnumAsByte<ECollisionChannel> GroundTraceChannel = ECC_Visibility;
+
+	/** Spline Mesh로 휘어 표시할 단면 Mesh. 기본은 Engine Cylinder이며 광섬유 통 Mesh와 별개다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Visual", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UStaticMesh> FiberCableSegmentMesh;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Visual", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UMaterialInterface> FiberCableMaterial;
+
+	/** FiberSpoolMeshComponent 원점 기준 실제 선이 빠져나오는 위치다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Layout", meta=(AllowPrivateAccess="true"))
+	FVector FiberSpoolExitOffset = FVector(-14.0f, 0.0f, -3.0f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Layout", meta=(ClampMin="20.0", ForceUnits="cm", AllowPrivateAccess="true"))
+	float FiberPointSpacingCentimeters = 160.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Layout", meta=(ClampMin="0.0", ForceUnits="cm", AllowPrivateAccess="true"))
+	float FiberSagDepthCentimeters = 45.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Layout", meta=(ClampMin="100.0", ForceUnits="cm", AllowPrivateAccess="true"))
+	float FiberGroundTraceDistanceCentimeters = 10000.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Layout", meta=(ClampMin="0.0", ForceUnits="cm", AllowPrivateAccess="true"))
+	float FiberGroundClearanceCentimeters = 2.0f;
+
+	/** Engine Cylinder 반지름(50cm)에 곱하는 횡 Scale이다. 0.012면 약 1.2cm 지름이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Visual", meta=(ClampMin="0.001", ClampMax="0.1", AllowPrivateAccess="true"))
+	float FiberCableThicknessScale = 0.012f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Performance", meta=(ClampMin="2", ClampMax="256", AllowPrivateAccess="true"))
+	int32 FiberMaximumLaidPoints = 96;
 
 	/**
 	 * false면 선택 화면의 DA_Drone_* FlightProfile을 사용한다.
@@ -517,6 +606,14 @@ private:
 	void ApplyCameraViewMode();
 	void RefreshVisualTiltAttachments();
 	void ApplyRuntimeFlightTuning();
+	void UpdateGroundDrive(float DeltaSeconds);
+	bool TryFindGroundSurface(const FVector& WorldLocation, float TraceDistanceCentimeters, FHitResult& OutHit) const;
+	void SetFiberTetherActive(bool bActive);
+	void InitializeFiberTether();
+	void UpdateFiberTether();
+	bool FindFiberGroundPoint(const FVector& WorldLocation, FVector& OutGroundPoint) const;
+	void RebuildFiberSpline(const FVector& SpoolExitWorldLocation);
+	void UpdateFiberCableSegments();
 	const FDroneControlModeTuning& ResolveCurrentControlModeTuning() const;
 	void UpdateControlAttitude(float DeltaSeconds);
 	void UpdateAcroFlightPhysics(float DeltaSeconds);
@@ -548,6 +645,13 @@ private:
 	float VisualTiltForwardInput = 0.0f;
 	float AcroYawInput = 0.0f;
 	float AcroThrottleInput = 0.0f;
+	float GroundThrottleInput = 0.0f;
+	float GroundSteeringInput = 0.0f;
+	float GroundYawInput = 0.0f;
+	TArray<FVector> FiberLaidPointsWorld;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<USplineMeshComponent>> FiberCableSegments;
 	FRotator CurrentAcroBodyRateDegreesPerSecond = FRotator::ZeroRotator;
 	TArray<TWeakObjectPtr<UStaticMeshComponent>> RotorVisualComponents;
 	bool bFirstPersonViewEnabled = false;
@@ -589,4 +693,13 @@ private:
 	/** NAME_None이면 아직 FLOW-05 Definition이 적용되지 않은 기본 Prototype 상태다. */
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|Flight|Profile")
 	FName AppliedDroneId = NAME_None;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|GroundDrive")
+	bool bGroundDriveModeActive = false;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|GroundDrive")
+	bool bGroundSurfaceAcquired = false;
+
+	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|FiberOptic")
+	bool bFiberTetherActive = false;
 };

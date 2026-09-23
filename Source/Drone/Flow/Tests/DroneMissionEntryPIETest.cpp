@@ -230,7 +230,7 @@ public:
 			TEXT("Selected Mission survives OpenLevel"),
 			Flow->GetSnapshot().SelectedMissionId,
 			FName(TEXT("Mission.Tutorial.Training")));
-		Test->TestEqual(TEXT("Three role Drones remain available"), Flow->GetSnapshot().AvailableDroneIds.Num(), 3);
+		Test->TestEqual(TEXT("Five role Drones remain available"), Flow->GetSnapshot().AvailableDroneIds.Num(), 5);
 		Test->TestTrue(TEXT("Native Selection fallback is usable without a finished WBP"), SelectionWidget->IsUsingNativeFallbackLayout());
 
 		int32 BeforeSpawnCount = 0;

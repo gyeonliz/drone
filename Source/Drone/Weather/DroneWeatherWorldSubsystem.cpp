@@ -31,6 +31,7 @@ void UDroneWeatherWorldSubsystem::Deinitialize()
 	}
 	ActiveProfile = nullptr;
 	bHasRuntimeWindOverride = false;
+	bHasRuntimeRainOverride = false;
 	Super::Deinitialize();
 }
 
@@ -46,6 +47,20 @@ void UDroneWeatherWorldSubsystem::SetRuntimeWindOverride(
 void UDroneWeatherWorldSubsystem::ClearRuntimeWindOverride()
 {
 	bHasRuntimeWindOverride = false;
+}
+
+void UDroneWeatherWorldSubsystem::SetRuntimeRainEnabled(const bool bEnabled)
+{
+	bHasRuntimeRainOverride = true;
+	bRuntimeRainEnabled = bEnabled;
+	ForceWeatherUpdate(0.0f);
+}
+
+void UDroneWeatherWorldSubsystem::ClearRuntimeRainOverride()
+{
+	bHasRuntimeRainOverride = false;
+	bRuntimeRainEnabled = true;
+	ForceWeatherUpdate(0.0f);
 }
 
 bool UDroneWeatherWorldSubsystem::ApplyWeatherProfile(
@@ -229,6 +244,15 @@ FDroneWeatherSnapshot UDroneWeatherWorldSubsystem::BuildTargetSnapshot(const flo
 	Target.GroundSplashScale01 = ActiveProfile->Rain.GroundSplashScale01;
 	Target.IndoorRainAttenuation01 = ActiveProfile->Rain.IndoorRainAttenuation01;
 	Target.RainAudioVolume01 = ActiveProfile->Rain.AudioVolume01;
+	if (bHasRuntimeRainOverride && !bRuntimeRainEnabled)
+	{
+		Target.RainIntensity01 = 0.0f;
+		Target.RainSpawnScale01 = 0.0f;
+		Target.ScreenDropletIntensity01 = 0.0f;
+		Target.SurfaceWetness01 = 0.0f;
+		Target.GroundSplashScale01 = 0.0f;
+		Target.RainAudioVolume01 = 0.0f;
+	}
 	return Target;
 }
 

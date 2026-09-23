@@ -28,6 +28,20 @@ void UDroneWeatherResponseComponent::BeginPlay()
 	SetComponentTickEnabled(!CachedWeatherSnapshot.WindVelocityCentimetersPerSecond.IsNearlyZero());
 }
 
+void UDroneWeatherResponseComponent::SetWindResponseEnabled(const bool bEnabled)
+{
+	bWindResponseEnabled = bEnabled;
+	if (!bWindResponseEnabled)
+	{
+		CurrentWindDriftVelocity = FVector::ZeroVector;
+		SetComponentTickEnabled(false);
+	}
+	else
+	{
+		SetComponentTickEnabled(!CachedWeatherSnapshot.WindVelocityCentimetersPerSecond.IsNearlyZero());
+	}
+}
+
 void UDroneWeatherResponseComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (UDroneWeatherWorldSubsystem* Subsystem = WeatherSubsystem.Get())
@@ -44,7 +58,8 @@ void UDroneWeatherResponseComponent::EndPlay(const EEndPlayReason::Type EndPlayR
 void UDroneWeatherResponseComponent::HandleWeatherSnapshotChanged(const FDroneWeatherSnapshot NewSnapshot)
 {
 	CachedWeatherSnapshot = NewSnapshot;
-	if (!NewSnapshot.WindVelocityCentimetersPerSecond.IsNearlyZero() || !CurrentWindDriftVelocity.IsNearlyZero())
+	if (bWindResponseEnabled
+		&& (!NewSnapshot.WindVelocityCentimetersPerSecond.IsNearlyZero() || !CurrentWindDriftVelocity.IsNearlyZero()))
 	{
 		SetComponentTickEnabled(true);
 	}
@@ -83,7 +98,7 @@ void UDroneWeatherResponseComponent::TickComponent(
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	ADronePrototypePawn* Drone = OwnerDrone.Get();
-	if (!Drone || DeltaTime <= 0.0f)
+	if (!bWindResponseEnabled || !Drone || DeltaTime <= 0.0f)
 	{
 		return;
 	}

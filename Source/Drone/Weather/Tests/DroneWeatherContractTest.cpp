@@ -4,8 +4,11 @@
 
 #include "Editor.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/Blueprint.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Materials/MaterialInterface.h"
 #include "Prototype/DronePrototypeGameMode.h"
 #include "Prototype/DronePrototypePawn.h"
 #include "Tests/AutomationEditorCommon.h"
@@ -14,6 +17,7 @@
 #include "Weather/DroneWeatherBlueprintLibrary.h"
 #include "Weather/DroneWeatherDebugVisualizer.h"
 #include "Weather/DroneWeatherProfile.h"
+#include "Weather/DroneRainVisualActor.h"
 #include "Weather/DroneWeatherResponseComponent.h"
 #include "Weather/DroneWeatherWorldSubsystem.h"
 
@@ -38,7 +42,10 @@ bool FDroneWeatherContractTest::RunTest(const FString& Parameters)
 	Profile->Rain.Intensity01 = 0.5f;
 	Profile->Rain.SpawnScale01 = 0.4f;
 	Profile->Rain.VisibilityDistanceMeters = 300.0f;
+	Profile->Rain.ScreenDropletIntensity01 = 0.3f;
 	Profile->Rain.SurfaceWetness01 = 0.6f;
+	Profile->Rain.GroundSplashScale01 = 0.7f;
+	Profile->Rain.AudioVolume01 = 0.8f;
 
 	FString ValidationError;
 	TestTrue(TEXT("Finite weather profile validates"), Profile->ValidateProfile(ValidationError));
@@ -123,6 +130,40 @@ bool FDroneWeatherContractTest::RunTest(const FString& Parameters)
 			Weather->GetSnapshot().WindVelocityCentimetersPerSecond.Y).IsNearlyZero(0.2f));
 	Weather->ClearRuntimeWindOverride();
 	Weather->ForceWeatherUpdate(0.1f);
+	Weather->SetRuntimeRainEnabled(false);
+	const FDroneWeatherSnapshot RainDisabled = Weather->GetSnapshot();
+	TestTrue(TEXT("Runtime rain off preserves active wind"),
+		!RainDisabled.WindVelocityCentimetersPerSecond.IsNearlyZero());
+	TestTrue(TEXT("Runtime rain off zeros every rain presentation channel"),
+		FMath::IsNearlyZero(RainDisabled.RainIntensity01)
+			&& FMath::IsNearlyZero(RainDisabled.RainSpawnScale01)
+			&& FMath::IsNearlyZero(RainDisabled.ScreenDropletIntensity01)
+			&& FMath::IsNearlyZero(RainDisabled.SurfaceWetness01)
+			&& FMath::IsNearlyZero(RainDisabled.GroundSplashScale01)
+			&& FMath::IsNearlyZero(RainDisabled.RainAudioVolume01));
+	Weather->SetRuntimeRainEnabled(true);
+	TestTrue(TEXT("Runtime rain on restores the active Profile rain"),
+		FMath::IsNearlyEqual(Weather->GetSnapshot().RainIntensity01, 0.5f));
+	Weather->ClearRuntimeRainOverride();
+	TestTrue(TEXT("Open sky keeps full local rain exposure"),
+		FMath::IsNearlyEqual(ADroneRainVisualActor::CalculateIndoorExposure01(false, 1.0f), 1.0f));
+	TestTrue(TEXT("Full indoor attenuation removes local rain under a roof"),
+		FMath::IsNearlyZero(ADroneRainVisualActor::CalculateIndoorExposure01(true, 1.0f)));
+	TestTrue(TEXT("Partial indoor attenuation preserves the requested fraction"),
+		FMath::IsNearlyEqual(ADroneRainVisualActor::CalculateIndoorExposure01(true, 0.75f), 0.25f));
+	const ADroneWeatherDebugVisualizer* DebugVisualizerDefaults = GetDefault<ADroneWeatherDebugVisualizer>();
+	TestFalse(TEXT("Legacy blue rain debug line rendering is disabled by default"),
+		DebugVisualizerDefaults->bEnableRainDebugPreview);
+	TestEqual(TEXT("Legacy blue rain debug lines are disabled by default"),
+		DebugVisualizerDefaults->RainPreviewMaxStreakCount, 0);
+	TestTrue(TEXT("A streak remains visible when no blocking surface was found"),
+		ADroneRainVisualActor::ShouldRenderStreakAboveSurface(100.0f, 50.0f, false, 0.0f, 10.0f));
+	TestTrue(TEXT("A streak fully above a blocking surface remains visible"),
+		ADroneRainVisualActor::ShouldRenderStreakAboveSurface(300.0f, 50.0f, true, 200.0f, 10.0f));
+	TestFalse(TEXT("A streak touching a blocking surface is clipped before penetrating it"),
+		ADroneRainVisualActor::ShouldRenderStreakAboveSurface(255.0f, 50.0f, true, 200.0f, 10.0f));
+	TestFalse(TEXT("A streak below a blocking surface stays hidden"),
+		ADroneRainVisualActor::ShouldRenderStreakAboveSurface(150.0f, 50.0f, true, 200.0f, 10.0f));
 
 	FActorSpawnParameters Params;
 	Params.ObjectFlags |= RF_Transient;
@@ -281,6 +322,30 @@ bool FDroneWeatherSystemsTestMapTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Weather Visualizer enables the 1/2/3/4 mode comparison keys"), WeatherVisualizer && WeatherVisualizer->bEnableControlModeHotkeys);
 	TestTrue(TEXT("Weather Visualizer smooths displayed wind instead of snapping"),
 		WeatherVisualizer && WeatherVisualizer->FlowVelocityResponseSeconds > 0.0f);
+	TestTrue(TEXT("Legacy blue line rain preview remains disabled in the test map"),
+		WeatherVisualizer && !WeatherVisualizer->bEnableRainDebugPreview
+			&& WeatherVisualizer->RainPreviewMaxStreakCount == 0);
+
+	UBlueprint* RainBlueprint = LoadObject<UBlueprint>(
+		nullptr,
+		TEXT("/Game/Drone/Weather/Blueprints/BP_DroneRainVisual.BP_DroneRainVisual"));
+	const ADroneRainVisualActor* RainDefaults = RainBlueprint && RainBlueprint->GeneratedClass
+		? Cast<ADroneRainVisualActor>(RainBlueprint->GeneratedClass->GetDefaultObject())
+		: nullptr;
+	TestNotNull(TEXT("Project-owned Rain Visual Blueprint loads"), RainDefaults);
+	if (RainDefaults)
+	{
+		TestTrue(TEXT("Rain uses a short masked Plane instead of stretched Cube lines"),
+			RainDefaults->StreakMesh
+				&& RainDefaults->StreakMesh->GetPathName().Contains(TEXT("/Engine/BasicShapes/Plane"))
+				&& RainDefaults->StreakLengthCentimeters <= 100.0f);
+		TestTrue(TEXT("Rain uses the project-owned OilRig-mask Material"),
+			RainDefaults->StreakMaterial
+				&& RainDefaults->StreakMaterial->GetPathName().StartsWith(
+					TEXT("/Game/Drone/Weather/Materials/M_DroneRainStreak_OilRigMask")));
+		TestTrue(TEXT("Rain clips streaks against marketplace roofs"),
+			RainDefaults->bClipStreaksAgainstCeilings && RainDefaults->bUseComplexCeilingTraces);
+	}
 	if (WeatherController)
 	{
 		UDroneWeatherProfile* Profile = WeatherController->WeatherProfile.LoadSynchronous();

@@ -52,7 +52,9 @@ bool FDronePrototypeVisualBankTest::RunTest(const FString& Parameters)
 	TInlineComponentArray<UStaticMeshComponent*> MeshComponents(Pawn);
 	for (UStaticMeshComponent* MeshComponent : MeshComponents)
 	{
-		if (!MeshComponent || MeshComponent->GetClass()->GetName().Contains(TEXT("CameraProxyMeshComponent")))
+		if (!MeshComponent
+			|| !MeshComponent->GetStaticMesh()
+			|| MeshComponent->GetClass()->GetName().Contains(TEXT("CameraProxyMeshComponent")))
 		{
 			continue;
 		}

@@ -5,6 +5,7 @@
 #include "DroneWeatherController.generated.h"
 
 class UDroneWeatherProfile;
+class ADroneRainVisualActor;
 class USceneComponent;
 class UStaticMeshComponent;
 
@@ -21,11 +22,29 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Weather")
 	bool ApplyConfiguredWeather();
 
+	/** Profile의 강우 값을 유지한 채 이 Manager가 비를 즉시 켜거나 끈다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Weather|Rain")
+	void SetRainEnabled(bool bEnabled);
+
+	UFUNCTION(BlueprintPure, Category="Drone|Weather|Rain")
+	bool IsRainEnabled() const { return bEnableRain; }
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather")
 	TSoftObjectPtr<UDroneWeatherProfile> WeatherProfile;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather")
 	bool bApplyInstantly = false;
+
+	/** false면 Wind는 유지하고 Rain 관련 Snapshot 값만 0으로 만든다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather|Rain")
+	bool bEnableRain = true;
+
+	/** 카메라 주변 강우 표현 Actor를 자동으로 한 개 생성한다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather|Rain")
+	bool bSpawnRainVisual = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather|Rain")
+	TSubclassOf<ADroneRainVisualActor> RainVisualClass;
 
 	/** Actor 기준 Transform을 제공하는 Root다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|Weather|Editor")
@@ -101,4 +120,7 @@ private:
 	float TargetWindSpeedMetersPerSecond = 0.0f;
 	bool bCurrentDirectionIsCalm = false;
 	bool bTargetDirectionIsCalm = false;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ADroneRainVisualActor> SpawnedRainVisual;
 };

@@ -43,6 +43,16 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Weather|Wind")
 	bool HasRuntimeWindOverride() const { return bHasRuntimeWindOverride; }
 
+	/** Weather Manager가 Profile은 유지한 채 비 표현만 즉시 켜고 끈다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Weather|Rain")
+	void SetRuntimeRainEnabled(bool bEnabled);
+
+	UFUNCTION(BlueprintCallable, Category="Drone|Weather|Rain")
+	void ClearRuntimeRainOverride();
+
+	UFUNCTION(BlueprintPure, Category="Drone|Weather|Rain")
+	bool HasRuntimeRainOverride() const { return bHasRuntimeRainOverride; }
+
 	UPROPERTY(BlueprintAssignable, Category="Drone|Weather")
 	FDroneWeatherSnapshotChangedSignature OnWeatherSnapshotChanged;
 
@@ -75,4 +85,6 @@ private:
 	bool bHasRuntimeWindOverride = false;
 	float RuntimeWindDirectionYawDegrees = 0.0f;
 	float RuntimeWindSpeedMetersPerSecond = 0.0f;
+	bool bHasRuntimeRainOverride = false;
+	bool bRuntimeRainEnabled = true;
 };

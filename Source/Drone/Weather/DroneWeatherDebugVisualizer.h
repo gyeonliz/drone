@@ -95,9 +95,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather|Debug|Input")
 	bool bEnableWeatherPresetHotkeys = true;
 
-	/** 전용 Weather TestMap에서만 켜지는 저비용 화면 확인용 선분 프리뷰다. 실제 Niagara 비 효과가 아니다. */
+	/** 구형 파란 선분 프리뷰. 새 Rain Visual과 겹치지 않도록 기본 0이며 진단할 때만 올린다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather|Debug|Rain")
+	bool bEnableRainDebugPreview = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather|Debug|Rain", meta=(ClampMin="0", ClampMax="80"))
-	int32 RainPreviewMaxStreakCount = 80;
+	int32 RainPreviewMaxStreakCount = 0;
 
 protected:
 	virtual void BeginPlay() override;
