@@ -205,6 +205,35 @@ bool ADroneMissionDirector::ReportMissionFailure()
 	return FinishMission(EDroneMissionOutcome::Failure);
 }
 
+bool ADroneMissionDirector::RegisterObjectiveTarget(AActor* TargetActor)
+{
+	if (!IsMissionActive() || !IsValid(TargetActor) || TargetActor == ActiveDrone.Get())
+	{
+		return false;
+	}
+	UDroneHealthComponent* Health = TargetActor->FindComponentByClass<UDroneHealthComponent>();
+	if (!Health || ObjectiveTargetHealthBindings.Contains(Health))
+	{
+		return false;
+	}
+	Health->OnDeath.AddUniqueDynamic(this, &ADroneMissionDirector::HandleObjectiveTargetDeath);
+	ObjectiveTargetHealthBindings.Add(Health);
+	return true;
+}
+
+void ADroneMissionDirector::UnregisterObjectiveTarget(AActor* TargetActor)
+{
+	UDroneHealthComponent* Health = IsValid(TargetActor)
+		? TargetActor->FindComponentByClass<UDroneHealthComponent>()
+		: nullptr;
+	if (!Health)
+	{
+		return;
+	}
+	Health->OnDeath.RemoveDynamic(this, &ADroneMissionDirector::HandleObjectiveTargetDeath);
+	ObjectiveTargetHealthBindings.Remove(Health);
+}
+
 void ADroneMissionDirector::HandleDroneDeath(
 	AActor* /*DeadActor*/,
 	AController* /*InstigatorController*/,
@@ -368,14 +397,7 @@ void ADroneMissionDirector::BindObjectiveEvents()
 			for (TActorIterator<AActor> It(GetWorld()); It; ++It)
 			{
 				AActor* Actor = *It;
-				UDroneHealthComponent* Health = Actor && Actor != ActiveDrone.Get()
-					? Actor->FindComponentByClass<UDroneHealthComponent>()
-					: nullptr;
-				if (Health)
-				{
-					Health->OnDeath.AddUniqueDynamic(this, &ADroneMissionDirector::HandleObjectiveTargetDeath);
-					ObjectiveTargetHealthBindings.Add(Health);
-				}
+				RegisterObjectiveTarget(Actor);
 			}
 		}
 	}

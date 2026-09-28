@@ -41,6 +41,9 @@ public:
 	ADroneMissionDirector* GetMissionDirector() const { return MissionDirector; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|Mission Runtime")
+	TSubclassOf<ADroneMissionDirector> GetMissionDirectorClass() const { return MissionDirectorClass; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Mission Runtime")
 	UDroneMissionObjectiveWidget* GetMissionObjectiveWidget() const { return MissionObjectiveWidget; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|Mission Runtime")

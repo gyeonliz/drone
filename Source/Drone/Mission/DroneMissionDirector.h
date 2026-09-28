@@ -68,6 +68,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Mission")
 	bool ReportMissionFailure();
 
+	/** Mission 시작 뒤 Spawn된 차량·포탑·시설의 Health 사망 Event를 파괴 목표에 연결한다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Mission|Targets")
+	bool RegisterObjectiveTarget(AActor* TargetActor);
+
+	UFUNCTION(BlueprintCallable, Category="Drone|Mission|Targets")
+	void UnregisterObjectiveTarget(AActor* TargetActor);
+
 	UFUNCTION(BlueprintPure, Category="Drone|Mission|Debug")
 	int32 GetFinishEventCount() const { return FinishEventCount; }
 

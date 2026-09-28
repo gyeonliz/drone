@@ -14,7 +14,10 @@ enum class EDroneMissionObjectiveEvent : uint8
 	TargetDestroyed UMETA(DisplayName="Target Destroyed"),
 	JammingExited UMETA(DisplayName="Jamming Zone Exited"),
 	JammerDisabled UMETA(DisplayName="Jammer Disabled"),
-	ReturnToBase UMETA(DisplayName="Return To Base")
+	ReturnToBase UMETA(DisplayName="Return To Base"),
+	/** 기존 저장 Asset의 열거형 숫자를 유지하기 위해 새 Tutorial Event는 항상 뒤에 추가한다. */
+	HoverMaintained UMETA(DisplayName="Hover Maintained"),
+	HeadingAligned UMETA(DisplayName="Heading Aligned")
 };
 
 /** 이전 Mission이 남긴 Story Fact에 따라 같은 Definition 안의 목표를 선택적으로 활성화한다. */

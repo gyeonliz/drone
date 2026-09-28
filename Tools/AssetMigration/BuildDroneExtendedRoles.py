@@ -19,9 +19,17 @@ FIBER_DEFINITION = f"{DRONE_DATA_FOLDER}/DA_Drone_FiberOptic_Greybox"
 GROUND_DEFINITION = f"{DRONE_DATA_FOLDER}/DA_Drone_GroundUGV_Greybox"
 MISSION_PATH = "/Game/Drone/Data/Missions/DA_Mission_Tutorial_Training"
 
-FIBER_MESH = "/Game/Drone/ThirdParty/RawDrones/StingInterceptor/SM_StingInterceptor"
+FIBER_PREVIEW_MESH = "/Game/Drone/ThirdParty/DronePackFPV/SM_DroneFPVBody"
 GROUND_MESH = "/Game/Drone/ThirdParty/GroundDroneKit/Meshes/GC_Drone_1/GC_Drone_1_SK"
 FIBER_CABLE_MATERIAL = "/Game/Drone/ThirdParty/OilRig/Assets/Cable/Material_Instance/MI_cable"
+
+FIBER_FPV_PARTS = [
+    ("VisualMeshComponent", "/Game/Drone/ThirdParty/DronePackFPV/SM_DroneFPVBody", False),
+    ("FPVRotorA", "/Game/Drone/ThirdParty/DronePackFPV/SM_RotorA", True),
+    ("FPVRotorB", "/Game/Drone/ThirdParty/DronePackFPV/SM_RotorB", True),
+    ("FPVRotorC", "/Game/Drone/ThirdParty/DronePackFPV/SM_RotorC", True),
+    ("FPVRotorD", "/Game/Drone/ThirdParty/DronePackFPV/SM_RotorD", True),
+]
 
 
 def log(message: str) -> None:
@@ -85,18 +93,66 @@ def configure_common_component(component, tags) -> None:
     component.set_hidden_in_game(False, True)
 
 
+def ensure_static_component(blueprint: unreal.Blueprint, variable_name: str):
+    subsystem, entries = gather_subobjects(blueprint)
+    existing = entries.get(variable_name)
+    if existing:
+        return existing[1]
+    parent = entries.get("VisualTiltPivot")
+    require(parent is not None, f"{blueprint.get_name()}: VisualTiltPivot is missing")
+    params = unreal.AddNewSubobjectParams(
+        parent_handle=parent[0],
+        new_class=unreal.StaticMeshComponent,
+        blueprint_context=blueprint,
+        conform_transform_to_parent=True,
+    )
+    result = subsystem.add_new_subobject(params)
+    handle = result[0] if isinstance(result, tuple) else result
+    reason = result[1] if isinstance(result, tuple) and len(result) > 1 else ""
+    require(unreal.SubobjectDataBlueprintFunctionLibrary.is_handle_valid(handle), f"Could not add {variable_name}: {reason}")
+    require(subsystem.rename_subobject(handle, variable_name), f"Could not rename {variable_name}")
+    data = unreal.SubobjectDataBlueprintFunctionLibrary.get_data(handle)
+    return unreal.SubobjectDataBlueprintFunctionLibrary.get_object_for_blueprint(data, blueprint)
+
+
+def ensure_poseable_component(blueprint: unreal.Blueprint, variable_name: str):
+    subsystem, entries = gather_subobjects(blueprint)
+    existing = entries.get(variable_name)
+    if existing:
+        return existing[1]
+    parent = entries.get("VisualTiltPivot")
+    require(parent is not None, f"{blueprint.get_name()}: VisualTiltPivot is missing")
+    params = unreal.AddNewSubobjectParams(
+        parent_handle=parent[0],
+        new_class=unreal.PoseableMeshComponent,
+        blueprint_context=blueprint,
+        conform_transform_to_parent=True,
+    )
+    result = subsystem.add_new_subobject(params)
+    handle = result[0] if isinstance(result, tuple) else result
+    reason = result[1] if isinstance(result, tuple) and len(result) > 1 else ""
+    require(unreal.SubobjectDataBlueprintFunctionLibrary.is_handle_valid(handle), f"Could not add {variable_name}: {reason}")
+    require(subsystem.rename_subobject(handle, variable_name), f"Could not rename {variable_name}")
+    data = unreal.SubobjectDataBlueprintFunctionLibrary.get_data(handle)
+    return unreal.SubobjectDataBlueprintFunctionLibrary.get_object_for_blueprint(data, blueprint)
+
+
 def configure_fiber_blueprint() -> unreal.Blueprint:
     blueprint = load_or_duplicate_blueprint(FIBER_BP)
     clear_inherited_static_visuals(blueprint)
     _, entries = gather_subobjects(blueprint)
-    visual = entries.get("VisualMeshComponent")
-    require(visual and isinstance(visual[1], unreal.StaticMeshComponent), "Fiber VisualMeshComponent is missing")
-    component = visual[1]
-    component.set_editor_property("static_mesh", load_asset(FIBER_MESH))
-    component.set_editor_property("relative_location", unreal.Vector(0.0, 0.0, 0.0))
-    component.set_editor_property("relative_rotation", unreal.Rotator(0.0, 0.0, 0.0))
-    component.set_editor_property("relative_scale3d", unreal.Vector(0.45, 0.45, 0.45))
-    configure_common_component(component, ["DroneRoleVisual"])
+    for variable_name, mesh_path, is_rotor in FIBER_FPV_PARTS:
+        component = ensure_static_component(blueprint, variable_name)
+        require(isinstance(component, unreal.StaticMeshComponent), f"{variable_name} is not a StaticMeshComponent")
+        component.set_editor_property("static_mesh", load_asset(mesh_path))
+        component.set_editor_property("relative_location", unreal.Vector(0.0, 0.0, 0.0))
+        component.set_editor_property("relative_rotation", unreal.Rotator(0.0, 90.0, 0.0))
+        component.set_editor_property("relative_scale3d", unreal.Vector(1.0, 1.0, 1.0))
+        tags = ["DroneRoleVisual"]
+        if is_rotor:
+            tags.append("DroneRotor")
+        configure_common_component(component, tags)
+    _, entries = gather_subobjects(blueprint)
     spool = entries.get("FiberSpoolMeshComponent")
     require(spool and isinstance(spool[1], unreal.StaticMeshComponent), "Fiber spool Static Mesh slot is missing")
     spool_component = spool[1]
@@ -108,11 +164,13 @@ def configure_fiber_blueprint() -> unreal.Blueprint:
     configure_common_component(spool_component, ["FiberSpoolVisual"])
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
     cdo = unreal.get_default_object(blueprint.generated_class())
-    cdo.set_editor_property("rotor_visual_spin_enabled", False)
+    cdo.set_editor_property("rotor_visual_spin_enabled", True)
     cdo.set_editor_property("first_person_camera_boom_offset", unreal.Vector(58.0, 0.0, 10.0))
     cdo.set_editor_property("fiber_spool_exit_offset", unreal.Vector(-14.0, 0.0, -3.0))
     cdo.set_editor_property("fiber_point_spacing_centimeters", 160.0)
     cdo.set_editor_property("fiber_sag_depth_centimeters", 45.0)
+    cdo.set_editor_property("fiber_hanging_curve_subdivision_count", 4)
+    cdo.set_editor_property("fiber_spline_tangent_scale", 0.75)
     cdo.set_editor_property("fiber_ground_trace_distance_centimeters", 10000.0)
     cdo.set_editor_property("fiber_ground_clearance_centimeters", 2.0)
     cdo.set_editor_property("fiber_cable_thickness_scale", 0.012)
@@ -150,9 +208,15 @@ def ensure_skeletal_component(blueprint: unreal.Blueprint, variable_name: str):
 def configure_ground_blueprint() -> unreal.Blueprint:
     blueprint = load_or_duplicate_blueprint(GROUND_BP)
     clear_inherited_static_visuals(blueprint)
-    component = ensure_skeletal_component(blueprint, "GroundDroneVisual")
-    require(isinstance(component, unreal.SkeletalMeshComponent), "GroundDroneVisual is not a SkeletalMeshComponent")
-    component.set_skeletal_mesh(load_asset(GROUND_MESH))
+    _, entries = gather_subobjects(blueprint)
+    legacy_component = entries.get("GroundDroneVisual")
+    if legacy_component and isinstance(legacy_component[1], unreal.SkeletalMeshComponent):
+        legacy_component[1].set_visibility(False, True)
+        legacy_component[1].set_hidden_in_game(True, True)
+        legacy_component[1].set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
+    component = ensure_poseable_component(blueprint, "GroundDronePoseableVisual")
+    require(isinstance(component, unreal.PoseableMeshComponent), "GroundDronePoseableVisual is not a PoseableMeshComponent")
+    component.set_skinned_asset_and_update(load_asset(GROUND_MESH))
     component.set_editor_property("relative_location", unreal.Vector(0.0, 0.0, -55.0))
     component.set_editor_property("relative_rotation", unreal.Rotator(0.0, 0.0, 0.0))
     component.set_editor_property("relative_scale3d", unreal.Vector(1.0, 1.0, 1.0))
@@ -169,6 +233,10 @@ def configure_ground_blueprint() -> unreal.Blueprint:
     cdo.set_editor_property("ground_initial_acquire_distance_centimeters", 10000.0)
     cdo.set_editor_property("ground_height_interpolation_speed", 14.0)
     cdo.set_editor_property("ground_rotation_interpolation_speed", 9.0)
+    cdo.set_editor_property("ground_upper_yaw_minimum_degrees", -160.0)
+    cdo.set_editor_property("ground_upper_yaw_maximum_degrees", 160.0)
+    cdo.set_editor_property("ground_weapon_pitch_minimum_degrees", -18.0)
+    cdo.set_editor_property("ground_weapon_pitch_maximum_degrees", 38.0)
     cdo.set_editor_property("third_person_camera_arm_length", 650.0)
     cdo.set_editor_property("first_person_camera_boom_offset", unreal.Vector(135.0, 0.0, 72.0))
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
@@ -252,18 +320,18 @@ def configure_catalog_assets(fiber_blueprint, ground_blueprint) -> None:
         [unreal.DroneGameplayCapability.IMPACT_DETONATION, unreal.DroneGameplayCapability.JAMMING_IMMUNITY],
         make_profile(1650.0, 3000.0, 2400.0, 8.0, 100.0, unreal.DroneHandlingPreset.BALANCED, True,
                      ["재밍 면역", "충돌 자폭", "1인칭 기본 시점"]),
-        load_asset(FIBER_MESH),
+        load_asset(FIBER_PREVIEW_MESH),
     )
     configure_definition(
         ground,
         ground_blueprint,
         "Drone.GroundUGV.Greybox",
         "지상 드론 UGV (그레이박스)",
-        "W/S 전후 주행과 A/D 조향, 네 지점 지면 추종을 사용하는 무인 지상 차량 시험 기체입니다.",
+        "W/S 전후 주행과 A/D 조향, 네 지점 지면 추종 및 총·유탄을 사용하는 무인 지상 차량 시험 기체입니다.",
         unreal.DroneMissionRole.GROUND_UGV,
-        [unreal.DroneGameplayCapability.GROUND_DRIVE],
+        [unreal.DroneGameplayCapability.GROUND_DRIVE, unreal.DroneGameplayCapability.GROUND_WEAPONS],
         make_profile(900.0, 1400.0, 2200.0, 5.0, 95.0, unreal.DroneHandlingPreset.STABLE, False,
-                     ["W/S 전후 주행", "A/D 및 Q/E 조향", "4점 경사면 추종"]),
+                     ["W/S 전후 주행", "상부 독립 조준", "Primary 총 / Secondary 유탄"]),
     )
 
     mission = load_asset(MISSION_PATH)

@@ -120,6 +120,13 @@ bool FDroneFPVIntegrationAssetTest::RunTest(const FString& Parameters)
 		{
 			continue;
 		}
+		// Prototype 공통 Fiber 통 슬롯은 Fiber 역할 BP에서만 Mesh가 들어가는 선택형
+		// Presentation Component다. 일반 FPV의 본체+4 Rotor 계약에는 포함하지 않는다.
+		if (MeshComponent->ComponentHasTag(TEXT("FiberSpoolVisual")))
+		{
+			TestNull(TEXT("Base FPV keeps the optional fiber spool slot empty"), MeshComponent->GetStaticMesh());
+			continue;
+		}
 		++FPVVisualMeshCount;
 
 		const UStaticMesh* Mesh = MeshComponent->GetStaticMesh();

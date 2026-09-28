@@ -63,7 +63,7 @@ constexpr const TCHAR* MannyMeshPath =
 constexpr const TCHAR* FriendlyCharacterMeshPath =
 	TEXT("/Game/QuantumCharacter/Mesh/SKM_QuantumCharacter.SKM_QuantumCharacter");
 constexpr const TCHAR* UnarmedAnimClassPath =
-	TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed.ABP_Unarmed_C");
+	TEXT("/Game/Drone/AI/Animation/ABP_NPC_Unarmed_Greybox.ABP_NPC_Unarmed_Greybox_C");
 constexpr const TCHAR* ArmedAnimClassPath =
 	TEXT("/Game/Drone/AI/Animation/ABP_NPC_Rifle_Greybox.ABP_NPC_Rifle_Greybox_C");
 constexpr const TCHAR* ArmedLocomotionBlendSpacePath =

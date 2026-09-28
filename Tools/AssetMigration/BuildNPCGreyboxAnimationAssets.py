@@ -13,6 +13,8 @@ SOURCE_ANIM_BLUEPRINT = "/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed"
 
 TARGET_BLEND_SPACE = "/Game/Drone/AI/Animation/BS_NPC_Rifle_Locomotion"
 TARGET_ANIM_BLUEPRINT = "/Game/Drone/AI/Animation/ABP_NPC_Rifle_Greybox"
+TARGET_UNARMED_BLEND_SPACE = "/Game/Drone/AI/Animation/BS_NPC_Unarmed_Locomotion"
+TARGET_UNARMED_ANIM_BLUEPRINT = "/Game/Drone/AI/Animation/ABP_NPC_Unarmed_Greybox"
 
 RIFLE_IDLE = "/Game/Characters/Mannequins/Anims/Rifle/MF_Rifle_Idle_ADS"
 ARMED_NPC_BLUEPRINTS = (
@@ -70,6 +72,32 @@ def update_rifle_blend_space():
     if not unreal.EditorAssetLibrary.save_loaded_asset(blend_space, only_if_is_dirty=False):
         raise RuntimeError(f"Could not save {TARGET_BLEND_SPACE}")
     return blend_space
+
+
+def update_unarmed_blend_space():
+    """Keep friendly NPC locomotion project-owned while preserving the sample walk/run set."""
+    blend_space = ensure_duplicate(SOURCE_BLEND_SPACE, TARGET_UNARMED_BLEND_SPACE)
+    if not unreal.EditorAssetLibrary.save_loaded_asset(blend_space, only_if_is_dirty=False):
+        raise RuntimeError(f"Could not save {TARGET_UNARMED_BLEND_SPACE}")
+    return blend_space
+
+
+def update_unarmed_anim_blueprint(blend_space):
+    anim_blueprint = ensure_duplicate(SOURCE_ANIM_BLUEPRINT, TARGET_UNARMED_ANIM_BLUEPRINT)
+    blend_nodes = anim_blueprint.get_nodes_of_class(unreal.AnimGraphNode_BlendSpacePlayer)
+    if len(blend_nodes) != 1:
+        raise RuntimeError(f"Expected one unarmed locomotion BlendSpace node, found {len(blend_nodes)}")
+    blend_node = blend_nodes[0]
+    blend_node_struct = blend_node.get_editor_property("node")
+    blend_node_struct.set_editor_property("blend_space", blend_space)
+    blend_node.modify()
+    blend_node.set_editor_property("node", blend_node_struct)
+    unreal.BlueprintEditorLibrary.compile_blueprint(anim_blueprint)
+    if anim_blueprint.status == unreal.BlueprintStatus.BS_ERROR:
+        raise RuntimeError(f"Compile failed for {TARGET_UNARMED_ANIM_BLUEPRINT}")
+    if not unreal.EditorAssetLibrary.save_loaded_asset(anim_blueprint, only_if_is_dirty=False):
+        raise RuntimeError(f"Could not save {TARGET_UNARMED_ANIM_BLUEPRINT}")
+    return anim_blueprint
 
 
 def update_rifle_anim_blueprint(blend_space):
@@ -142,7 +170,7 @@ def assign_anim_blueprint(character_blueprint_path, anim_blueprint):
         raise RuntimeError(f"Could not save {character_blueprint_path}")
 
 
-def verify_assets(blend_space, anim_blueprint):
+def verify_assets(blend_space, anim_blueprint, unarmed_blend_space, unarmed_anim_blueprint):
     samples = blend_space.get_editor_property("sample_data")
     if len(samples) != 27:
         raise RuntimeError(f"Expected 27 locomotion samples, found {len(samples)}")
@@ -170,23 +198,38 @@ def verify_assets(blend_space, anim_blueprint):
         if character_cdo.get_editor_property("mesh").get_editor_property("anim_class") != armed_anim_class:
             raise RuntimeError(f"Armed AnimBP assignment was not saved on {character_blueprint_path}")
 
+    unarmed_samples = unarmed_blend_space.get_editor_property("sample_data")
+    if len(unarmed_samples) != 27:
+        raise RuntimeError(f"Expected 27 unarmed locomotion samples, found {len(unarmed_samples)}")
+    if not any(sample.get_editor_property("sample_value").y > 0.0 for sample in unarmed_samples):
+        raise RuntimeError("Unarmed locomotion BlendSpace has no walk/run sample")
+    unarmed_nodes = unarmed_anim_blueprint.get_nodes_of_class(unreal.AnimGraphNode_BlendSpacePlayer)
+    if len(unarmed_nodes) != 1:
+        raise RuntimeError("Project unarmed AnimBP locomotion node count changed")
+    active_unarmed_blend = unarmed_nodes[0].get_editor_property("node").get_editor_property("blend_space")
+    if active_unarmed_blend != unarmed_blend_space:
+        raise RuntimeError("Project unarmed AnimBP does not reference the project BlendSpace")
+
     friendly_blueprint = load_required(FRIENDLY_NPC_BLUEPRINT)
     friendly_cdo = unreal.get_default_object(friendly_blueprint.generated_class())
-    unarmed_anim_class = load_required(UNARMED_ANIM_BLUEPRINT).generated_class()
+    unarmed_anim_class = unarmed_anim_blueprint.generated_class()
     if friendly_cdo.get_editor_property("mesh").get_editor_property("anim_class") != unarmed_anim_class:
-        raise RuntimeError("Friendly NPC must keep the Unarmed AnimBP")
+        raise RuntimeError("Friendly NPC must use the project-owned Unarmed locomotion AnimBP")
 
 
 def main():
     blend_space = update_rifle_blend_space()
     anim_blueprint = update_rifle_anim_blueprint(blend_space)
+    unarmed_blend_space = update_unarmed_blend_space()
+    unarmed_anim_blueprint = update_unarmed_anim_blueprint(unarmed_blend_space)
     for character_blueprint_path in ARMED_NPC_BLUEPRINTS:
         assign_anim_blueprint(character_blueprint_path, anim_blueprint)
+    assign_anim_blueprint(FRIENDLY_NPC_BLUEPRINT, unarmed_anim_blueprint)
 
-    verify_assets(blend_space, anim_blueprint)
+    verify_assets(blend_space, anim_blueprint, unarmed_blend_space, unarmed_anim_blueprint)
 
     unreal.log(
-        "NPC_GREYBOX_ANIM success: rifle locomotion and smoothed spine/neck/head Drone gaze assigned"
+        "NPC_GREYBOX_ANIM success: hostile Rifle and friendly Unarmed idle/walk/run locomotion assigned"
     )
 
 

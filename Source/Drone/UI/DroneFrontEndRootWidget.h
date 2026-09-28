@@ -8,7 +8,9 @@
 class UButton;
 class UDroneGameFlowSubsystem;
 class UDroneMissionDefinition;
+class UDroneMissionSelectionButton;
 class UTextBlock;
+class UVerticalBox;
 class UWidget;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
@@ -44,6 +46,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|Front End")
 	bool IsUsingNativeFallbackLayout() const { return bUsingNativeFallbackLayout; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Front End|Debug")
+	int32 GetNativeMissionButtonCount() const { return NativeMissionButtons.Num(); }
 
 	/** FLOW-03 로비 목록 선택 경계. 표시 Text는 선택한 Mission Definition에서만 읽는다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Front End|Lobby")
@@ -102,6 +107,9 @@ private:
 	void HandleFirstMissionClicked();
 
 	UFUNCTION()
+	void HandleMissionButtonSelected(FName MissionId);
+
+	UFUNCTION()
 	void HandleStartMissionClicked();
 
 	UFUNCTION()
@@ -111,6 +119,7 @@ private:
 	bool TryBindBlueprintLayout();
 	void ApplyDisplayedState(EDroneGameFlowState State);
 	void RefreshLobbyContent();
+	void RebuildNativeMissionButtons(const TArray<FName>& MissionIds);
 	void RefreshMissionBriefingContent();
 	void ClearFlowBinding();
 
@@ -164,6 +173,13 @@ private:
 
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UTextBlock> MissionSelectButtonText;
+
+	/** Native fallback만 동적으로 다시 만드는 Mission 버튼 목록이다. WBP는 SelectLobbyMission API를 그대로 쓴다. */
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> MissionButtonsColumn;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UDroneMissionSelectionButton>> NativeMissionButtons;
 
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UTextBlock> MissionNameText;

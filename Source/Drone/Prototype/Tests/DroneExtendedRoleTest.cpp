@@ -4,6 +4,8 @@
 
 #include "Abilities/DroneImpactDetonationComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/PoseableMeshComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/SplineComponent.h"
 #include "Components/SplineMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -13,6 +15,7 @@
 #include "Signal/DroneSignalComponent.h"
 #include "Tests/AutomationCommon.h"
 #include "Weather/DroneWeatherResponseComponent.h"
+#include "Weapons/DroneGroundWeaponComponent.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FDroneExtendedRoleTest,
@@ -44,6 +47,8 @@ bool FDroneExtendedRoleTest::RunTest(const FString& Parameters)
 		GroundDefinition->MissionRole, EDroneMissionRole::GroundUGV);
 	TestTrue(TEXT("Ground implements ground drive"),
 		GroundDefinition->ImplementedCapabilities.Contains(EDroneGameplayCapability::GroundDrive));
+	TestTrue(TEXT("Ground implements player ground weapons"),
+		GroundDefinition->ImplementedCapabilities.Contains(EDroneGameplayCapability::GroundWeapons));
 
 	FTestWorldWrapper WorldWrapper;
 	if (!WorldWrapper.CreateTestWorld(EWorldType::Game))
@@ -97,14 +102,25 @@ bool FDroneExtendedRoleTest::RunTest(const FString& Parameters)
 				Pawn->GetImpactDetonationComponent()->IsFeatureEnabled());
 			TInlineComponentArray<UStaticMeshComponent*> StaticMeshes;
 			Pawn->GetComponents(StaticMeshes);
-			const bool bHasFiberVisual = StaticMeshes.ContainsByPredicate([](const UStaticMeshComponent* Component)
+			const TSet<FString> ExpectedFiberMeshPaths = {
+				TEXT("/Game/Drone/ThirdParty/DronePackFPV/SM_DroneFPVBody.SM_DroneFPVBody"),
+				TEXT("/Game/Drone/ThirdParty/DronePackFPV/SM_RotorA.SM_RotorA"),
+				TEXT("/Game/Drone/ThirdParty/DronePackFPV/SM_RotorB.SM_RotorB"),
+				TEXT("/Game/Drone/ThirdParty/DronePackFPV/SM_RotorC.SM_RotorC"),
+				TEXT("/Game/Drone/ThirdParty/DronePackFPV/SM_RotorD.SM_RotorD")
+			};
+			TSet<FString> ActualFiberMeshPaths;
+			for (const UStaticMeshComponent* Component : StaticMeshes)
 			{
-				return Component
-					&& Component->ComponentHasTag(TEXT("DroneRoleVisual"))
-					&& Component->GetStaticMesh()
-					&& Component->GetStaticMesh()->GetPathName().Contains(TEXT("StingInterceptor"));
-			});
-			TestTrue(TEXT("Fiber Pawn uses the Sting Interceptor visual"), bHasFiberVisual);
+				if (Component && Component->ComponentHasTag(TEXT("DroneRoleVisual")) && Component->GetStaticMesh())
+				{
+					ActualFiberMeshPaths.Add(Component->GetStaticMesh()->GetPathName());
+				}
+			}
+			TestTrue(
+				TEXT("Fiber Pawn reuses the same FPV body and four rotor meshes as the suicide drone"),
+				ActualFiberMeshPaths.Num() == ExpectedFiberMeshPaths.Num()
+					&& ActualFiberMeshPaths.Includes(ExpectedFiberMeshPaths));
 			const UStaticMeshComponent* FiberSpool = nullptr;
 			for (const UStaticMeshComponent* Component : StaticMeshes)
 			{
@@ -130,7 +146,14 @@ bool FDroneExtendedRoleTest::RunTest(const FString& Parameters)
 				}
 			}
 			TestTrue(TEXT("Fiber Pawn builds a trailing fiber spline from its spool"),
-				FiberSpline && FiberSpline->GetNumberOfSplinePoints() >= 2);
+				FiberSpline && FiberSpline->GetNumberOfSplinePoints() >= 4);
+			if (FiberSpline && FiberSpline->GetNumberOfSplinePoints() >= 4)
+			{
+				TestTrue(TEXT("Fiber hanging section uses non-zero smooth spline tangents"),
+					!FiberSpline->GetTangentAtSplinePoint(
+						1,
+						ESplineCoordinateSpace::World).IsNearlyZero());
+			}
 			TInlineComponentArray<USplineMeshComponent*> SplineMeshes;
 			Pawn->GetComponents(SplineMeshes);
 			TestTrue(TEXT("Fiber spline has at least one visible cable segment"),
@@ -143,20 +166,52 @@ bool FDroneExtendedRoleTest::RunTest(const FString& Parameters)
 		else
 		{
 			TestTrue(TEXT("Ground Pawn enters Ground Drive mode"), Pawn->IsGroundDriveModeActive());
+			TestTrue(TEXT("Ground Pawn enables its player weapon component"),
+				Pawn->GetGroundWeaponComponent() && Pawn->GetGroundWeaponComponent()->IsFeatureEnabled());
 			TestFalse(TEXT("Ground Pawn does not receive airborne wind drift"),
 				Pawn->GetWeatherResponseComponent()->IsWindResponseEnabled());
 			TestEqual(TEXT("Ground Drive is held in assisted controls"),
 				Pawn->GetControlMode(), EDroneControlMode::AssistedEasy);
-			TInlineComponentArray<USkeletalMeshComponent*> SkeletalMeshes;
-			Pawn->GetComponents(SkeletalMeshes);
-			const bool bHasGroundVisual = SkeletalMeshes.ContainsByPredicate([](const USkeletalMeshComponent* Component)
+			TInlineComponentArray<UPoseableMeshComponent*> PoseableMeshes;
+			Pawn->GetComponents(PoseableMeshes);
+			UPoseableMeshComponent* GroundVisual = nullptr;
+			for (UPoseableMeshComponent* Component : PoseableMeshes)
 			{
-				return Component
-					&& Component->ComponentHasTag(TEXT("GroundDroneVisual"))
-					&& Component->GetSkeletalMeshAsset()
-					&& Component->GetSkeletalMeshAsset()->GetPathName().Contains(TEXT("GC_Drone_1_SK"));
-			});
-			TestTrue(TEXT("Ground Pawn references GC Drone 1 without modifying vendor Skeletons"), bHasGroundVisual);
+				if (Component && Component->ComponentHasTag(TEXT("GroundDroneVisual")))
+				{
+					GroundVisual = Component;
+					break;
+				}
+			}
+			TestTrue(
+				TEXT("Ground Pawn uses a poseable GC Drone 1 visual without modifying vendor Skeletons"),
+				GroundVisual
+					&& GroundVisual->GetSkinnedAsset()
+					&& GroundVisual->GetSkinnedAsset()->GetPathName().Contains(TEXT("GC_Drone_1_SK")));
+			if (GroundVisual)
+			{
+				TestTrue(TEXT("Ground visual exposes a Turret yaw bone"), GroundVisual->GetBoneIndex(TEXT("Turret")) != INDEX_NONE);
+				TestTrue(TEXT("Ground visual exposes a Turret_Swivel pitch bone"), GroundVisual->GetBoneIndex(TEXT("Turret_Swivel")) != INDEX_NONE);
+			}
+			TestNotNull(TEXT("Ground Pawn exposes an upper yaw pivot"), Pawn->GetGroundUpperYawPivot());
+			TestNotNull(TEXT("Ground Pawn exposes a weapon pitch pivot"), Pawn->GetGroundWeaponPitchPivot());
+			TestNotNull(TEXT("Ground Pawn exposes a future gun muzzle anchor"), Pawn->GetGroundGunMuzzleAnchor());
+			TestNotNull(TEXT("Ground Pawn exposes a future grenade muzzle anchor"), Pawn->GetGroundGrenadeMuzzleAnchor());
+			const FRotator ChassisRotationBeforeAim = Pawn->GetActorRotation();
+			const FRotator TurretRotationBeforeAim = GroundVisual
+				? GroundVisual->GetBoneRotationByName(TEXT("Turret"), EBoneSpaces::ComponentSpace)
+				: FRotator::ZeroRotator;
+			Pawn->SetGroundUpperAimGreybox(45.0f, 12.0f);
+			TestTrue(TEXT("Ground camera aim does not rotate the chassis"), Pawn->GetActorRotation().Equals(ChassisRotationBeforeAim, 0.01f));
+			TestEqual(TEXT("Ground upper yaw pivot follows camera yaw"), Pawn->GetGroundUpperYawDegrees(), 45.0f);
+			TestEqual(TEXT("Ground weapon pitch pivot follows camera pitch"), Pawn->GetGroundWeaponPitchDegrees(), 12.0f);
+			if (GroundVisual)
+			{
+				TestFalse(
+					TEXT("Ground upper aim rotates the Turret bone instead of the whole chassis"),
+					GroundVisual->GetBoneRotationByName(TEXT("Turret"), EBoneSpaces::ComponentSpace)
+						.Equals(TurretRotationBeforeAim, 0.01f));
+			}
 			for (int32 Step = 0; Step < 5; ++Step)
 			{
 				Pawn->Tick(0.1f);

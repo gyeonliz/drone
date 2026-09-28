@@ -14,6 +14,7 @@
 #include "Flow/DroneGameFlowSubsystem.h"
 #include "Mission/DroneMissionDefinition.h"
 #include "Styling/CoreStyle.h"
+#include "UI/DroneMissionSelectionButton.h"
 
 namespace DroneFrontEndUI
 {
@@ -178,6 +179,11 @@ void UDroneFrontEndRootWidget::HandleFirstMissionClicked()
 	{
 		SelectLobbyMission(FirstDisplayedMissionId);
 	}
+}
+
+void UDroneFrontEndRootWidget::HandleMissionButtonSelected(const FName MissionId)
+{
+	SelectLobbyMission(MissionId);
 }
 
 void UDroneFrontEndRootWidget::HandleStartMissionClicked()
@@ -356,18 +362,10 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 	MissionListHeader->SetColorAndOpacity(FSlateColor(FLinearColor(0.20f, 0.95f, 0.82f, 1.0f)));
 	MissionListColumn->AddChildToVerticalBox(MissionListHeader);
 
-	MissionSelectButton = WidgetTree->ConstructWidget<UButton>(
-		UButton::StaticClass(),
-		DroneFrontEndUI::MissionSelectButtonName);
-	MissionSelectButtonText = WidgetTree->ConstructWidget<UTextBlock>(
-		UTextBlock::StaticClass(),
-		DroneFrontEndUI::MissionSelectButtonTextName);
-	MissionSelectButtonText->SetText(FText::FromString(TEXT("등록된 미션 없음")));
-	MissionSelectButtonText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 17.0f));
-	MissionSelectButtonText->SetColorAndOpacity(FSlateColor(FLinearColor(0.92f, 0.97f, 0.97f, 1.0f)));
-	MissionSelectButton->AddChild(MissionSelectButtonText);
-	MissionSelectButton->SetBackgroundColor(FLinearColor(0.04f, 0.16f, 0.18f, 1.0f));
-	if (UVerticalBoxSlot* MissionButtonSlot = MissionListColumn->AddChildToVerticalBox(MissionSelectButton))
+	MissionButtonsColumn = WidgetTree->ConstructWidget<UVerticalBox>(
+		UVerticalBox::StaticClass(),
+		TEXT("MissionButtonsColumn"));
+	if (UVerticalBoxSlot* MissionButtonSlot = MissionListColumn->AddChildToVerticalBox(MissionButtonsColumn))
 	{
 		MissionButtonSlot->SetPadding(FMargin(0.0f, 18.0f, 0.0f, 0.0f));
 	}
@@ -551,6 +549,10 @@ void UDroneFrontEndRootWidget::RefreshLobbyContent()
 	UDroneGameFlowSubsystem* Flow = FlowSubsystem.Get();
 	const TArray<FName> MissionIds = Flow ? Flow->GetRegisteredMissionIds() : TArray<FName>();
 	FirstDisplayedMissionId = MissionIds.IsEmpty() ? NAME_None : MissionIds[0];
+	if (bUsingNativeFallbackLayout)
+	{
+		RebuildNativeMissionButtons(MissionIds);
+	}
 	UDroneMissionDefinition* FirstMission = Flow
 		? Flow->FindMissionDefinition(FirstDisplayedMissionId)
 		: nullptr;
@@ -601,6 +603,65 @@ void UDroneFrontEndRootWidget::RefreshLobbyContent()
 		StartMissionButton->SetIsEnabled(SelectedMission != nullptr);
 	}
 	ReceiveLobbyMissionSelectionChanged(SelectedMission);
+}
+
+void UDroneFrontEndRootWidget::RebuildNativeMissionButtons(const TArray<FName>& MissionIds)
+{
+	if (!WidgetTree || !MissionButtonsColumn)
+	{
+		return;
+	}
+
+	MissionButtonsColumn->ClearChildren();
+	NativeMissionButtons.Reset();
+	MissionSelectButton = nullptr;
+	MissionSelectButtonText = nullptr;
+
+	if (MissionIds.IsEmpty())
+	{
+		MissionSelectButton = WidgetTree->ConstructWidget<UButton>(
+			UButton::StaticClass(), DroneFrontEndUI::MissionSelectButtonName);
+		MissionSelectButtonText = WidgetTree->ConstructWidget<UTextBlock>(
+			UTextBlock::StaticClass(), DroneFrontEndUI::MissionSelectButtonTextName);
+		MissionSelectButtonText->SetText(FText::FromString(TEXT("등록된 미션 없음")));
+		MissionSelectButton->SetIsEnabled(false);
+		MissionSelectButton->AddChild(MissionSelectButtonText);
+		MissionButtonsColumn->AddChildToVerticalBox(MissionSelectButton);
+		return;
+	}
+
+	for (int32 Index = 0; Index < MissionIds.Num(); ++Index)
+	{
+		const FName MissionId = MissionIds[Index];
+		UDroneMissionDefinition* Mission = FlowSubsystem.IsValid()
+			? FlowSubsystem->FindMissionDefinition(MissionId)
+			: nullptr;
+		UDroneMissionSelectionButton* Button = WidgetTree->ConstructWidget<UDroneMissionSelectionButton>(
+			UDroneMissionSelectionButton::StaticClass(),
+			FName(*FString::Printf(TEXT("MissionSelectButton_%d"), Index)));
+		Button->InitializeMissionSelection(MissionId);
+		Button->OnMissionSelectionRequested.AddUniqueDynamic(
+			this, &UDroneFrontEndRootWidget::HandleMissionButtonSelected);
+		Button->SetBackgroundColor(FLinearColor(0.04f, 0.16f, 0.18f, 1.0f));
+
+		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(
+			UTextBlock::StaticClass(),
+			FName(*FString::Printf(TEXT("MissionSelectButtonText_%d"), Index)));
+		Label->SetText(Mission ? Mission->DisplayName : FText::FromName(MissionId));
+		Label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 16.0f));
+		Label->SetColorAndOpacity(FSlateColor(FLinearColor(0.92f, 0.97f, 0.97f, 1.0f)));
+		Button->AddChild(Label);
+		if (UVerticalBoxSlot* ButtonSlot = MissionButtonsColumn->AddChildToVerticalBox(Button))
+		{
+			ButtonSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+		}
+		NativeMissionButtons.Add(Button);
+		if (Index == 0)
+		{
+			MissionSelectButton = Button;
+			MissionSelectButtonText = Label;
+		}
+	}
 }
 
 void UDroneFrontEndRootWidget::ClearFlowBinding()

@@ -6,6 +6,7 @@
 #include "Abilities/DronePayloadDropComponent.h"
 #include "Abilities/DroneReconScanComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/PoseableMeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/SplineComponent.h"
 #include "Components/SplineMeshComponent.h"
@@ -30,6 +31,7 @@
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Signal/DroneSignalComponent.h"
 #include "Weather/DroneWeatherResponseComponent.h"
+#include "Weapons/DroneGroundWeaponComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace DronePrototypeSurfaceTrace
@@ -108,6 +110,23 @@ ADronePrototypePawn::ADronePrototypePawn()
 	FiberOpticSplineComponent->ClearSplinePoints(false);
 	FiberOpticSplineComponent->SetClosedLoop(false, false);
 	FiberOpticSplineComponent->ComponentTags.Add(TEXT("FiberOpticSpline"));
+
+	GroundUpperYawPivot = CreateDefaultSubobject<USceneComponent>(TEXT("GroundUpperYawPivot"));
+	GroundUpperYawPivot->SetupAttachment(VisualTiltPivot);
+	GroundUpperYawPivot->SetRelativeLocation(FVector(0.0f, 0.0f, 58.0f));
+
+	GroundWeaponPitchPivot = CreateDefaultSubobject<USceneComponent>(TEXT("GroundWeaponPitchPivot"));
+	GroundWeaponPitchPivot->SetupAttachment(GroundUpperYawPivot);
+
+	GroundGunMuzzleAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("GroundGunMuzzleAnchor"));
+	GroundGunMuzzleAnchor->SetupAttachment(GroundWeaponPitchPivot);
+	GroundGunMuzzleAnchor->SetRelativeLocation(FVector(115.0f, -16.0f, 2.0f));
+
+	GroundGrenadeMuzzleAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("GroundGrenadeMuzzleAnchor"));
+	GroundGrenadeMuzzleAnchor->SetupAttachment(GroundWeaponPitchPivot);
+	GroundGrenadeMuzzleAnchor->SetRelativeLocation(FVector(105.0f, 18.0f, -5.0f));
+
+	GroundWeaponComponent = CreateDefaultSubobject<UDroneGroundWeaponComponent>(TEXT("GroundWeaponComponent"));
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> FiberSegmentMeshFinder(
 		TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
@@ -228,10 +247,15 @@ bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definitio
 	SignalComponent->ConfigureJammingImmunity(
 		Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::JammingImmunity));
 	bGroundDriveModeActive = Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::GroundDrive);
+	GroundWeaponComponent->ConfigureFeatureEnabled(
+		bGroundDriveModeActive
+		&& Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::GroundWeapons));
 	bGroundSurfaceAcquired = false;
 	GroundThrottleInput = 0.0f;
 	GroundSteeringInput = 0.0f;
 	GroundYawInput = 0.0f;
+	GroundUpperYawDegrees = 0.0f;
+	GroundWeaponPitchDegrees = 0.0f;
 	WeatherResponseComponent->SetWindResponseEnabled(!bGroundDriveModeActive);
 	SetFiberTetherActive(Definition->MissionRole == EDroneMissionRole::FiberOpticStrike);
 	if (bGroundDriveModeActive)
@@ -240,6 +264,8 @@ bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definitio
 		SetVisualTiltInputGreybox(0.0f, 0.0f);
 		ApplyRuntimeFlightTuning();
 	}
+	InitializeGroundUpperBodyPresentation();
+	ApplyCameraViewMode();
 	AppliedDroneId = Definition->DroneId;
 
 	UE_LOG(
@@ -263,7 +289,7 @@ bool ADronePrototypePawn::TriggerPrimaryRoleAbility()
 		return false;
 	}
 
-	// 현재 세 역할은 Data Asset Validation에서 상호 배타적으로 활성화된다.
+	// 역할 기능은 Data Asset의 구현 Capability로 상호 배타적으로 활성화한다.
 	if (ReconScanComponent && ReconScanComponent->IsFeatureEnabled())
 	{
 		return ReconScanComponent->StartBestAvailableScan();
@@ -275,6 +301,10 @@ bool ADronePrototypePawn::TriggerPrimaryRoleAbility()
 	if (PayloadDropComponent && PayloadDropComponent->IsFeatureEnabled())
 	{
 		return PayloadDropComponent->ActivatePrimaryPayloadAction();
+	}
+	if (GroundWeaponComponent && GroundWeaponComponent->IsFeatureEnabled())
+	{
+		return GroundWeaponComponent->FirePrimary(GroundGunMuzzleAnchor);
 	}
 	return false;
 }
@@ -303,6 +333,10 @@ bool ADronePrototypePawn::TriggerSecondaryRoleAbility()
 		const bool bRequestedEnabled = !IsDropCameraViewEnabled();
 		PayloadDropComponent->SetDropViewEnabled(bRequestedEnabled);
 		return IsDropCameraViewEnabled() == bRequestedEnabled;
+	}
+	if (GroundWeaponComponent && GroundWeaponComponent->IsFeatureEnabled())
+	{
+		return GroundWeaponComponent->FireSecondary(GroundGrenadeMuzzleAnchor);
 	}
 	return false;
 }
@@ -465,6 +499,7 @@ void ADronePrototypePawn::BeginPlay()
 	EnsureHealthFeedbackBindings();
 	bFirstPersonViewEnabled = bStartInFirstPersonView;
 	ApplyCameraViewMode();
+	InitializeGroundUpperBodyPresentation();
 
 	// Actor가 유효한 World에 들어온 뒤 등록해야 Perception System이 실제 Source를 받을 수 있다.
 	PerceptionStimuliSource->RegisterForSense(UAISense_Sight::StaticClass());
@@ -493,6 +528,7 @@ void ADronePrototypePawn::Tick(const float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	UpdateDamageShake(DeltaSeconds);
 	UpdateGroundDrive(DeltaSeconds);
+	ApplyGroundUpperAim();
 	UpdateFiberTether();
 	UpdateControlAttitude(DeltaSeconds);
 	UpdateAcroFlightPhysics(DeltaSeconds);
@@ -985,6 +1021,24 @@ void ADronePrototypePawn::ApplyCameraViewMode()
 		CameraBoom->TargetArmLength = DropViewCameraArmLength;
 		return;
 	}
+	if (bGroundDriveModeActive && GroundWeaponPitchPivot)
+	{
+		// UGV 시점은 차체 Root가 아니라 상부 조준 Pivot을 따른다. 마우스로 둘러봐도
+		// 하부 차체/궤도는 돌지 않고, 이후 총과 유탄도 같은 Yaw/Pitch 계약을 공유한다.
+		CameraBoom->AttachToComponent(GroundWeaponPitchPivot, KeepRelativeAttachment);
+		CameraBoom->SetRelativeRotation(FRotator::ZeroRotator);
+		if (bFirstPersonViewEnabled)
+		{
+			CameraBoom->SetRelativeLocation(GroundFirstPersonCameraOffset);
+			CameraBoom->TargetArmLength = 0.0f;
+		}
+		else
+		{
+			CameraBoom->SetRelativeLocation(GroundThirdPersonCameraOffset);
+			CameraBoom->TargetArmLength = ThirdPersonCameraArmLength;
+		}
+		return;
+	}
 	if (bFirstPersonViewEnabled)
 	{
 		CameraBoom->AttachToComponent(VisualTiltPivot, KeepRelativeAttachment);
@@ -1252,11 +1306,18 @@ void ADronePrototypePawn::RebuildFiberSpline(const FVector& SpoolExitWorldLocati
 	const FVector LastGroundPoint = FiberLaidPointsWorld.Last();
 	if (!LastGroundPoint.Equals(SpoolExitWorldLocation, 1.0f))
 	{
-		FVector SagPoint = FMath::Lerp(LastGroundPoint, SpoolExitWorldLocation, 0.55f);
-		SagPoint.Z = FMath::Max(
-			LastGroundPoint.Z,
-			SagPoint.Z - FMath::Max(0.0f, FiberSagDepthCentimeters));
-		SplinePoints.Add(SagPoint);
+		const int32 CurveSubdivisions = FMath::Clamp(FiberHangingCurveSubdivisionCount, 1, 12);
+		for (int32 CurveIndex = 1; CurveIndex <= CurveSubdivisions; ++CurveIndex)
+		{
+			const float Alpha = static_cast<float>(CurveIndex)
+				/ static_cast<float>(CurveSubdivisions + 1);
+			FVector HangingPoint = FMath::Lerp(LastGroundPoint, SpoolExitWorldLocation, Alpha);
+			// 4a(1-a)는 중앙에서 1이 되는 포물선이다. 마지막 구간이 V자로 꺾이지 않고
+			// 실제 풀려 나온 광섬유처럼 완만하게 처져 기체 통으로 올라간다.
+			HangingPoint.Z -= 4.0f * Alpha * (1.0f - Alpha)
+				* FMath::Max(0.0f, FiberSagDepthCentimeters);
+			SplinePoints.Add(HangingPoint);
+		}
 	}
 	SplinePoints.Add(SpoolExitWorldLocation);
 
@@ -1268,7 +1329,20 @@ void ADronePrototypePawn::RebuildFiberSpline(const FVector& SpoolExitWorldLocati
 	{
 		FiberOpticSplineComponent->SetSplinePointType(
 			PointIndex,
-			ESplinePointType::CurveClamped,
+			ESplinePointType::CurveCustomTangent,
+			false);
+	}
+	const float TangentScale = FMath::Clamp(FiberSplineTangentScale, 0.0f, 1.5f);
+	for (int32 PointIndex = 0; PointIndex < SplinePoints.Num(); ++PointIndex)
+	{
+		const FVector PreviousPoint = SplinePoints[FMath::Max(0, PointIndex - 1)];
+		const FVector NextPoint = SplinePoints[FMath::Min(SplinePoints.Num() - 1, PointIndex + 1)];
+		const FVector SmoothTangent = (NextPoint - PreviousPoint) * 0.5f * TangentScale;
+		FiberOpticSplineComponent->SetTangentsAtSplinePoint(
+			PointIndex,
+			SmoothTangent,
+			SmoothTangent,
+			ESplineCoordinateSpace::World,
 			false);
 	}
 	FiberOpticSplineComponent->UpdateSpline();
@@ -1462,6 +1536,104 @@ void ADronePrototypePawn::UpdateGroundDrive(const float DeltaSeconds)
 			SafeDeltaSeconds,
 			GroundRotationInterpolationSpeed));
 	}
+}
+
+void ADronePrototypePawn::SetGroundUpperAimGreybox(
+	const float YawDegrees,
+	const float PitchDegrees)
+{
+	GroundUpperYawDegrees = FMath::Clamp(
+		YawDegrees,
+		FMath::Min(GroundUpperYawMinimumDegrees, GroundUpperYawMaximumDegrees),
+		FMath::Max(GroundUpperYawMinimumDegrees, GroundUpperYawMaximumDegrees));
+	GroundWeaponPitchDegrees = FMath::Clamp(
+		PitchDegrees,
+		FMath::Min(GroundWeaponPitchMinimumDegrees, GroundWeaponPitchMaximumDegrees),
+		FMath::Max(GroundWeaponPitchMinimumDegrees, GroundWeaponPitchMaximumDegrees));
+	ApplyGroundUpperAim();
+}
+
+void ADronePrototypePawn::InitializeGroundUpperBodyPresentation()
+{
+	GroundPoseableVisualComponent = nullptr;
+	bGroundBoneReferenceCaptured = false;
+	if (!bGroundDriveModeActive)
+	{
+		return;
+	}
+
+	TInlineComponentArray<UPoseableMeshComponent*> PoseableMeshes(this);
+	for (UPoseableMeshComponent* Candidate : PoseableMeshes)
+	{
+		if (Candidate && Candidate->ComponentHasTag(TEXT("GroundDroneVisual")))
+		{
+			GroundPoseableVisualComponent = Candidate;
+			break;
+		}
+	}
+	if (!GroundPoseableVisualComponent
+		|| GroundPoseableVisualComponent->GetBoneIndex(GroundTurretYawBoneName) == INDEX_NONE
+		|| GroundPoseableVisualComponent->GetBoneIndex(GroundWeaponPitchBoneName) == INDEX_NONE)
+	{
+		UE_LOG(
+			LogDrone,
+			Warning,
+			TEXT("Ground UGV '%s' has no poseable Turret/Turret_Swivel presentation."),
+			*GetNameSafe(this));
+		return;
+	}
+
+	GroundTurretReferenceComponentRotation = GroundPoseableVisualComponent->GetBoneRotationByName(
+		GroundTurretYawBoneName,
+		EBoneSpaces::ComponentSpace);
+	GroundWeaponReferenceComponentRotation = GroundPoseableVisualComponent->GetBoneRotationByName(
+		GroundWeaponPitchBoneName,
+		EBoneSpaces::ComponentSpace);
+	bGroundBoneReferenceCaptured = true;
+	ApplyGroundUpperAim();
+}
+
+void ADronePrototypePawn::AdjustGroundUpperAim(
+	const float YawDeltaDegrees,
+	const float PitchDeltaDegrees)
+{
+	SetGroundUpperAimGreybox(
+		GroundUpperYawDegrees + YawDeltaDegrees,
+		GroundWeaponPitchDegrees + PitchDeltaDegrees);
+}
+
+void ADronePrototypePawn::ApplyGroundUpperAim()
+{
+	if (!bGroundDriveModeActive)
+	{
+		return;
+	}
+	if (GroundUpperYawPivot)
+	{
+		GroundUpperYawPivot->SetRelativeRotation(FRotator(0.0f, GroundUpperYawDegrees, 0.0f));
+	}
+	if (GroundWeaponPitchPivot)
+	{
+		GroundWeaponPitchPivot->SetRelativeRotation(FRotator(GroundWeaponPitchDegrees, 0.0f, 0.0f));
+	}
+	if (!GroundPoseableVisualComponent || !bGroundBoneReferenceCaptured)
+	{
+		return;
+	}
+
+	const FQuat YawDelta(FVector::UpVector, FMath::DegreesToRadians(GroundUpperYawDegrees));
+	const FQuat PitchYawDelta = FRotator(
+		GroundWeaponPitchDegrees,
+		GroundUpperYawDegrees,
+		0.0f).Quaternion();
+	GroundPoseableVisualComponent->SetBoneRotationByName(
+		GroundTurretYawBoneName,
+		(YawDelta * GroundTurretReferenceComponentRotation.Quaternion()).Rotator(),
+		EBoneSpaces::ComponentSpace);
+	GroundPoseableVisualComponent->SetBoneRotationByName(
+		GroundWeaponPitchBoneName,
+		(PitchYawDelta * GroundWeaponReferenceComponentRotation.Quaternion()).Rotator(),
+		EBoneSpaces::ComponentSpace);
 }
 
 void ADronePrototypePawn::UpdateControlAttitude(const float DeltaSeconds)
@@ -1796,6 +1968,13 @@ void ADronePrototypePawn::Look(const FInputActionValue& Value)
 
 	// Mouse X는 Drone Yaw, Mouse Y는 SpringArm Pitch만 변경한다.
 	const FVector2D LookValue = Value.Get<FVector2D>();
+	if (bGroundDriveModeActive)
+	{
+		AdjustGroundUpperAim(
+			LookValue.X * PrototypeMouseYawDegreesPerInput,
+			LookValue.Y * PrototypeMousePitchDegreesPerInput);
+		return;
+	}
 	AddActorLocalRotation(FRotator(0.0f, LookValue.X * PrototypeMouseYawDegreesPerInput, 0.0f));
 	AdjustCameraPitch(LookValue.Y * PrototypeMousePitchDegreesPerInput);
 }
@@ -1820,6 +1999,11 @@ void ADronePrototypePawn::ChangeCameraPitch(const FInputActionValue& Value)
 
 	const float PitchDelta =
 		Value.Get<float>() * PrototypeGamepadPitchRateDegreesPerSecond * World->GetDeltaSeconds();
+	if (bGroundDriveModeActive)
+	{
+		AdjustGroundUpperAim(0.0f, PitchDelta);
+		return;
+	}
 	AdjustCameraPitch(PitchDelta);
 }
 
@@ -1963,6 +2147,11 @@ void ADronePrototypePawn::ResetAcroGamepadRightVertical(const FInputActionValue&
 
 void ADronePrototypePawn::AdjustCameraPitch(const float PitchDeltaDegrees)
 {
+	if (bGroundDriveModeActive)
+	{
+		AdjustGroundUpperAim(0.0f, PitchDeltaDegrees);
+		return;
+	}
 	if (!CameraBoom || FMath::IsNearlyZero(PitchDeltaDegrees))
 	{
 		return;

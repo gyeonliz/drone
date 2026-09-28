@@ -31,7 +31,9 @@ enum class EDroneGameplayCapability : uint8
 	ImpactDetonation UMETA(DisplayName="충돌 자폭"),
 	JammingImmunity UMETA(DisplayName="재밍 면역"),
 	GroundDrive UMETA(DisplayName="지상 주행"),
-	LongRangeStrikeSequence UMETA(DisplayName="장거리 타격 연출")
+	LongRangeStrikeSequence UMETA(DisplayName="장거리 타격 연출"),
+	/** 기존 저장 Asset의 열거형 숫자를 유지하기 위해 새 기능은 항상 마지막에 추가한다. */
+	GroundWeapons UMETA(DisplayName="UGV 총·유탄")
 };
 
 /** 같은 Prototype Pawn에 적용해 실제 조종 차이를 만드는 데이터 기반 비행 수치다. */

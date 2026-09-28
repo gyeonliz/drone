@@ -19,19 +19,26 @@ bool FDroneGameFlowContractTest::RunTest(const FString& Parameters)
 	UDroneGameFlowSubsystem* CatalogFlow = NewObject<UDroneGameFlowSubsystem>(CatalogGameInstance);
 	TestTrue(TEXT("Default Catalog registers from saved assets"), CatalogFlow && CatalogFlow->EnsureDefaultCatalog());
 	TestEqual(TEXT("Default Catalog contains five implemented Drone roles"), CatalogFlow ? CatalogFlow->GetRegisteredDroneCount() : 0, 5);
-	TestEqual(TEXT("Default Catalog contains one Mission"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 1);
+	TestEqual(TEXT("Default Catalog contains Training plus eight focused Tutorial lessons"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 9);
 	TestEqual(TEXT("Default Catalog exposes five sorted Drone IDs"), CatalogFlow ? CatalogFlow->GetRegisteredDroneIds().Num() : 0, 5);
-	TestEqual(TEXT("Default Catalog exposes one sorted Mission ID"), CatalogFlow ? CatalogFlow->GetRegisteredMissionIds().Num() : 0, 1);
-	if (CatalogFlow && CatalogFlow->GetRegisteredMissionIds().Num() == 1)
+	TestEqual(TEXT("Default Catalog exposes nine sorted Mission IDs"), CatalogFlow ? CatalogFlow->GetRegisteredMissionIds().Num() : 0, 9);
+	if (CatalogFlow && CatalogFlow->GetRegisteredMissionIds().Num() == 9)
 	{
-		TestEqual(
-			TEXT("Default Catalog exposes the Tutorial Mission ID"),
-			CatalogFlow->GetRegisteredMissionIds()[0],
-			FName(TEXT("Mission.Tutorial.Training")));
+		const TArray<FName> ExpectedMissionIds = {
+			FName(TEXT("Mission.Tutorial.Forward")),
+			FName(TEXT("Mission.Tutorial.FPV")),
+			FName(TEXT("Mission.Tutorial.GateFlight")),
+			FName(TEXT("Mission.Tutorial.Heading")),
+			FName(TEXT("Mission.Tutorial.Hover")),
+			FName(TEXT("Mission.Tutorial.Payload")),
+			FName(TEXT("Mission.Tutorial.Training")),
+			FName(TEXT("Mission.Tutorial.UGV.NPC")),
+			FName(TEXT("Mission.Tutorial.UGV.Turret"))};
+		TestTrue(TEXT("Default Catalog exposes every Tutorial lesson in stable order"), CatalogFlow->GetRegisteredMissionIds() == ExpectedMissionIds);
 	}
 	TestTrue(TEXT("Default Catalog registration is idempotent"), CatalogFlow && CatalogFlow->EnsureDefaultCatalog());
 	TestEqual(TEXT("Idempotent registration keeps five Drones"), CatalogFlow ? CatalogFlow->GetRegisteredDroneCount() : 0, 5);
-	TestEqual(TEXT("Idempotent registration keeps one Mission"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 1);
+	TestEqual(TEXT("Idempotent registration keeps nine Missions"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 9);
 
 	UGameInstance* GameInstance = NewObject<UGameInstance>();
 	UDroneGameFlowSubsystem* Flow = NewObject<UDroneGameFlowSubsystem>(GameInstance);

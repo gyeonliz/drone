@@ -147,7 +147,7 @@ public:
 		if (Flow)
 		{
 			Test->TestEqual(TEXT("PIE Catalog contains five functional Drone profiles"), Flow->GetRegisteredDroneCount(), 5);
-			Test->TestEqual(TEXT("PIE Catalog contains one Mission"), Flow->GetRegisteredMissionCount(), 1);
+			Test->TestEqual(TEXT("PIE Catalog contains Training plus eight focused Tutorial lessons"), Flow->GetRegisteredMissionCount(), 9);
 		}
 
 		if (FrontEndWidget && Flow)
@@ -159,6 +159,10 @@ public:
 				EDroneGameFlowState::LobbyMissionSelect);
 			Test->TestTrue(TEXT("Continue reuses the same Root Widget"), Controller->GetFrontEndWidget() == FrontEndWidget);
 			Test->TestEqual(TEXT("Lobby still has one Root Widget creation"), Controller->GetFrontEndWidgetCreationCount(), 1);
+			if (FrontEndWidget->IsUsingNativeFallbackLayout())
+			{
+				Test->TestEqual(TEXT("Native Lobby exposes all nine registered Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 9);
+			}
 			Test->TestFalse(TEXT("Opening completion cannot run twice"), FrontEndWidget->FinishOpeningTrailer());
 
 			const FName TutorialMissionId(TEXT("Mission.Tutorial.Training"));

@@ -5,8 +5,9 @@ import unreal
 
 TARGET_BLEND_SPACE = "/Game/Drone/AI/Animation/BS_NPC_Rifle_Locomotion"
 TARGET_ANIM_BLUEPRINT = "/Game/Drone/AI/Animation/ABP_NPC_Rifle_Greybox"
+TARGET_UNARMED_BLEND_SPACE = "/Game/Drone/AI/Animation/BS_NPC_Unarmed_Locomotion"
+TARGET_UNARMED_ANIM_BLUEPRINT = "/Game/Drone/AI/Animation/ABP_NPC_Unarmed_Greybox"
 RIFLE_IDLE = "/Game/Characters/Mannequins/Anims/Rifle/MF_Rifle_Idle_ADS"
-UNARMED_ANIM_BLUEPRINT = "/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed"
 ARMED_NPCS = (
     "/Game/Drone/AI/Blueprints/BP_NPC_Hostile_Rifle",
     "/Game/Drone/AI/Blueprints/BP_NPC_Hostile_Shotgun",
@@ -64,12 +65,28 @@ for npc_path in ARMED_NPCS:
     if npc_cdo.get_editor_property("mesh").get_editor_property("anim_class") != armed_class:
         raise RuntimeError(f"Saved hostile NPC does not use armed AnimBP: {npc_path}")
 
+unarmed_blend_space = load_required(TARGET_UNARMED_BLEND_SPACE)
+unarmed_samples = unarmed_blend_space.get_editor_property("sample_data")
+if len(unarmed_samples) != 27:
+    raise RuntimeError(f"Expected 27 project Unarmed BlendSpace samples, found {len(unarmed_samples)}")
+if not any(sample.get_editor_property("sample_value").y > 0.0 for sample in unarmed_samples):
+    raise RuntimeError("Project Unarmed BlendSpace has no walking samples")
+
+unarmed_anim_blueprint = load_required(TARGET_UNARMED_ANIM_BLUEPRINT)
+if unarmed_anim_blueprint.status == unreal.BlueprintStatus.BS_ERROR:
+    raise RuntimeError("Saved unarmed AnimBP has a compile error")
+unarmed_nodes = unarmed_anim_blueprint.get_nodes_of_class(unreal.AnimGraphNode_BlendSpacePlayer)
+if len(unarmed_nodes) != 1:
+    raise RuntimeError(f"Expected one unarmed locomotion node, found {len(unarmed_nodes)}")
+if unarmed_nodes[0].get_editor_property("node").get_editor_property("blend_space") != unarmed_blend_space:
+    raise RuntimeError("Saved unarmed AnimBP does not use the project Unarmed BlendSpace")
+
 friendly_blueprint = load_required(FRIENDLY_NPC)
 friendly_cdo = unreal.get_default_object(friendly_blueprint.generated_class())
-unarmed_class = load_required(UNARMED_ANIM_BLUEPRINT).generated_class()
+unarmed_class = unarmed_anim_blueprint.generated_class()
 if friendly_cdo.get_editor_property("mesh").get_editor_property("anim_class") != unarmed_class:
-    raise RuntimeError("Friendly NPC no longer uses the Unarmed AnimBP")
+    raise RuntimeError("Friendly NPC does not use the project-owned Unarmed locomotion AnimBP")
 
 unreal.log(
-        "NPC_GREYBOX_ANIM_VERIFY success: saved Rifle idle + 27 Rifle locomotion samples + Drone gaze graph + hostile/friendly role split"
+        "NPC_GREYBOX_ANIM_VERIFY success: project-owned hostile Rifle and friendly Unarmed walk locomotion saved"
 )

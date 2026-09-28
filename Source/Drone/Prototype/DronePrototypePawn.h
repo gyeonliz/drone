@@ -11,6 +11,7 @@ class AController;
 class UCameraComponent;
 class UDroneTelemetryComponent;
 class UDroneHealthComponent;
+class UDroneGroundWeaponComponent;
 class UDroneImpactDetonationComponent;
 class UDronePayloadDropComponent;
 class UDroneReconScanComponent;
@@ -21,6 +22,7 @@ class UFloatingPawnMovement;
 class UInputAction;
 class UInputMappingContext;
 class UMaterialInterface;
+class UPoseableMeshComponent;
 class USphereComponent;
 class USceneComponent;
 class USplineComponent;
@@ -69,11 +71,18 @@ public:
 	UStaticMeshComponent* GetVisualMeshComponent() const { return VisualMeshComponent; }
 	UStaticMeshComponent* GetFiberSpoolMeshComponent() const { return FiberSpoolMeshComponent; }
 	USplineComponent* GetFiberOpticSplineComponent() const { return FiberOpticSplineComponent; }
+	USceneComponent* GetGroundUpperYawPivot() const { return GroundUpperYawPivot; }
+	USceneComponent* GetGroundWeaponPitchPivot() const { return GroundWeaponPitchPivot; }
+	USceneComponent* GetGroundGunMuzzleAnchor() const { return GroundGunMuzzleAnchor; }
+	USceneComponent* GetGroundGrenadeMuzzleAnchor() const { return GroundGrenadeMuzzleAnchor; }
 	USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 	UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 	UFloatingPawnMovement* GetPrototypeMovementComponent() const { return PrototypeMovementComponent; }
 	UDroneTelemetryComponent* GetTelemetryComponent() const { return TelemetryComponent; }
 	UDroneHealthComponent* GetHealthComponent() const { return HealthComponent; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|GroundWeapon")
+	UDroneGroundWeaponComponent* GetGroundWeaponComponent() const { return GroundWeaponComponent; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|Signal")
 	UDroneSignalComponent* GetSignalComponent() const { return SignalComponent; }
@@ -108,17 +117,27 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|GroundDrive")
 	float GetGroundSteeringInput() const { return GroundSteeringInput; }
 
+	/** 차체와 독립된 UGV 상부 조준각이다. 이후 총/유탄 장착점도 같은 Pivot을 따른다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|GroundDrive|UpperBody")
+	void SetGroundUpperAimGreybox(float YawDegrees, float PitchDegrees);
+
+	UFUNCTION(BlueprintPure, Category="Drone|GroundDrive|UpperBody")
+	float GetGroundUpperYawDegrees() const { return GroundUpperYawDegrees; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|GroundDrive|UpperBody")
+	float GetGroundWeaponPitchDegrees() const { return GroundWeaponPitchDegrees; }
+
 	UFUNCTION(BlueprintPure, Category="Drone|FiberOptic")
 	bool IsFiberTetherActive() const { return bFiberTetherActive; }
 
 	/**
 	 * 현재 Definition의 역할에 맞는 공통 1차 기능을 실행한다.
-	 * Recon=가장 가까운 유효 대상 Scan, FPV=충돌 자폭 Arm, Drop=적재 중 투하/빈 상태 근처 화물 적재다.
+	 * Recon=Scan, FPV=충돌 자폭 Arm, Drop=투하/적재, Ground UGV=직사 총탄이다.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Drone|Role Ability")
 	bool TriggerPrimaryRoleAbility();
 
-	/** Recon=Scan 취소, FPV=Disarm, Drop=상단 Camera 전환을 실행한다. */
+	/** Recon=Scan 취소, FPV=Disarm, Drop=상단 Camera, Ground UGV=중력 유탄을 실행한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Role Ability")
 	bool TriggerSecondaryRoleAbility();
 
@@ -276,6 +295,24 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components|FiberOptic", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USplineComponent> FiberOpticSplineComponent;
 
+	/** UGV 차체와 분리되어 Camera/총/유탄의 좌우 조준만 담당한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components|GroundDrive", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<USceneComponent> GroundUpperYawPivot;
+
+	/** 상부 Yaw 아래에서 Camera와 향후 무장 발사구의 상하 조준을 담당한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components|GroundDrive", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<USceneComponent> GroundWeaponPitchPivot;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components|GroundDrive", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<USceneComponent> GroundGunMuzzleAnchor;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components|GroundDrive", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<USceneComponent> GroundGrenadeMuzzleAnchor;
+
+	/** GroundDrive 역할에서만 활성화되는 플레이어 총·유탄 발사 Component다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components|GroundDrive", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UDroneGroundWeaponComponent> GroundWeaponComponent;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
 
@@ -404,6 +441,30 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Suspension", meta=(ClampMin="0.1", AllowPrivateAccess="true"))
 	float GroundRotationInterpolationSpeed = 9.0f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|UpperBody", meta=(ClampMin="-180.0", ClampMax="0.0", ForceUnits="deg", AllowPrivateAccess="true"))
+	float GroundUpperYawMinimumDegrees = -160.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|UpperBody", meta=(ClampMin="0.0", ClampMax="180.0", ForceUnits="deg", AllowPrivateAccess="true"))
+	float GroundUpperYawMaximumDegrees = 160.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|UpperBody", meta=(ClampMin="-89.0", ClampMax="0.0", ForceUnits="deg", AllowPrivateAccess="true"))
+	float GroundWeaponPitchMinimumDegrees = -18.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|UpperBody", meta=(ClampMin="0.0", ClampMax="89.0", ForceUnits="deg", AllowPrivateAccess="true"))
+	float GroundWeaponPitchMaximumDegrees = 38.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|UpperBody", meta=(AllowPrivateAccess="true"))
+	FName GroundTurretYawBoneName = TEXT("Turret");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|UpperBody", meta=(AllowPrivateAccess="true"))
+	FName GroundWeaponPitchBoneName = TEXT("Turret_Swivel");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Camera", meta=(AllowPrivateAccess="true"))
+	FVector GroundFirstPersonCameraOffset = FVector(45.0f, 0.0f, 12.0f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Camera", meta=(AllowPrivateAccess="true"))
+	FVector GroundThirdPersonCameraOffset = FVector::ZeroVector;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|GroundDrive|Suspension", meta=(AllowPrivateAccess="true"))
 	TEnumAsByte<ECollisionChannel> GroundTraceChannel = ECC_Visibility;
 
@@ -423,6 +484,14 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Layout", meta=(ClampMin="0.0", ForceUnits="cm", AllowPrivateAccess="true"))
 	float FiberSagDepthCentimeters = 45.0f;
+
+	/** 마지막 지면점부터 기체 통까지 포물선 처짐을 구성할 내부 점 수다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Layout", meta=(ClampMin="1", ClampMax="12", AllowPrivateAccess="true"))
+	int32 FiberHangingCurveSubdivisionCount = 4;
+
+	/** 이웃 점 기반 Hermite Tangent 배율. 0은 직선, 1은 기본 Catmull-Rom 곡률이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Layout", meta=(ClampMin="0.0", ClampMax="1.5", AllowPrivateAccess="true"))
+	float FiberSplineTangentScale = 0.75f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|FiberOptic|Layout", meta=(ClampMin="100.0", ForceUnits="cm", AllowPrivateAccess="true"))
 	float FiberGroundTraceDistanceCentimeters = 10000.0f;
@@ -607,6 +676,9 @@ private:
 	void RefreshVisualTiltAttachments();
 	void ApplyRuntimeFlightTuning();
 	void UpdateGroundDrive(float DeltaSeconds);
+	void InitializeGroundUpperBodyPresentation();
+	void AdjustGroundUpperAim(float YawDeltaDegrees, float PitchDeltaDegrees);
+	void ApplyGroundUpperAim();
 	bool TryFindGroundSurface(const FVector& WorldLocation, float TraceDistanceCentimeters, FHitResult& OutHit) const;
 	void SetFiberTetherActive(bool bActive);
 	void InitializeFiberTether();
@@ -648,7 +720,15 @@ private:
 	float GroundThrottleInput = 0.0f;
 	float GroundSteeringInput = 0.0f;
 	float GroundYawInput = 0.0f;
+	float GroundUpperYawDegrees = 0.0f;
+	float GroundWeaponPitchDegrees = 0.0f;
 	TArray<FVector> FiberLaidPointsWorld;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UPoseableMeshComponent> GroundPoseableVisualComponent;
+	FRotator GroundTurretReferenceComponentRotation = FRotator::ZeroRotator;
+	FRotator GroundWeaponReferenceComponentRotation = FRotator::ZeroRotator;
+	bool bGroundBoneReferenceCaptured = false;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<USplineMeshComponent>> FiberCableSegments;

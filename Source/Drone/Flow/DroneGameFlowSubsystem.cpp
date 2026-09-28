@@ -15,8 +15,18 @@ const TCHAR* DefaultDronePaths[] =
 	TEXT("/Game/Drone/Data/Drones/DA_Drone_FiberOptic_Greybox.DA_Drone_FiberOptic_Greybox"),
 	TEXT("/Game/Drone/Data/Drones/DA_Drone_GroundUGV_Greybox.DA_Drone_GroundUGV_Greybox")
 };
-const TCHAR* DefaultMissionPath =
-	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Training.DA_Mission_Tutorial_Training");
+const TCHAR* DefaultMissionPaths[] =
+{
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Training.DA_Mission_Tutorial_Training"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Hover.DA_Mission_Tutorial_Hover"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Forward.DA_Mission_Tutorial_Forward"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Heading.DA_Mission_Tutorial_Heading"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_GateFlight.DA_Mission_Tutorial_GateFlight"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Payload.DA_Mission_Tutorial_Payload"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_FPV.DA_Mission_Tutorial_FPV"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_UGV_NPC.DA_Mission_Tutorial_UGV_NPC"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_UGV_Turret.DA_Mission_Tutorial_UGV_Turret")
+};
 }
 
 void UDroneGameFlowSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -66,24 +76,27 @@ bool UDroneGameFlowSubsystem::EnsureDefaultCatalog()
 		}
 	}
 
-	UDroneMissionDefinition* DefaultMission = LoadObject<UDroneMissionDefinition>(
-		nullptr,
-		DroneGameFlow::DefaultMissionPath);
-	if (!DefaultMission)
+	for (const TCHAR* DefaultMissionPath : DroneGameFlow::DefaultMissionPaths)
 	{
-		return Reject(LOCTEXT("DefaultMissionMissing", "기본 Mission Definition을 불러오지 못했습니다."));
-	}
-
-	if (UDroneMissionDefinition* RegisteredMission = FindMissionDefinition(DefaultMission->MissionId))
-	{
-		if (RegisteredMission != DefaultMission)
+		UDroneMissionDefinition* DefaultMission = LoadObject<UDroneMissionDefinition>(nullptr, DefaultMissionPath);
+		if (!DefaultMission)
 		{
-			return Reject(LOCTEXT("DefaultMissionConflict", "기본 Mission ID가 다른 Asset으로 이미 등록되어 있습니다."));
+			return Reject(FText::Format(
+				LOCTEXT("DefaultMissionMissing", "기본 Mission Definition '{0}'을 불러오지 못했습니다."),
+				FText::FromString(DefaultMissionPath)));
 		}
-	}
-	else if (!RegisterMissionDefinition(DefaultMission))
-	{
-		return false;
+
+		if (UDroneMissionDefinition* RegisteredMission = FindMissionDefinition(DefaultMission->MissionId))
+		{
+			if (RegisteredMission != DefaultMission)
+			{
+				return Reject(LOCTEXT("DefaultMissionConflict", "기본 Mission ID가 다른 Asset으로 이미 등록되어 있습니다."));
+			}
+		}
+		else if (!RegisterMissionDefinition(DefaultMission))
+		{
+			return false;
+		}
 	}
 
 	ClearRejection();
