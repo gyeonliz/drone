@@ -5,6 +5,8 @@
 #include "DronePrototypePlayerController.generated.h"
 
 class UDroneFlightHUDWidget;
+class ADroneTrainingCourse;
+class ADroneTrainingRouteSelector;
 
 /**
  * Drone Prototype의 로컬 HUD 수명주기를 소유하는 PlayerController.
@@ -49,9 +51,15 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UDroneFlightHUDWidget> FlightHUDWidget;
 
+	TWeakObjectPtr<ADroneTrainingRouteSelector> TrainingRouteSelector;
+
 	/** AController가 제공하는 Possess 변경 Event의 수신 함수다. */
 	UFUNCTION()
 	void HandlePossessedPawnChanged(APawn* PreviousPawn, APawn* NewPawn);
+
+	/** Route TestMap에서 숫자키로 Course가 바뀌면 같은 HUD의 기록 Source만 교체한다. */
+	UFUNCTION()
+	void HandleTrainingRouteChanged(int32 ActiveRouteNumber, ADroneTrainingCourse* ActiveCourse);
 
 	/** 선택한 Class로 HUD를 한 번만 생성해 로컬 Player Layer에 올린다. */
 	void CreateFlightHUD();

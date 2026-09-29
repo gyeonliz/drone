@@ -19,12 +19,16 @@ bool FDroneGameFlowContractTest::RunTest(const FString& Parameters)
 	UDroneGameFlowSubsystem* CatalogFlow = NewObject<UDroneGameFlowSubsystem>(CatalogGameInstance);
 	TestTrue(TEXT("Default Catalog registers from saved assets"), CatalogFlow && CatalogFlow->EnsureDefaultCatalog());
 	TestEqual(TEXT("Default Catalog contains five implemented Drone roles"), CatalogFlow ? CatalogFlow->GetRegisteredDroneCount() : 0, 5);
-	TestEqual(TEXT("Default Catalog contains Training plus eight focused Tutorial lessons"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 9);
+	TestEqual(TEXT("Default Catalog contains nine Tutorial entries plus four Story test Missions"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 13);
 	TestEqual(TEXT("Default Catalog exposes five sorted Drone IDs"), CatalogFlow ? CatalogFlow->GetRegisteredDroneIds().Num() : 0, 5);
-	TestEqual(TEXT("Default Catalog exposes nine sorted Mission IDs"), CatalogFlow ? CatalogFlow->GetRegisteredMissionIds().Num() : 0, 9);
-	if (CatalogFlow && CatalogFlow->GetRegisteredMissionIds().Num() == 9)
+	TestEqual(TEXT("Default Catalog exposes thirteen sorted Mission IDs"), CatalogFlow ? CatalogFlow->GetRegisteredMissionIds().Num() : 0, 13);
+	if (CatalogFlow && CatalogFlow->GetRegisteredMissionIds().Num() == 13)
 	{
 		const TArray<FName> ExpectedMissionIds = {
+			FName(TEXT("Mission.Story.Endgame.Test")),
+			FName(TEXT("Mission.Story.GoldenTime.Test")),
+			FName(TEXT("Mission.Story.Intercept.Test")),
+			FName(TEXT("Mission.Story.VeilBreaker.Test")),
 			FName(TEXT("Mission.Tutorial.Forward")),
 			FName(TEXT("Mission.Tutorial.FPV")),
 			FName(TEXT("Mission.Tutorial.GateFlight")),
@@ -38,7 +42,7 @@ bool FDroneGameFlowContractTest::RunTest(const FString& Parameters)
 	}
 	TestTrue(TEXT("Default Catalog registration is idempotent"), CatalogFlow && CatalogFlow->EnsureDefaultCatalog());
 	TestEqual(TEXT("Idempotent registration keeps five Drones"), CatalogFlow ? CatalogFlow->GetRegisteredDroneCount() : 0, 5);
-	TestEqual(TEXT("Idempotent registration keeps nine Missions"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 9);
+	TestEqual(TEXT("Idempotent registration keeps thirteen Missions"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 13);
 
 	UGameInstance* GameInstance = NewObject<UGameInstance>();
 	UDroneGameFlowSubsystem* Flow = NewObject<UDroneGameFlowSubsystem>(GameInstance);

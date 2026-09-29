@@ -3,6 +3,7 @@
 #include "Camera/CameraComponent.h"
 #include "AI/DroneNPCAIController.h"
 #include "Abilities/DroneImpactDetonationComponent.h"
+#include "Physics/DroneCollisionResponseComponent.h"
 #include "Abilities/DronePayloadDropComponent.h"
 #include "Abilities/DroneReconScanComponent.h"
 #include "Components/SceneComponent.h"
@@ -180,6 +181,7 @@ ADronePrototypePawn::ADronePrototypePawn()
 	WeatherResponseComponent = CreateDefaultSubobject<UDroneWeatherResponseComponent>(TEXT("WeatherResponseComponent"));
 	ReconScanComponent = CreateDefaultSubobject<UDroneReconScanComponent>(TEXT("ReconScanComponent"));
 	ImpactDetonationComponent = CreateDefaultSubobject<UDroneImpactDetonationComponent>(TEXT("ImpactDetonationComponent"));
+	CollisionResponseComponent = CreateDefaultSubobject<UDroneCollisionResponseComponent>(TEXT("CollisionResponseComponent"));
 	PayloadDropComponent = CreateDefaultSubobject<UDronePayloadDropComponent>(TEXT("PayloadDropComponent"));
 
 	// AI Perception의 전역 Pawn 자동 등록 설정에 의존하지 않고 Sight 대상으로 명시한다.

@@ -49,6 +49,12 @@ KEY_LIGHT_LABEL = "TutorialMissionTest_KeyLight"
 SKY_LIGHT_LABEL = "TutorialMissionTest_SkyLight"
 HOVER_ZONE_LABEL = "TutorialMissionTest_HoverZone"
 HOVER_PAD_LABEL = "TutorialMissionTest_HoverPad"
+HOVER_MARKER_LABELS = (
+    "TutorialMissionTest_HoverMarker_FL",
+    "TutorialMissionTest_HoverMarker_FR",
+    "TutorialMissionTest_HoverMarker_BL",
+    "TutorialMissionTest_HoverMarker_BR",
+)
 FORWARD_TRIGGER_LABEL = "TutorialMissionTest_ForwardGoal"
 FORWARD_PAD_LABEL = "TutorialMissionTest_ForwardPad"
 HEADING_ZONE_LABEL = "TutorialMissionTest_HeadingZone"
@@ -288,6 +294,17 @@ def create_or_rebuild_map(
         actors, cube, HOVER_PAD_LABEL, (-500.0, 0.0, 5.0), (4.0, 4.0, 0.10),
         unreal.CollisionEnabled.NO_COLLISION,
     )
+    # Hover Box는 런타임에 보이지 않으므로 네 모서리의 얇은 기둥으로 3초 유지 공간을 표시한다.
+    # 충돌은 꺼서 실제 안정 호버 판정에는 영향을 주지 않는다.
+    for marker_label, marker_location in zip(
+        HOVER_MARKER_LABELS,
+        ((-850.0, -350.0, 500.0), (-850.0, 350.0, 500.0),
+         (-150.0, -350.0, 500.0), (-150.0, 350.0, 500.0)),
+    ):
+        spawn_cube(
+            actors, cube, marker_label, marker_location, (0.08, 0.08, 3.5),
+            unreal.CollisionEnabled.NO_COLLISION,
+        )
 
     forward_trigger = spawn_actor(
         actors,

@@ -13,6 +13,7 @@ class UDroneTelemetryComponent;
 class UDroneHealthComponent;
 class UDroneGroundWeaponComponent;
 class UDroneImpactDetonationComponent;
+class UDroneCollisionResponseComponent;
 class UDronePayloadDropComponent;
 class UDroneReconScanComponent;
 class UDroneSignalComponent;
@@ -92,6 +93,9 @@ public:
 	UDroneWeatherResponseComponent* GetWeatherResponseComponent() const { return WeatherResponseComponent; }
 	UDroneReconScanComponent* GetReconScanComponent() const { return ReconScanComponent; }
 	UDroneImpactDetonationComponent* GetImpactDetonationComponent() const { return ImpactDetonationComponent; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Physics")
+	UDroneCollisionResponseComponent* GetCollisionResponseComponent() const { return CollisionResponseComponent; }
 	UDronePayloadDropComponent* GetPayloadDropComponent() const { return PayloadDropComponent; }
 	UAIPerceptionStimuliSourceComponent* GetPerceptionStimuliSource() const { return PerceptionStimuliSource; }
 
@@ -345,6 +349,10 @@ protected:
 	/** Definition의 ImplementedCapabilities에 ImpactDetonation이 있을 때만 활성화된다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UDroneImpactDetonationComponent> ImpactDetonationComponent;
+
+	/** 기존 Drone에는 비활성이고 물리 Sandbox 파생 Blueprint에서만 켜는 벽 충돌 반발 Greybox다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|Physics", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UDroneCollisionResponseComponent> CollisionResponseComponent;
 
 	/** Definition의 ImplementedCapabilities에 PayloadDrop이 있을 때만 활성화된다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))

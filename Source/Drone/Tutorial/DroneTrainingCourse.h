@@ -100,6 +100,13 @@ public:
 		return bUseAutomaticSplineGates ? ActiveOrderedGates : OrderedGates;
 	}
 
+	/** 다중 Route 시험에서 선택되지 않은 Course의 선과 Gate 판정을 함께 끈다. */
+	UFUNCTION(BlueprintCallable, Category="Tutorial|Course|Runtime")
+	void SetCourseRuntimeActive(bool bActive);
+
+	UFUNCTION(BlueprintPure, Category="Tutorial|Course|Runtime")
+	bool IsCourseRuntimeActive() const { return bRuntimeCourseActive; }
+
 	/** 자동화나 후속 Editor 도구가 명시적 배열을 설정한 뒤 같은 검증 경로를 사용한다. */
 	void ConfigureOrderedGates(const TArray<ADroneTrainingGate*>& InOrderedGates);
 
@@ -334,4 +341,8 @@ private:
 	/** Gate Sequence와 Recorder가 실제 사용하는 자동/수동 통합 배열이다. */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<ADroneTrainingGate>> ActiveOrderedGates;
+
+	/** Editor에서는 모든 Route를 편집할 수 있고 Game World에서만 Selector가 바꾼다. */
+	UPROPERTY(Transient)
+	bool bRuntimeCourseActive = true;
 };

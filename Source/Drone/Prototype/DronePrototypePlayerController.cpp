@@ -8,6 +8,7 @@
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Tutorial/DroneTrainingCourse.h"
 #include "Tutorial/DroneTrainingLapRecorderComponent.h"
+#include "Tutorial/DroneTrainingRouteSelector.h"
 #include "UI/DroneFlightHUDWidget.h"
 #include "Signal/DroneSignalComponent.h"
 
@@ -42,6 +43,13 @@ void ADronePrototypePlayerController::EndPlay(const EEndPlayReason::Type EndPlay
 	OnPossessedPawnChanged.RemoveDynamic(
 		this,
 		&ADronePrototypePlayerController::HandlePossessedPawnChanged);
+	if (ADroneTrainingRouteSelector* Selector = TrainingRouteSelector.Get())
+	{
+		Selector->OnActiveRouteChanged.RemoveDynamic(
+			this,
+			&ADronePrototypePlayerController::HandleTrainingRouteChanged);
+	}
+	TrainingRouteSelector.Reset();
 
 	if (FlightHUDWidget)
 	{
@@ -60,6 +68,17 @@ void ADronePrototypePlayerController::HandlePossessedPawnChanged(APawn* /*Previo
 {
 	// Widget을 새로 만들지 않고 기존 HUD의 데이터 Source만 교체한다.
 	SyncFlightHUDToPawn(NewPawn);
+}
+
+void ADronePrototypePlayerController::HandleTrainingRouteChanged(
+	const int32 /*ActiveRouteNumber*/,
+	ADroneTrainingCourse* ActiveCourse)
+{
+	if (FlightHUDWidget)
+	{
+		FlightHUDWidget->SetTrainingRecordSource(
+			ActiveCourse ? ActiveCourse->GetLapRecorderComponent() : nullptr);
+	}
 }
 
 void ADronePrototypePlayerController::CreateFlightHUD()
@@ -114,19 +133,43 @@ void ADronePrototypePlayerController::SyncTrainingHUDToWorld()
 		return;
 	}
 
-	UDroneTrainingLapRecorderComponent* Recorder = nullptr;
+	if (ADroneTrainingRouteSelector* ExistingSelector = TrainingRouteSelector.Get())
+	{
+		ExistingSelector->OnActiveRouteChanged.RemoveDynamic(
+			this,
+			&ADronePrototypePlayerController::HandleTrainingRouteChanged);
+	}
+	TrainingRouteSelector.Reset();
+
+	ADroneTrainingCourse* SelectedCourse = nullptr;
 	if (UWorld* World = GetWorld())
 	{
+		for (TActorIterator<ADroneTrainingRouteSelector> SelectorIt(World); SelectorIt; ++SelectorIt)
+		{
+			ADroneTrainingRouteSelector* Selector = *SelectorIt;
+			if (!IsValid(Selector))
+			{
+				continue;
+			}
+			TrainingRouteSelector = Selector;
+			Selector->OnActiveRouteChanged.AddUniqueDynamic(
+				this,
+				&ADronePrototypePlayerController::HandleTrainingRouteChanged);
+			SelectedCourse = Selector->GetActiveRoute();
+			break;
+		}
+
 		for (TActorIterator<ADroneTrainingCourse> CourseIt(World); CourseIt; ++CourseIt)
 		{
 			ADroneTrainingCourse* Course = *CourseIt;
-			if (IsValid(Course))
+			if (!SelectedCourse && IsValid(Course) && Course->IsCourseRuntimeActive())
 			{
-				Recorder = Course->GetLapRecorderComponent();
+				SelectedCourse = Course;
 				break;
 			}
 		}
 	}
 
-	FlightHUDWidget->SetTrainingRecordSource(Recorder);
+	FlightHUDWidget->SetTrainingRecordSource(
+		SelectedCourse ? SelectedCourse->GetLapRecorderComponent() : nullptr);
 }

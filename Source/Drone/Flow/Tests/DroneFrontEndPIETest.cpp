@@ -147,7 +147,7 @@ public:
 		if (Flow)
 		{
 			Test->TestEqual(TEXT("PIE Catalog contains five functional Drone profiles"), Flow->GetRegisteredDroneCount(), 5);
-			Test->TestEqual(TEXT("PIE Catalog contains Training plus eight focused Tutorial lessons"), Flow->GetRegisteredMissionCount(), 9);
+			Test->TestEqual(TEXT("PIE Catalog contains nine Tutorial entries plus four Story test Missions"), Flow->GetRegisteredMissionCount(), 13);
 		}
 
 		if (FrontEndWidget && Flow)
@@ -161,7 +161,7 @@ public:
 			Test->TestEqual(TEXT("Lobby still has one Root Widget creation"), Controller->GetFrontEndWidgetCreationCount(), 1);
 			if (FrontEndWidget->IsUsingNativeFallbackLayout())
 			{
-				Test->TestEqual(TEXT("Native Lobby exposes all nine registered Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 9);
+				Test->TestEqual(TEXT("Native Lobby exposes all thirteen registered Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 13);
 			}
 			Test->TestFalse(TEXT("Opening completion cannot run twice"), FrontEndWidget->FinishOpeningTrailer());
 

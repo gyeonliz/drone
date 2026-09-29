@@ -25,7 +25,11 @@ const TCHAR* DefaultMissionPaths[] =
 	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Payload.DA_Mission_Tutorial_Payload"),
 	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_FPV.DA_Mission_Tutorial_FPV"),
 	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_UGV_NPC.DA_Mission_Tutorial_UGV_NPC"),
-	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_UGV_Turret.DA_Mission_Tutorial_UGV_Turret")
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_UGV_Turret.DA_Mission_Tutorial_UGV_Turret"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Story_GoldenTime_Test.DA_Mission_Story_GoldenTime_Test"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Story_Intercept_Test.DA_Mission_Story_Intercept_Test"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Story_VeilBreaker_Test.DA_Mission_Story_VeilBreaker_Test"),
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Story_Endgame_Test.DA_Mission_Story_Endgame_Test")
 };
 }
 

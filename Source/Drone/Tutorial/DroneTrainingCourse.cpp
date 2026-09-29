@@ -1,6 +1,7 @@
 #include "Tutorial/DroneTrainingCourse.h"
 
 #include "Components/ChildActorComponent.h"
+#include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SplineComponent.h"
@@ -115,6 +116,35 @@ void ADroneTrainingCourse::BeginPlay()
 		RebuildAutomaticGateComponents();
 	}
 	ConfigureGateSequence();
+	SetCourseRuntimeActive(bRuntimeCourseActive);
+}
+
+void ADroneTrainingCourse::SetCourseRuntimeActive(const bool bActive)
+{
+	bRuntimeCourseActive = bActive;
+	SetActorHiddenInGame(!bActive);
+
+	RefreshActiveOrderedGates();
+	for (ADroneTrainingGate* Gate : ActiveOrderedGates)
+	{
+		if (!IsValid(Gate))
+		{
+			continue;
+		}
+
+		Gate->SetActorHiddenInGame(!bActive);
+		Gate->SetActorEnableCollision(bActive);
+		if (UBoxComponent* Trigger = Gate->GetGateTrigger())
+		{
+			Trigger->SetGenerateOverlapEvents(bActive);
+			Trigger->SetCollisionEnabled(bActive ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+		}
+	}
+
+	if (GateSequenceComponent)
+	{
+		GateSequenceComponent->ResetSequence();
+	}
 }
 
 void ADroneTrainingCourse::ConfigureOrderedGates(const TArray<ADroneTrainingGate*>& InOrderedGates)
