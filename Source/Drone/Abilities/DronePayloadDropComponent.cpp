@@ -31,6 +31,7 @@ void UDronePayloadDropComponent::ConfigureFeatureEnabled(const bool bEnabled)
 		SetDropViewEnabled(false);
 	}
 	UpdateCarriedPayloadVisual();
+	NotifyOwnerPayloadMassChanged();
 }
 
 void UDronePayloadDropComponent::SetDropTarget(AActor* NewTargetActor)
@@ -104,6 +105,7 @@ ADroneDroppedPayload* UDronePayloadDropComponent::TryPickupNearestCarryablePaylo
 	CarriedPayloadActor = Payload;
 	RemainingPayloadCount = 1;
 	UpdateCarriedPayloadVisual();
+	NotifyOwnerPayloadMassChanged();
 	OnPayloadPickedUp.Broadcast(Payload);
 	return Payload;
 }
@@ -190,6 +192,7 @@ ADroneDroppedPayload* UDronePayloadDropComponent::DropPayload()
 	CarriedPayloadActor.Reset();
 	--RemainingPayloadCount;
 	UpdateCarriedPayloadVisual();
+	NotifyOwnerPayloadMassChanged();
 	Payload->InitializePayload(DropTarget.Get(), InitialDownwardSpeedCentimetersPerSecond);
 	Payload->OnPayloadImpact.AddUniqueDynamic(this, &UDronePayloadDropComponent::HandlePayloadImpact);
 	OnPayloadDropped.Broadcast(Payload);
@@ -205,6 +208,28 @@ void UDronePayloadDropComponent::ReloadPayloadsForMission()
 	CarriedPayloadActor.Reset();
 	RemainingPayloadCount = bFeatureEnabled ? FMath::Max(1, InitialPayloadCount) : 0;
 	UpdateCarriedPayloadVisual();
+	NotifyOwnerPayloadMassChanged();
+}
+
+float UDronePayloadDropComponent::GetCurrentPayloadMassKilograms() const
+{
+	if (!bFeatureEnabled || RemainingPayloadCount <= 0)
+	{
+		return 0.0f;
+	}
+	if (const ADroneDroppedPayload* CarriedPayload = CarriedPayloadActor.Get())
+	{
+		return FMath::Max(0.0f, CarriedPayload->GetPayloadMassKilograms());
+	}
+	return FMath::Max(0.0f, DefaultInventoryPayloadMassKilograms);
+}
+
+void UDronePayloadDropComponent::NotifyOwnerPayloadMassChanged()
+{
+	if (ADronePrototypePawn* DronePawn = Cast<ADronePrototypePawn>(GetOwner()))
+	{
+		DronePawn->RefreshPayloadMassEffects();
+	}
 }
 
 void UDronePayloadDropComponent::UpdateCarriedPayloadVisual()

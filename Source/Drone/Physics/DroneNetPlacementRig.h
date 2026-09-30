@@ -40,6 +40,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Physics|Net")
 	int32 BreakNetAtWorldLocation(FVector WorldLocation, float RadiusCentimeters);
 
+	/** 실제 Hit Delegate와 자동화가 공유하는 Drone 접촉 처리다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Physics|Net|Impact")
+	bool ApplyDroneImpact(
+		AActor* OtherActor,
+		FVector ContactPoint,
+		FVector ContactNormal,
+		FVector ContactVelocity);
+
 	UFUNCTION(BlueprintCallable, CallInEditor, Category="Drone|Physics|Net")
 	void ResetNetGreybox();
 
@@ -61,6 +69,12 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Physics|Net")
 	int32 GetAnchorCount() const { return 4; }
 
+	UFUNCTION(BlueprintPure, Category="Drone|Physics|Net|Impact")
+	bool EntanglesDronesOnImpact() const { return bEntangleDronesOnImpact; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Physics|Net|Impact")
+	bool BreaksOnDroneImpact() const { return bBreakOnImpact; }
+
 	UFUNCTION(BlueprintPure, Category="Drone|Physics|Net")
 	FVector GetTopLeftCorner() const { return TopLeftCorner; }
 
@@ -74,6 +88,12 @@ public:
 	FVector GetBottomRightCorner() const { return BottomRightCorner; }
 
 protected:
+	virtual void BeginPlay() override;
+
+	/** 줄마다 Spring Arm이 수축/복귀하면 화면이 떨리므로 기본적으로 Camera만 통과시킨다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Physics|Net|Camera", meta=(DisplayName="그물이 카메라 암을 막음"))
+	bool bBlockCamera = false;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Drone|Physics|Net")
 	TObjectPtr<USceneComponent> SceneRoot;
 
@@ -130,8 +150,16 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Physics|Net|Damage", meta=(ClampMin="0.0"))
 	float MinimumPointDamage = 1.0f;
 
+	/** 비행 Drone 충돌은 기본적으로 절단이 아니라 Rotor 얽힘 상태를 만든다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Physics|Net|Impact")
-	bool bBreakOnImpact = true;
+	bool bEntangleDronesOnImpact = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Physics|Net|Impact", meta=(ClampMin="0.0", ForceUnits="cm/s"))
+	float MinimumEntanglementSpeed = 75.0f;
+
+	/** 진단용 절단 연출. 기본 Off이며 탄환 Point Damage에 의한 국소 절단은 별도로 유지한다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Physics|Net|Impact")
+	bool bBreakOnImpact = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Physics|Net|Impact", meta=(ClampMin="0.0", ForceUnits="cm/s"))
 	float MinimumImpactSpeed = 250.0f;

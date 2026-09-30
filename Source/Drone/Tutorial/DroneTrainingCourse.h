@@ -134,6 +134,11 @@ public:
 		const TArray<float>& SplineDistancesCentimeters,
 		const TArray<FVector>& LocalOffsets);
 
+	/** Course/선 Transform은 그대로 두고 Gate 위치·크기·Spline 높이 비율만 변경한다. */
+	UFUNCTION(BlueprintCallable, Category="Tutorial|Course|Automatic Gates")
+	void ConfigureAutomaticGatePresentation(FVector LocalOffset, FVector GateScale,
+		float SplineHeightFraction, const TArray<FVector>& PerGateScales);
+
 	/** 현재 숫자/수동 Gate 배치를 복사해 Spline과 분리된 Ring 전용 Handle 배열을 만든다. */
 	UFUNCTION(CallInEditor, BlueprintCallable, Category="Tutorial|Course|Automatic Gates",
 		meta=(DisplayName="현재 배치에서 Ring Handle 만들기"))
@@ -249,12 +254,12 @@ protected:
 
 	/** Spline 위치에서 Gate 로컬 축 기준으로 더하는 위치 보정이다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
-		meta=(EditCondition="bUseAutomaticSplineGates", Units="cm", AllowPrivateAccess="true"))
+		meta=(EditCondition="bUseAutomaticSplineGates", Units="cm", DisplayName="게이트 공통 위치 보정 (cm)", AllowPrivateAccess="true"))
 	FVector AutomaticGateLocalOffset = FVector::ZeroVector;
 
 	/** 배열 Index별 Gate 로컬 위치 보정(cm). 공통 LocalOffset에 더하며 항목이 없는 Gate는 0을 사용한다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
-		meta=(EditCondition="bUseAutomaticSplineGates", AllowPrivateAccess="true"))
+		meta=(EditCondition="bUseAutomaticSplineGates", DisplayName="게이트별 위치 보정 (cm)", AllowPrivateAccess="true"))
 	TArray<FVector> AutomaticGateLocalOffsets;
 
 	/** Spline 접선 회전에 더하는 Gate 회전 보정이다. */
@@ -262,10 +267,20 @@ protected:
 		meta=(EditCondition="bUseAutomaticSplineGates", AllowPrivateAccess="true"))
 	FRotator AutomaticGateRotationOffset = FRotator::ZeroRotator;
 
-	/** 생성 Ring 전체 크기. Gate 자체 Radius/Trigger 값은 Gate Blueprint에서 별도로 조정한다. */
+	/** Gate Visual과 Trigger만 확대한다. Course Actor/Spline/안내선에는 적용하지 않는다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
-		meta=(EditCondition="bUseAutomaticSplineGates", AllowPrivateAccess="true"))
+		meta=(EditCondition="bUseAutomaticSplineGates", DisplayName="게이트 전용 스케일", AllowPrivateAccess="true"))
 	FVector AutomaticGateScale = FVector::OneVector;
+
+	/** Index별 추가 배율. 항목이 없는 Gate는 (1,1,1), 공통 스케일과 곱한다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
+		meta=(EditCondition="bUseAutomaticSplineGates", DisplayName="게이트별 추가 스케일", AllowPrivateAccess="true"))
+	TArray<FVector> AutomaticGateScales;
+
+	/** Gate 안쪽 하단=0, 중앙=0.5, 상단=1. 기본은 하단에서 1/6 높이로 선을 통과시킨다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tutorial|Course|Automatic Gates",
+		meta=(EditCondition="bUseAutomaticSplineGates", ClampMin="0.0", ClampMax="1.0", DisplayName="게이트 안쪽 Spline 높이 비율", AllowPrivateAccess="true"))
+	float AutomaticGateSplineHeightFraction = 1.0f / 6.0f;
 
 	/**
 	 * SplineMesh에 사용할 임시 Greybox Mesh.
@@ -320,6 +335,9 @@ private:
 
 	/** 자동/수동 모드 중 하나를 ActiveOrderedGates 단일 실행 배열로 선택한다. */
 	void RefreshActiveOrderedGates();
+
+	/** 저장된 Child Actor도 플레이 시작 때 최신 Gate 전용 배치 규칙을 적용한다. */
+	FTransform GetAutomaticGateRelativeTransform(int32 GateIndex, const ADroneTrainingGate* Gate) const;
 
 	/** Ring 전용 Handle을 가장 가까운 Spline 위치로 붙이되 CourseSpline 제어점은 바꾸지 않는다. */
 	void SnapAutomaticGateSplineHandlesToSplineInternal();

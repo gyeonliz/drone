@@ -77,6 +77,13 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Drop|Pickup")
 	ADroneDroppedPayload* GetCarriedPayloadActor() const { return CarriedPayloadActor.Get(); }
 
+	/** 실제 부착 Actor 질량 또는 내장 적재물 기본 질량을 반환한다. 비어 있으면 0이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Drop|Mass")
+	float GetCurrentPayloadMassKilograms() const;
+
+	UFUNCTION(BlueprintPure, Category="Drone|Drop|Mass")
+	bool IsCarryingPayloadMass() const { return GetCurrentPayloadMassKilograms() > UE_KINDA_SMALL_NUMBER; }
+
 	UFUNCTION(BlueprintPure, Category="Drone|Drop")
 	TSubclassOf<ADroneDroppedPayload> GetPayloadClass() const { return PayloadClass; }
 
@@ -111,11 +118,16 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|Drop|Pickup", meta=(ClampMin="1.0", ForceUnits="cm"))
 	float CarryablePickupRangeCentimeters = 300.0f;
 
+	/** Actor 없이 CarriedPayloadVisual로 시작하는 기본 1발의 질량이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|Drop|Mass", meta=(ClampMin="0.0", ForceUnits="kg"))
+	float DefaultInventoryPayloadMassKilograms = 0.75f;
+
 private:
 	UFUNCTION()
 	void HandlePayloadImpact(ADroneDroppedPayload* PayloadActor, AActor* HitActor, bool bHitIntendedTarget);
 
 	void UpdateCarriedPayloadVisual();
+	void NotifyOwnerPayloadMassChanged();
 	USceneComponent* FindCarriedPayloadAnchor() const;
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|Drop")

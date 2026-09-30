@@ -115,6 +115,19 @@ void ADroneTrainingCourse::BeginPlay()
 		// Recorder는 PostInitializeComponents에서 이미 Event를 구독하므로 여기서 복구해도 안전하다.
 		RebuildAutomaticGateComponents();
 	}
+	if (bUseAutomaticSplineGates)
+	{
+		// 예전에 저장된 맵의 중심 배치를 복제했더라도 Child를 파괴하지 않고 1/6 규칙을 복구한다.
+		for (UChildActorComponent* GateComponent : GeneratedAutomaticGateComponents)
+		{
+			if (ADroneTrainingGate* Gate = GateComponent
+				? Cast<ADroneTrainingGate>(GateComponent->GetChildActor()) : nullptr)
+			{
+				GateComponent->SetMobility(EComponentMobility::Movable);
+				GateComponent->SetRelativeTransform(GetAutomaticGateRelativeTransform(Gate->GetGateIndex(), Gate));
+			}
+		}
+	}
 	ConfigureGateSequence();
 	SetCourseRuntimeActive(bRuntimeCourseActive);
 }
@@ -207,6 +220,16 @@ void ADroneTrainingCourse::ConfigureAutomaticGateOverrides(
 {
 	AutomaticGateSplineDistancesCentimeters = SplineDistancesCentimeters;
 	AutomaticGateLocalOffsets = LocalOffsets;
+	RebuildAutomaticGates();
+}
+
+void ADroneTrainingCourse::ConfigureAutomaticGatePresentation(const FVector LocalOffset,
+	const FVector GateScale, const float SplineHeightFraction, const TArray<FVector>& PerGateScales)
+{
+	AutomaticGateLocalOffset = LocalOffset;
+	AutomaticGateScale = GateScale;
+	AutomaticGateSplineHeightFraction = SplineHeightFraction;
+	AutomaticGateScales = PerGateScales;
 	RebuildAutomaticGates();
 }
 
@@ -512,6 +535,35 @@ void ADroneTrainingCourse::DestroyGeneratedAutomaticGateComponents()
 	GeneratedAutomaticGateComponents.Reset();
 }
 
+FTransform ADroneTrainingCourse::GetAutomaticGateRelativeTransform(const int32 GateIndex,
+	const ADroneTrainingGate* Gate) const
+{
+	const float DistanceAlongSpline = GetAutomaticGateDistanceAlongSpline(GateIndex);
+	const FVector SplineLocation = CourseSpline->GetLocationAtDistanceAlongSpline(
+		DistanceAlongSpline, ESplineCoordinateSpace::Local);
+	const FQuat SplineRotation = CourseSpline->GetQuaternionAtDistanceAlongSpline(
+		DistanceAlongSpline, ESplineCoordinateSpace::Local);
+	const FVector PerGateLocalOffset = AutomaticGateLocalOffsets.IsValidIndex(GateIndex)
+		? AutomaticGateLocalOffsets[GateIndex] : FVector::ZeroVector;
+	const FQuat GateRotation = SplineRotation * AutomaticGateRotationOffset.Quaternion();
+	const FVector PerGateScale = AutomaticGateScales.IsValidIndex(GateIndex)
+		? AutomaticGateScales[GateIndex] : FVector::OneVector;
+	const FVector CombinedScale = AutomaticGateScale * PerGateScale;
+	const FVector GateScale(
+		FMath::IsFinite(CombinedScale.X) ? FMath::Max(FMath::Abs(CombinedScale.X), 0.01f) : 1.0f,
+		FMath::IsFinite(CombinedScale.Y) ? FMath::Max(FMath::Abs(CombinedScale.Y), 0.01f) : 1.0f,
+		FMath::IsFinite(CombinedScale.Z) ? FMath::Max(FMath::Abs(CombinedScale.Z), 0.01f) : 1.0f);
+	const float Fraction = FMath::IsFinite(AutomaticGateSplineHeightFraction)
+		? FMath::Clamp(AutomaticGateSplineHeightFraction, 0.0f, 1.0f) : 1.0f / 6.0f;
+	// 안내선을 변형하지 않고 Gate를 올린다. 게이트 전용 확대/축소 후에도 높이 비율은 유지된다.
+	const float CenterOffset = Gate->GetTriggerApertureHalfSizeCentimeters()
+		* GateScale.Z * (1.0f - 2.0f * Fraction);
+	const FVector GateLocation = SplineLocation
+		+ SplineRotation.RotateVector(AutomaticGateLocalOffset + PerGateLocalOffset)
+		+ GateRotation.RotateVector(FVector(0.0f, 0.0f, CenterOffset));
+	return FTransform(GateRotation, GateLocation, GateScale);
+}
+
 void ADroneTrainingCourse::RebuildAutomaticGateComponents()
 {
 	DestroyGeneratedAutomaticGateComponents();
@@ -536,22 +588,7 @@ void ADroneTrainingCourse::RebuildAutomaticGateComponents()
 	for (int32 GateIndex = 0; GateIndex < GateCount; ++GateIndex)
 	{
 		const float DistanceAlongSpline = GetAutomaticGateDistanceAlongSpline(GateIndex);
-		const FVector SplineLocation = CourseSpline->GetLocationAtDistanceAlongSpline(
-			DistanceAlongSpline,
-			ESplineCoordinateSpace::Local);
-		const FQuat SplineRotation = CourseSpline->GetQuaternionAtDistanceAlongSpline(
-			DistanceAlongSpline,
-			ESplineCoordinateSpace::Local);
-		const FVector PerGateLocalOffset = AutomaticGateLocalOffsets.IsValidIndex(GateIndex)
-			? AutomaticGateLocalOffsets[GateIndex]
-			: FVector::ZeroVector;
-		const FVector GateLocation = SplineLocation
-			+ SplineRotation.RotateVector(AutomaticGateLocalOffset + PerGateLocalOffset);
-		const FQuat GateRotation = SplineRotation * AutomaticGateRotationOffset.Quaternion();
-		const FVector GateScale(
-			FMath::Max(FMath::Abs(AutomaticGateScale.X), 0.01f),
-			FMath::Max(FMath::Abs(AutomaticGateScale.Y), 0.01f),
-			FMath::Max(FMath::Abs(AutomaticGateScale.Z), 0.01f));
+		const ADroneTrainingGate* GateDefaults = AutomaticGateClass->GetDefaultObject<ADroneTrainingGate>();
 
 		const FName ComponentName = MakeUniqueObjectName(
 			this,
@@ -569,8 +606,8 @@ void ADroneTrainingCourse::RebuildAutomaticGateComponents()
 		PostCreateBlueprintComponent(GateComponent);
 		GateComponent->ComponentTags.Add(DroneTrainingCourse::GeneratedGateComponentTag);
 		GateComponent->SetupAttachment(CourseSpline);
-		GateComponent->SetMobility(EComponentMobility::Static);
-		GateComponent->SetRelativeTransform(FTransform(GateRotation, GateLocation, GateScale));
+		GateComponent->SetMobility(EComponentMobility::Movable);
+		GateComponent->SetRelativeTransform(GetAutomaticGateRelativeTransform(GateIndex, GateDefaults));
 		GateComponent->SetChildActorOwnerOnCreation(true);
 		GateComponent->SetChildActorName(*FString::Printf(TEXT("TrainingGate_%02d"), GateIndex));
 		GateComponent->SetChildActorClass(AutomaticGateClass);

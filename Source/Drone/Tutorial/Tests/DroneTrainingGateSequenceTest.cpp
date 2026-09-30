@@ -120,7 +120,7 @@ bool FDroneTrainingGateSequenceTest::RunTest(const FString& Parameters)
 
 		TInlineComponentArray<UStaticMeshComponent*> VisualSegments;
 		Gate->GetComponents(VisualSegments);
-		TestEqual(TEXT("Gate preserves sixteen serialized visual segments"), VisualSegments.Num(), 16);
+		TestEqual(TEXT("Gate keeps sixteen frame segments and one replacement asset slot"), VisualSegments.Num(), 17);
 		TArray<UStaticMeshComponent*> VisibleFrameSegments;
 		for (UStaticMeshComponent* Segment : VisualSegments)
 		{

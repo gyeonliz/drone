@@ -4,6 +4,9 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/DamageEvents.h"
+#include "GameFramework/FloatingPawnMovement.h"
+#include "Physics/DroneCollisionResponseComponent.h"
+#include "Prototype/DronePrototypePawn.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace DroneNetPlacementRig
@@ -27,6 +30,7 @@ ADroneNetPlacementRig::ADroneNetPlacementRig()
 	NetStrands = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("NetStrands"));
 	NetStrands->SetupAttachment(SceneRoot);
 	NetStrands->SetCollisionProfileName(TEXT("BlockAll"));
+	NetStrands->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	NetStrands->SetGenerateOverlapEvents(false);
 	NetStrands->SetNotifyRigidBodyCollision(true);
 	NetStrands->OnComponentHit.AddDynamic(this, &ADroneNetPlacementRig::HandleStrandHit);
@@ -55,6 +59,17 @@ void ADroneNetPlacementRig::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 	RebuildNet();
+}
+
+void ADroneNetPlacementRig::BeginPlay()
+{
+	Super::BeginPlay();
+	// Apply to previously saved Blueprint/map instances too, without rebuilding
+	// strand geometry or requiring the production map to be re-saved.
+	if (NetStrands)
+	{
+		NetStrands->SetCollisionResponseToChannel(ECC_Camera, bBlockCamera ? ECR_Block : ECR_Ignore);
+	}
 }
 
 float ADroneNetPlacementRig::TakeDamage(
@@ -143,6 +158,43 @@ void ADroneNetPlacementRig::BreakNetGreybox()
 int32 ADroneNetPlacementRig::BreakNetAtWorldLocation(const FVector WorldLocation, const float RadiusCentimeters)
 {
 	return BreakNetAtWorldLocationInternal(WorldLocation, RadiusCentimeters, FVector::ZeroVector);
+}
+
+bool ADroneNetPlacementRig::ApplyDroneImpact(
+	AActor* OtherActor,
+	const FVector ContactPoint,
+	const FVector ContactNormal,
+	const FVector ContactVelocity)
+{
+	if (!OtherActor || OtherActor == this)
+	{
+		return false;
+	}
+
+	const float ImpactSpeed = ContactVelocity.Size();
+	bool bAppliedEntanglement = false;
+	if (bEntangleDronesOnImpact && ImpactSpeed >= FMath::Max(0.0f, MinimumEntanglementSpeed))
+	{
+		if (ADronePrototypePawn* Drone = Cast<ADronePrototypePawn>(OtherActor))
+		{
+			if (UDroneCollisionResponseComponent* Response = Drone->GetCollisionResponseComponent())
+			{
+				bAppliedEntanglement = Response->ApplyNetEntanglement(
+					ContactPoint,
+					ContactNormal,
+					ImpactSpeed);
+			}
+		}
+	}
+
+	if (bBreakOnImpact && ImpactSpeed >= FMath::Max(0.0f, MinimumImpactSpeed))
+	{
+		BreakNetAtWorldLocationInternal(
+			ContactPoint,
+			FMath::Max(1.0f, LocalBreakRadiusCentimeters),
+			ContactVelocity);
+	}
+	return bAppliedEntanglement;
 }
 
 int32 ADroneNetPlacementRig::BreakNetAtWorldLocationInternal(
@@ -311,6 +363,7 @@ void ADroneNetPlacementRig::RebuildVisibleSegments()
 	const bool bHasIntactSegments = GetIntactStrandSegmentCount() > 0;
 	NetStrands->SetCollisionEnabled(
 		bEnableStrandCollision && bHasIntactSegments ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
+	NetStrands->SetCollisionResponseToChannel(ECC_Camera, bBlockCamera ? ECR_Block : ECR_Ignore);
 	NetStrands->SetVisibility(bHasIntactSegments, true);
 }
 
@@ -335,17 +388,19 @@ void ADroneNetPlacementRig::HandleStrandHit(
 	FVector NormalImpulse,
 	const FHitResult& Hit)
 {
-	if (!bBreakOnImpact || !OtherActor || OtherActor == this)
+	if (!OtherActor || OtherActor == this)
 	{
 		return;
 	}
-	const FVector OtherVelocity = OtherComponent ? OtherComponent->GetComponentVelocity() : OtherActor->GetVelocity();
-	if (OtherVelocity.Size() < FMath::Max(0.0f, MinimumImpactSpeed))
+	// FloatingPawnMovement는 Root Primitive의 물리 속도가 아니라 Pawn Movement Velocity를 소유한다.
+	// 따라서 Pawn/Actor 속도를 우선하고, 물리 조각처럼 Actor 속도가 없는 경우에만 Component를 쓴다.
+	ADronePrototypePawn* Drone = Cast<ADronePrototypePawn>(OtherActor);
+	FVector OtherVelocity = Drone && Drone->GetPrototypeMovementComponent()
+		? Drone->GetPrototypeMovementComponent()->Velocity
+		: OtherActor->GetVelocity();
+	if (OtherVelocity.IsNearlyZero() && OtherComponent)
 	{
-		return;
+		OtherVelocity = OtherComponent->GetComponentVelocity();
 	}
-	BreakNetAtWorldLocationInternal(
-		Hit.ImpactPoint,
-		FMath::Max(1.0f, LocalBreakRadiusCentimeters),
-		OtherVelocity);
+	ApplyDroneImpact(OtherActor, Hit.ImpactPoint, Hit.ImpactNormal, OtherVelocity);
 }

@@ -68,6 +68,13 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Drop|Payload|Pickup")
 	bool DoesStartAsCarryablePickup() const { return bStartsAsCarryablePickup; }
 
+	/** 비행 성능 계산에 더할 실제 적재 질량이다. Level Instance와 파생 BP에서 조정할 수 있다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Drop|Payload|Mass")
+	float GetPayloadMassKilograms() const { return PayloadMassKilograms; }
+
+	UFUNCTION(BlueprintCallable, Category="Drone|Drop|Payload|Mass")
+	void SetPayloadMassKilograms(float NewPayloadMassKilograms);
+
 	UFUNCTION(BlueprintPure, Category="Drone|Drop|Payload|Presentation")
 	UStaticMeshComponent* GetPayloadVisual() const { return PayloadVisual; }
 
@@ -103,6 +110,10 @@ protected:
 	/** 일반 1회용 Payload의 자동 제거 시간이다. Carryable로 활성화된 Actor에는 적용하지 않는다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|Drop|Payload", meta=(ClampMin="0.1", ForceUnits="s"))
 	float DroppedPayloadLifetimeSeconds = 15.0f;
+
+	/** 화물 자체 질량이다. 적재 중인 Drone의 총질량·속도·가속·호버 추력에 반영된다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Drop|Payload|Mass", meta=(ClampMin="0.0", ForceUnits="kg"))
+	float PayloadMassKilograms = 0.75f;
 
 private:
 	UPROPERTY(Transient)

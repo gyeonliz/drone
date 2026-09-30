@@ -250,9 +250,9 @@ public:
 			SelectionWidget->GetSelectedControlMode(),
 			EDroneControlMode::ManualRealisticGreybox);
 		Test->TestEqual(
-			TEXT("Handling preset is independently changed before launch"),
+			TEXT("Removed speed selector remains on the single performance baseline"),
 			SelectionWidget->GetSelectedHandlingPreset(),
-			EDroneHandlingPreset::Agile);
+			EDroneHandlingPreset::Balanced);
 		Test->TestTrue(TEXT("Confirmed role Drone spawns and is possessed"), SelectionWidget->ConfirmAndLaunchSelectedDrone());
 
 		ADronePrototypePawn* Drone = Controller->GetSpawnedDrone();
@@ -275,9 +275,9 @@ public:
 			Drone ? Drone->GetControlMode() : EDroneControlMode::AssistedEasy,
 			EDroneControlMode::ManualRealisticGreybox);
 		Test->TestEqual(
-			TEXT("Spawned Pawn receives the selected handling preset"),
+			TEXT("Spawned Pawn uses the single performance baseline"),
 			Drone ? Drone->GetHandlingPreset() : EDroneHandlingPreset::Stable,
-			EDroneHandlingPreset::Agile);
+			EDroneHandlingPreset::Balanced);
 		Test->TestEqual(TEXT("Successful launch enters In Mission"), Flow->GetSnapshot().State, EDroneGameFlowState::InMission);
 		Test->TestFalse(TEXT("Mission Director consumes the start request once"), Flow->GetSnapshot().bMissionStartRequested);
 		if (Director && ObjectiveWidget)

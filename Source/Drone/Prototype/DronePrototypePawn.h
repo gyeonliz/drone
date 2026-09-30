@@ -66,6 +66,7 @@ public:
 
 	USphereComponent* GetCollisionComponent() const { return CollisionComponent; }
 	USceneComponent* GetVisualTiltPivot() const { return VisualTiltPivot; }
+	USceneComponent* GetCameraFlightPivot() const { return CameraFlightPivot; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|Drop|Pickup")
 	USceneComponent* GetPayloadCarryAnchor() const { return PayloadCarryAnchor; }
@@ -182,6 +183,30 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control|Acro")
 	float GetCurrentAcroThrottleNormalized() const;
 
+	/** 현재 총질량에서 중력을 상쇄하는 0~1 추력 명령이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Physics")
+	float GetCurrentAcroHoverThrottleNormalized() const;
+
+	/** 모터 응답 지연이 적용된 현재 합산 추력이다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Physics")
+	float GetCurrentAcroMotorThrustNormalized() const { return CurrentAcroMotorThrustNormalized; }
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Physics")
+	float GetCurrentPayloadMassKilograms() const;
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Physics")
+	float GetCurrentTotalFlightMassKilograms() const;
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Physics")
+	float GetCurrentPayloadSpeedMultiplier() const;
+
+	UFUNCTION(BlueprintPure, Category="Drone|Flight|Physics")
+	const FDronePhysicalFlightSettings& GetPhysicalFlightSettings() const { return ActivePhysicalFlightSettings; }
+
+	/** Payload Component가 적재/투하/질량 변경 직후 호출하는 공용 재계산 경계다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Physics")
+	void RefreshPayloadMassEffects();
+
 	/** Betaflight Actual Rates의 중앙 감도/최대 각속도/Expo 의미를 사용하는 단일 축 계산이다. */
 	UFUNCTION(BlueprintPure, Category="Drone|Flight|Control|Acro")
 	static float CalculateActualRateDegreesPerSecond(
@@ -190,7 +215,7 @@ public:
 		float MaximumRateDegreesPerSecond,
 		float Expo);
 
-	/** 느림/보통/빠름은 기체 종류와 독립된 속도 단계다. */
+	/** Legacy 호출 호환용이다. 입력값과 무관하게 단일 기체 기본 성능으로 정규화한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Flight|Control")
 	void SetHandlingPreset(EDroneHandlingPreset NewHandlingPreset);
 
@@ -282,6 +307,10 @@ protected:
 	/** 충돌·카메라는 수평으로 두고 Drone 본체와 Rotor 외형만 Pitch·Roll시키는 Pivot이다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USceneComponent> VisualTiltPivot;
+
+	/** FPV/UGV는 조작·총알 피격을 따르되 벽/그물 접촉 외형 피드백은 상속하지 않는다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<USceneComponent> CameraFlightPivot;
 
 	/** 맵 배치 화물을 실제 Actor 상태로 기체 아래에 붙이는 Anchor다. 파생 BP에서 위치를 조정할 수 있다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
@@ -583,6 +612,22 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera", meta=(AllowPrivateAccess="true"))
 	bool bStartInFirstPersonView = false;
 
+	/** 벽/그물 접촉 기울기만 카메라에서 분리한다. 총알 피격 Shake는 변경하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera|Stability", meta=(AllowPrivateAccess="true", DisplayName="카메라 벽·그물 흔들림 차단"))
+	bool bIsolateContactFeedbackFromCamera = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera|Stability", meta=(AllowPrivateAccess="true", DisplayName="카메라 이동 보간 사용"))
+	bool bEnableCameraPositionSmoothing = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera|Stability", meta=(AllowPrivateAccess="true", ClampMin="1.0", DisplayName="카메라 이동 추종 속도"))
+	float CameraPositionSmoothingSpeed = 18.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera|Stability", meta=(AllowPrivateAccess="true", ClampMin="0.0", ForceUnits="cm", DisplayName="3인칭 최대 이동 보간 거리"))
+	float ThirdPersonCameraMaximumLagCentimeters = 100.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|Camera|Stability", meta=(AllowPrivateAccess="true", ClampMin="0.0", ForceUnits="cm", DisplayName="1인칭 최대 이동 보간 거리"))
+	float FirstPersonCameraMaximumLagCentimeters = 20.0f;
+
 	/** 좌우 입력 1.0에서 허용할 최대 Roll이다. 쉬운 조작은 외형에만, 실제 조작형은 Root에 적용한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Prototype|VisualBank", meta=(ClampMin="0.0", ClampMax="45.0", ForceUnits="deg", AllowPrivateAccess="true"))
 	float MaximumVisualBankRollDegrees = 18.0f;
@@ -741,6 +786,7 @@ private:
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<USplineMeshComponent>> FiberCableSegments;
 	FRotator CurrentAcroBodyRateDegreesPerSecond = FRotator::ZeroRotator;
+	float CurrentAcroMotorThrustNormalized = 0.0f;
 	TArray<TWeakObjectPtr<UStaticMeshComponent>> RotorVisualComponents;
 	bool bFirstPersonViewEnabled = false;
 	bool bDropCameraViewEnabled = false;
@@ -762,6 +808,7 @@ private:
 	float BaseMaximumVisualBankRollDegrees = 18.0f;
 	float BaseMaximumVisualTiltPitchDegrees = 14.0f;
 	FDroneAcroRateSettings ActiveAcroRateSettings;
+	FDronePhysicalFlightSettings ActivePhysicalFlightSettings;
 
 	UPROPERTY(Transient, VisibleAnywhere, Category="Drone|Feedback|DamageShake")
 	float CurrentDamageShakeStrength = 0.0f;

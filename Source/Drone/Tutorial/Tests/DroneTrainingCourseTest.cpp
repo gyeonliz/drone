@@ -178,6 +178,8 @@ bool FDroneTrainingCourseTest::RunTest(const FString& Parameters)
 	}
 
 	// 5) 자동 Gate 모드는 개수와 거리 수치만으로 Ring을 만들고 Spline 접선에 정렬해야 한다.
+	// 이 기존 회귀는 중심 배치를 명시한다. 신규 기본 하단 1/6·독립 크기는 Presentation 회귀가 검사한다.
+	Course->ConfigureAutomaticGatePresentation(FVector::ZeroVector, FVector::OneVector, 0.5f, {});
 	Course->ConfigureAutomaticGateLayout(true, 5, true, 100.0f, 900.0f, 150.0f);
 	const float TestSplineLength = Course->GetCourseSpline() ? Course->GetCourseSpline()->GetSplineLength() : 0.0f;
 	const TArray<float> PerRingDistances = {

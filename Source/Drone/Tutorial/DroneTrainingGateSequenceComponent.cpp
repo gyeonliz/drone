@@ -115,6 +115,11 @@ EDroneTrainingGatePassResult UDroneTrainingGateSequenceComponent::TryAcceptTrave
 	++NextExpectedGatePosition;
 	RefreshGateVisualStates();
 	OnGateAccepted.Broadcast(Gate, PassingActor, NextExpectedGatePosition, ExitWorldLocation);
+	// 기록 이벤트를 먼저 전달해 BP 피드백에서 Reset/다음 코스를 시작해도 완료 기록을 잃지 않는다.
+	if (IsValid(Gate))
+	{
+		Gate->PlayAcceptedPassFeedback(PassingActor);
+	}
 	return EDroneTrainingGatePassResult::Accepted;
 }
 

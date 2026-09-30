@@ -106,6 +106,7 @@ bool ADroneMissionPlayerController::StartSelectedDrone(
 	const EDroneControlMode ControlMode,
 	const EDroneHandlingPreset HandlingPreset)
 {
+	(void)HandlingPreset;
 	UDroneGameFlowSubsystem* Flow = GetGameInstance()
 		? GetGameInstance()->GetSubsystem<UDroneGameFlowSubsystem>()
 		: nullptr;
@@ -149,9 +150,9 @@ bool ADroneMissionPlayerController::StartSelectedDrone(
 		NewDrone->Destroy();
 		return false;
 	}
-	// 기체 Data Asset의 기본값을 먼저 적용한 뒤 이번 출격에서 사용자가 고른 독립 설정으로 덮어쓴다.
+	// 조작 방식만 출격 설정으로 덮어쓴다. 과거 속도 단계 인수는 Asset/API 호환용이며 사용하지 않는다.
 	NewDrone->SetControlMode(ControlMode);
-	NewDrone->SetHandlingPreset(HandlingPreset);
+	NewDrone->SetHandlingPreset(EDroneHandlingPreset::Balanced);
 
 	// Flow를 바꾸기 전에 Director Actor 생성 가능 여부를 확인해 실패 시 DroneSelect를 그대로 유지한다.
 	FActorSpawnParameters DirectorSpawnParameters;

@@ -52,6 +52,21 @@ bool FDroneFlightProfile::ValidateProfile(FString& OutError) const
 		OutError = TEXT("Acro Body Rate 응답 시간은 0보다 커야 합니다.");
 		return false;
 	}
+	if (!FMath::IsFinite(PhysicalFlightSettings.UnloadedMaximumSpeedMultiplier)
+		|| PhysicalFlightSettings.UnloadedMaximumSpeedMultiplier <= 0.0f
+		|| !FMath::IsFinite(PhysicalFlightSettings.DryMassKilograms)
+		|| PhysicalFlightSettings.DryMassKilograms <= 0.0f
+		|| !FMath::IsFinite(PhysicalFlightSettings.MaximumTotalThrustNewtons)
+		|| PhysicalFlightSettings.MaximumTotalThrustNewtons <= 0.0f
+		|| !FMath::IsFinite(PhysicalFlightSettings.MotorResponseTimeSeconds)
+		|| PhysicalFlightSettings.MotorResponseTimeSeconds <= 0.0f
+		|| !FMath::IsFinite(PhysicalFlightSettings.QuadraticDragPerCentimeter)
+		|| PhysicalFlightSettings.QuadraticDragPerCentimeter < 0.0f
+		|| !FMath::IsWithinInclusive(PhysicalFlightSettings.MinimumLoadedSpeedMultiplier, 0.1f, 1.0f))
+	{
+		OutError = TEXT("기체 물리값은 양수여야 하며 Payload 속도 하한은 0.1~1 범위여야 합니다.");
+		return false;
+	}
 
 	if (!FMath::IsFinite(MaxSpeedCentimetersPerSecond) || MaxSpeedCentimetersPerSecond <= 0.0f)
 	{

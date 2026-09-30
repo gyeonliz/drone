@@ -104,6 +104,10 @@ bool FDroneStoryPhysicsTestMapTest::RunTest(const FString& Parameters)
 			{
 				++NetRigs;
 				TestEqual(TEXT("Physics net exposes four editable anchors"), NetRig->GetAnchorCount(), 4);
+				TestTrue(TEXT("Saved Physics net entangles Drones on ordinary contact"),
+					NetRig->EntanglesDronesOnImpact());
+				TestFalse(TEXT("Saved Physics net does not tear from ordinary Drone contact"),
+					NetRig->BreaksOnDroneImpact());
 				TestTrue(TEXT("Physics net builds a visible sagging grid"), NetRig->GetStrandInstanceCount() >= 12);
 				const float NetWidth = FVector::Distance(NetRig->GetTopLeftCorner(), NetRig->GetTopRightCorner());
 				const float NetHeight = FVector::Distance(NetRig->GetTopLeftCorner(), NetRig->GetBottomLeftCorner());

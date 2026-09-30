@@ -56,19 +56,6 @@ FText GetControlModeText(const EDroneControlMode Mode)
 	}
 }
 
-FText GetHandlingText(const EDroneHandlingPreset Preset)
-{
-	switch (Preset)
-	{
-	case EDroneHandlingPreset::Stable:
-		return FText::FromString(TEXT("속도: 느림"));
-	case EDroneHandlingPreset::Agile:
-		return FText::FromString(TEXT("속도: 빠름"));
-	case EDroneHandlingPreset::Balanced:
-	default:
-		return FText::FromString(TEXT("속도: 보통"));
-	}
-}
 }
 
 void UDroneSelectionWidget::NativeOnInitialized()
@@ -100,10 +87,6 @@ void UDroneSelectionWidget::NativeOnInitialized()
 	if (ControlModeButton)
 	{
 		ControlModeButton->OnClicked.AddUniqueDynamic(this, &UDroneSelectionWidget::HandleControlModeClicked);
-	}
-	if (HandlingPresetButton)
-	{
-		HandlingPresetButton->OnClicked.AddUniqueDynamic(this, &UDroneSelectionWidget::HandleHandlingPresetClicked);
 	}
 	if (LaunchDroneButton)
 	{
@@ -137,10 +120,6 @@ void UDroneSelectionWidget::NativeDestruct()
 	if (ControlModeButton)
 	{
 		ControlModeButton->OnClicked.RemoveDynamic(this, &UDroneSelectionWidget::HandleControlModeClicked);
-	}
-	if (HandlingPresetButton)
-	{
-		HandlingPresetButton->OnClicked.RemoveDynamic(this, &UDroneSelectionWidget::HandleHandlingPresetClicked);
 	}
 	if (LaunchDroneButton)
 	{
@@ -195,19 +174,8 @@ void UDroneSelectionWidget::ToggleControlMode()
 
 void UDroneSelectionWidget::CycleHandlingPreset()
 {
-	switch (SelectedHandlingPreset)
-	{
-	case EDroneHandlingPreset::Stable:
-		SelectedHandlingPreset = EDroneHandlingPreset::Balanced;
-		break;
-	case EDroneHandlingPreset::Balanced:
-		SelectedHandlingPreset = EDroneHandlingPreset::Agile;
-		break;
-	case EDroneHandlingPreset::Agile:
-	default:
-		SelectedHandlingPreset = EDroneHandlingPreset::Stable;
-		break;
-	}
+	// 느림/보통/빠름 선택은 폐기했다. Blueprint의 기존 호출은 단일 기본 성능으로 흡수한다.
+	SelectedHandlingPreset = EDroneHandlingPreset::Balanced;
 	RefreshControlLabels();
 }
 
@@ -215,7 +183,7 @@ bool UDroneSelectionWidget::ConfirmAndLaunchSelectedDrone()
 {
 	ADroneMissionPlayerController* MissionController = Cast<ADroneMissionPlayerController>(GetOwningPlayer());
 	return MissionController
-		&& MissionController->StartSelectedDrone(SelectedControlMode, SelectedHandlingPreset);
+		&& MissionController->StartSelectedDrone(SelectedControlMode, EDroneHandlingPreset::Balanced);
 }
 
 void UDroneSelectionWidget::HandleFlowSnapshotChanged(const FDroneGameFlowSnapshot& /*Snapshot*/)
@@ -286,6 +254,14 @@ bool UDroneSelectionWidget::TryBindBlueprintLayout()
 	ControlModeButtonText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneSelectionUI::ControlModeButtonTextName));
 	HandlingPresetButton = Cast<UButton>(WidgetTree->FindWidget(DroneSelectionUI::HandlingPresetButtonName));
 	HandlingPresetButtonText = Cast<UTextBlock>(WidgetTree->FindWidget(DroneSelectionUI::HandlingPresetButtonTextName));
+	if (HandlingPresetButton)
+	{
+		HandlingPresetButton->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (HandlingPresetButtonText)
+	{
+		HandlingPresetButtonText->SetVisibility(ESlateVisibility::Collapsed);
+	}
 	LaunchDroneButton = Cast<UButton>(WidgetTree->FindWidget(DroneSelectionUI::LaunchButtonName));
 	return DroneSelectionPanel
 		&& MissionNameText
@@ -305,8 +281,6 @@ bool UDroneSelectionWidget::TryBindBlueprintLayout()
 		&& DroneButtonTexts[4]
 		&& ControlModeButton
 		&& ControlModeButtonText
-		&& HandlingPresetButton
-		&& HandlingPresetButtonText
 		&& LaunchDroneButton;
 }
 
@@ -424,14 +398,6 @@ void UDroneSelectionWidget::BuildDefaultLayout()
 	{
 		ControlSlot->SetPadding(FMargin(0.0f, 18.0f, 0.0f, 8.0f));
 	}
-	HandlingPresetButton = WidgetTree->ConstructWidget<UButton>(
-		UButton::StaticClass(), DroneSelectionUI::HandlingPresetButtonName);
-	HandlingPresetButtonText = WidgetTree->ConstructWidget<UTextBlock>(
-		UTextBlock::StaticClass(), DroneSelectionUI::HandlingPresetButtonTextName);
-	HandlingPresetButton->AddChild(HandlingPresetButtonText);
-	HandlingPresetButton->SetBackgroundColor(FLinearColor(0.04f, 0.16f, 0.18f, 1.0f));
-	DroneControlColumn->AddChildToVerticalBox(HandlingPresetButton);
-
 	LaunchDroneButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), DroneSelectionUI::LaunchButtonName);
 	UTextBlock* LaunchText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("LaunchDroneButtonText"));
 	LaunchText->SetText(FText::FromString(TEXT("선택 기체 출격")));
@@ -490,7 +456,7 @@ void UDroneSelectionWidget::RefreshFromFlow()
 		if (SelectedDefinition)
 		{
 			SelectedControlMode = SelectedDefinition->FlightProfile.DefaultControlMode;
-			SelectedHandlingPreset = SelectedDefinition->FlightProfile.DefaultHandlingPreset;
+			SelectedHandlingPreset = EDroneHandlingPreset::Balanced;
 		}
 	}
 
@@ -518,8 +484,10 @@ void UDroneSelectionWidget::RefreshFromFlow()
 		if (SelectedDefinition)
 		{
 			Profile = FString::Printf(
-				TEXT("최대 속도 %.0f cm/s | 기본 체력 %.0f"),
-				SelectedDefinition->FlightProfile.MaxSpeedCentimetersPerSecond,
+				TEXT("무적재 최고 속도 %.0f cm/s | 기체 질량 %.2f kg | 기본 체력 %.0f"),
+				SelectedDefinition->FlightProfile.MaxSpeedCentimetersPerSecond
+					* SelectedDefinition->FlightProfile.PhysicalFlightSettings.UnloadedMaximumSpeedMultiplier,
+				SelectedDefinition->FlightProfile.PhysicalFlightSettings.DryMassKilograms,
 				SelectedDefinition->FlightProfile.MaxHealth);
 			for (const FText& Highlight : SelectedDefinition->FlightProfile.FeatureHighlights)
 			{
@@ -542,9 +510,14 @@ void UDroneSelectionWidget::RefreshControlLabels()
 	{
 		ControlModeButtonText->SetText(DroneSelectionUI::GetControlModeText(SelectedControlMode));
 	}
+	SelectedHandlingPreset = EDroneHandlingPreset::Balanced;
+	if (HandlingPresetButton)
+	{
+		HandlingPresetButton->SetVisibility(ESlateVisibility::Collapsed);
+	}
 	if (HandlingPresetButtonText)
 	{
-		HandlingPresetButtonText->SetText(DroneSelectionUI::GetHandlingText(SelectedHandlingPreset));
+		HandlingPresetButtonText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }
 

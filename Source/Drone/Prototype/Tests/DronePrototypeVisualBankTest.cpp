@@ -98,8 +98,8 @@ bool FDronePrototypeVisualBankTest::RunTest(const FString& Parameters)
 
 	Pawn->SetFirstPersonViewEnabled(true);
 	TestTrue(TEXT("First-person view mode is enabled"), Pawn->IsFirstPersonViewEnabled());
-	TestTrue(TEXT("First-person CameraBoom follows the visual tilt pivot"),
-		Pawn->GetCameraBoom()->GetAttachParent() == Pawn->GetVisualTiltPivot());
+	TestTrue(TEXT("First-person CameraBoom follows the feedback-free flight tilt pivot"),
+		Pawn->GetCameraBoom()->GetAttachParent() == Pawn->GetCameraFlightPivot());
 	TestTrue(TEXT("First-person CameraBoom removes the chase arm"), FMath::IsNearlyZero(Pawn->GetCameraBoom()->TargetArmLength));
 	Pawn->SetVisualTiltInputGreybox(1.0f, 1.0f);
 	Pawn->Tick(1.0f);

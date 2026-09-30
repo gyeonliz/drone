@@ -331,7 +331,7 @@ bool FDroneTrainingAssetTest::RunTest(const FString& Parameters)
 
 		TInlineComponentArray<UStaticMeshComponent*> RingSegments;
 		Gate->GetComponents(RingSegments);
-		TestEqual(TEXT("Placed Gate preserves sixteen serialized visual segments"), RingSegments.Num(), 16);
+		TestEqual(TEXT("Placed Gate keeps sixteen frame segments and one replacement asset slot"), RingSegments.Num(), 17);
 		int32 VisibleFrameSegmentCount = 0;
 		for (UStaticMeshComponent* Segment : RingSegments)
 		{

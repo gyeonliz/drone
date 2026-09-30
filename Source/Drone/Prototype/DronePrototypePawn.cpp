@@ -87,6 +87,9 @@ ADronePrototypePawn::ADronePrototypePawn()
 	VisualTiltPivot = CreateDefaultSubobject<USceneComponent>(TEXT("VisualTiltPivot"));
 	VisualTiltPivot->SetupAttachment(CollisionComponent);
 
+	CameraFlightPivot = CreateDefaultSubobject<USceneComponent>(TEXT("CameraFlightPivot"));
+	CameraFlightPivot->SetupAttachment(CollisionComponent);
+
 	PayloadCarryAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("PayloadCarryAnchor"));
 	PayloadCarryAnchor->SetupAttachment(VisualTiltPivot);
 	PayloadCarryAnchor->SetRelativeLocation(FVector(0.0f, 0.0f, -65.0f));
@@ -113,7 +116,7 @@ ADronePrototypePawn::ADronePrototypePawn()
 	FiberOpticSplineComponent->ComponentTags.Add(TEXT("FiberOpticSpline"));
 
 	GroundUpperYawPivot = CreateDefaultSubobject<USceneComponent>(TEXT("GroundUpperYawPivot"));
-	GroundUpperYawPivot->SetupAttachment(VisualTiltPivot);
+	GroundUpperYawPivot->SetupAttachment(CameraFlightPivot);
 	GroundUpperYawPivot->SetRelativeLocation(FVector(0.0f, 0.0f, 58.0f));
 
 	GroundWeaponPitchPivot = CreateDefaultSubobject<USceneComponent>(TEXT("GroundWeaponPitchPivot"));
@@ -140,6 +143,11 @@ ADronePrototypePawn::ADronePrototypePawn()
 	CameraBoom->SetupAttachment(CollisionComponent);
 	CameraBoom->TargetArmLength = 500.0f;
 	CameraBoom->bUsePawnControlRotation = false;
+	CameraBoom->bEnableCameraLag = true;
+	CameraBoom->CameraLagSpeed = CameraPositionSmoothingSpeed;
+	CameraBoom->CameraLagMaxDistance = ThirdPersonCameraMaximumLagCentimeters;
+	CameraBoom->bUseCameraLagSubstepping = true;
+	CameraBoom->CameraLagMaxTimeStep = 1.0f / 120.0f;
 
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
@@ -170,9 +178,7 @@ ADronePrototypePawn::ADronePrototypePawn()
 	AcroRateRealisticGreyboxTuning.bUseLocalAltitudeAxis = true;
 	AcroRateRealisticGreyboxTuning.bTiltCollisionRoot = true;
 
-	StableHandlingTuning.MaxSpeedMultiplier = 0.80f;
-
-	AgileHandlingTuning.MaxSpeedMultiplier = 1.25f;
+	// 과거 느림/보통/빠름 UPROPERTY는 Asset 호환을 위해 남아 있지만 런타임 선택에는 사용하지 않는다.
 
 	// HUD가 Pawn을 직접 계산하지 않도록 공용 데이터 공급 Component를 기본 부착한다.
 	TelemetryComponent = CreateDefaultSubobject<UDroneTelemetryComponent>(TEXT("TelemetryComponent"));
@@ -222,7 +228,9 @@ bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definitio
 			*ProfileValidationError);
 		return false;
 	}
-	BaseMaxSpeedCentimetersPerSecond = Profile.MaxSpeedCentimetersPerSecond;
+	ActivePhysicalFlightSettings = Profile.PhysicalFlightSettings;
+	BaseMaxSpeedCentimetersPerSecond = Profile.MaxSpeedCentimetersPerSecond
+		* ActivePhysicalFlightSettings.UnloadedMaximumSpeedMultiplier;
 	BaseAccelerationCentimetersPerSecondSquared = Profile.AccelerationCentimetersPerSecondSquared;
 	BaseDecelerationCentimetersPerSecondSquared = Profile.DecelerationCentimetersPerSecondSquared;
 	BaseTurningBoost = Profile.TurningBoost;
@@ -231,7 +239,7 @@ bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definitio
 	BaseMaximumVisualTiltPitchDegrees = Profile.MaximumVisualTiltPitchDegrees;
 	ActiveAcroRateSettings = Profile.AcroRateSettings;
 	CurrentControlMode = Profile.DefaultControlMode;
-	CurrentHandlingPreset = Profile.DefaultHandlingPreset;
+	CurrentHandlingPreset = EDroneHandlingPreset::Balanced;
 	AcroThrottleInput = 0.0f;
 	CurrentAcroBodyRateDegreesPerSecond = FRotator::ZeroRotator;
 	ApplyRuntimeFlightTuning();
@@ -268,6 +276,9 @@ bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definitio
 	}
 	InitializeGroundUpperBodyPresentation();
 	ApplyCameraViewMode();
+	CurrentAcroMotorThrustNormalized = IsAcroControlMode(CurrentControlMode)
+		? GetCurrentAcroThrottleNormalized()
+		: 0.0f;
 	AppliedDroneId = Definition->DroneId;
 
 	UE_LOG(
@@ -276,7 +287,7 @@ bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definitio
 		TEXT("Applied Drone Definition '%s' to '%s' (speed %.0f, yaw %.0f, health %.0f, control %d, handling %d)."),
 		*AppliedDroneId.ToString(),
 		*GetNameSafe(this),
-		Profile.MaxSpeedCentimetersPerSecond,
+		BaseMaxSpeedCentimetersPerSecond,
 		Profile.YawRateDegreesPerSecond,
 		Profile.MaxHealth,
 		static_cast<uint8>(CurrentControlMode),
@@ -362,6 +373,12 @@ void ADronePrototypePawn::SetControlMode(const EDroneControlMode NewControlMode)
 	ApplyRuntimeFlightTuning();
 	if (bChanged)
 	{
+		CurrentAcroMotorThrustNormalized = IsAcroControlMode(CurrentControlMode)
+			? GetCurrentAcroThrottleNormalized()
+			: 0.0f;
+	}
+	if (bChanged)
+	{
 		OnFlightControlSettingsChanged.Broadcast(CurrentControlMode, CurrentHandlingPreset);
 	}
 }
@@ -388,8 +405,9 @@ void ADronePrototypePawn::ToggleControlMode()
 
 void ADronePrototypePawn::SetHandlingPreset(const EDroneHandlingPreset NewHandlingPreset)
 {
-	const bool bChanged = CurrentHandlingPreset != NewHandlingPreset;
-	CurrentHandlingPreset = NewHandlingPreset;
+	(void)NewHandlingPreset;
+	const bool bChanged = CurrentHandlingPreset != EDroneHandlingPreset::Balanced;
+	CurrentHandlingPreset = EDroneHandlingPreset::Balanced;
 	ApplyRuntimeFlightTuning();
 	if (bChanged)
 	{
@@ -399,19 +417,7 @@ void ADronePrototypePawn::SetHandlingPreset(const EDroneHandlingPreset NewHandli
 
 void ADronePrototypePawn::CycleHandlingPreset()
 {
-	switch (CurrentHandlingPreset)
-	{
-	case EDroneHandlingPreset::Stable:
-		SetHandlingPreset(EDroneHandlingPreset::Balanced);
-		break;
-	case EDroneHandlingPreset::Balanced:
-		SetHandlingPreset(EDroneHandlingPreset::Agile);
-		break;
-	case EDroneHandlingPreset::Agile:
-	default:
-		SetHandlingPreset(EDroneHandlingPreset::Stable);
-		break;
-	}
+	SetHandlingPreset(EDroneHandlingPreset::Balanced);
 }
 
 void ADronePrototypePawn::ApplyRuntimeFlightTuning()
@@ -423,45 +429,42 @@ void ADronePrototypePawn::ApplyRuntimeFlightTuning()
 
 	const FDroneControlModeTuning& ControlTuning = ResolveCurrentControlModeTuning();
 
-	const FDroneHandlingPresetTuning* HandlingTuning = &BalancedHandlingTuning;
-	switch (CurrentHandlingPreset)
-	{
-	case EDroneHandlingPreset::Stable:
-		HandlingTuning = &StableHandlingTuning;
-		break;
-	case EDroneHandlingPreset::Agile:
-		HandlingTuning = &AgileHandlingTuning;
-		break;
-	case EDroneHandlingPreset::Balanced:
-	default:
-		break;
-	}
+	const float DryMass = FMath::Max(0.01f, ActivePhysicalFlightSettings.DryMassKilograms);
+	const float TotalMass = GetCurrentTotalFlightMassKilograms();
+	const float AccelerationMassMultiplier = FMath::Clamp(DryMass / TotalMass, 0.05f, 1.0f);
+	const float LoadedSpeedMultiplier = GetCurrentPayloadSpeedMultiplier();
 
-	// 항상 Data Asset의 원본값에서 다시 계산하므로 모드를 반복 전환해도 배율이 누적되지 않는다.
+	// 항상 Definition의 무적재 기준값에서 다시 계산하므로 조작 모드나 적재 상태를 반복 변경해도 누적되지 않는다.
 	PrototypeMovementComponent->MaxSpeed =
-		BaseMaxSpeedCentimetersPerSecond * HandlingTuning->MaxSpeedMultiplier
+		BaseMaxSpeedCentimetersPerSecond * LoadedSpeedMultiplier
 		* (SignalComponent ? SignalComponent->GetSnapshot().ControlResponseMultiplier : 1.0f);
 	PrototypeMovementComponent->Acceleration =
 		BaseAccelerationCentimetersPerSecondSquared
 		* ControlTuning.AccelerationMultiplier
-		* HandlingTuning->AccelerationMultiplier
+		* AccelerationMassMultiplier
 		* (SignalComponent ? SignalComponent->GetSnapshot().ControlResponseMultiplier : 1.0f);
 	// Acro는 아래의 속도 비례 항력만 사용한다. FloatingPawnMovement의 정속 감속까지 겹치면
 	// 저속과 고속에서 감쇠 체감이 뒤틀리므로 해당 모드에서는 자동 감속을 끈다.
 	PrototypeMovementComponent->Deceleration =
 		IsAcroControlMode(CurrentControlMode)
 			? 0.0f
-			: BaseDecelerationCentimetersPerSecondSquared * ControlTuning.DecelerationMultiplier;
+			: BaseDecelerationCentimetersPerSecondSquared * ControlTuning.DecelerationMultiplier
+				* AccelerationMassMultiplier;
 	PrototypeMovementComponent->TurningBoost =
 		BaseTurningBoost * ControlTuning.TurningBoostMultiplier;
 	PrototypeYawRateDegreesPerSecond =
 		BaseYawRateDegreesPerSecond
 		* ControlTuning.YawRateMultiplier
-		* HandlingTuning->YawRateMultiplier;
+		* LoadedSpeedMultiplier;
 	MaximumVisualBankRollDegrees =
-		BaseMaximumVisualBankRollDegrees * HandlingTuning->AttitudeLimitMultiplier;
+		BaseMaximumVisualBankRollDegrees;
 	MaximumVisualTiltPitchDegrees =
-		BaseMaximumVisualTiltPitchDegrees * HandlingTuning->AttitudeLimitMultiplier;
+		BaseMaximumVisualTiltPitchDegrees;
+}
+
+void ADronePrototypePawn::RefreshPayloadMassEffects()
+{
+	ApplyRuntimeFlightTuning();
 }
 
 const FDroneControlModeTuning& ADronePrototypePawn::ResolveCurrentControlModeTuning() const
@@ -856,8 +859,11 @@ void ADronePrototypePawn::Move(const FInputActionValue& Value)
 
 	// 쉬운/제한 자세에서는 Y=전후, X=좌우이며 Actor 축을 기준으로 직접 이동한다.
 	SetVisualTiltInputGreybox(MovementValue.Y, MovementValue.X);
-	AddMovementInput(GetActorForwardVector(), MovementValue.Y);
-	AddMovementInput(GetActorRightVector(), MovementValue.X);
+	const float ControlEffectiveness = CollisionResponseComponent
+		? CollisionResponseComponent->GetFlightControlEffectivenessMultiplier()
+		: 1.0f;
+	AddMovementInput(GetActorForwardVector(), MovementValue.Y * ControlEffectiveness);
+	AddMovementInput(GetActorRightVector(), MovementValue.X * ControlEffectiveness);
 }
 
 void ADronePrototypePawn::ResetMoveVisualInput(const FInputActionValue&)
@@ -905,13 +911,47 @@ void ADronePrototypePawn::SetAcroThrottleInputGreybox(const float ThrottleInput)
 
 float ADronePrototypePawn::GetCurrentAcroThrottleNormalized() const
 {
-	const float HoverThrottle = FMath::Clamp(
-		ActiveAcroRateSettings.HoverThrottleNormalized,
-		0.05f,
-		0.95f);
+	const float HoverThrottle = GetCurrentAcroHoverThrottleNormalized();
 	return AcroThrottleInput >= 0.0f
 		? FMath::Lerp(HoverThrottle, 1.0f, AcroThrottleInput)
 		: FMath::Lerp(HoverThrottle, 0.0f, -AcroThrottleInput);
+}
+
+float ADronePrototypePawn::GetCurrentAcroHoverThrottleNormalized() const
+{
+	const float TotalMassKilograms = GetCurrentTotalFlightMassKilograms();
+	const float GravityMetersPerSecondSquared = FMath::Max(
+		1.0f,
+		ActiveAcroRateSettings.GravityAccelerationCentimetersPerSecondSquared) / 100.0f;
+	const float MaximumThrustNewtons = FMath::Max(0.1f, ActivePhysicalFlightSettings.MaximumTotalThrustNewtons);
+	return FMath::Clamp(
+		(TotalMassKilograms * GravityMetersPerSecondSquared) / MaximumThrustNewtons,
+		0.01f,
+		1.0f);
+}
+
+float ADronePrototypePawn::GetCurrentPayloadMassKilograms() const
+{
+	return PayloadDropComponent
+		? FMath::Max(0.0f, PayloadDropComponent->GetCurrentPayloadMassKilograms())
+		: 0.0f;
+}
+
+float ADronePrototypePawn::GetCurrentTotalFlightMassKilograms() const
+{
+	return FMath::Max(0.01f, ActivePhysicalFlightSettings.DryMassKilograms)
+		+ GetCurrentPayloadMassKilograms();
+}
+
+float ADronePrototypePawn::GetCurrentPayloadSpeedMultiplier() const
+{
+	const float DryMass = FMath::Max(0.01f, ActivePhysicalFlightSettings.DryMassKilograms);
+	const float TotalMass = GetCurrentTotalFlightMassKilograms();
+	const float PhysicalRatio = FMath::Sqrt(FMath::Clamp(DryMass / TotalMass, 0.0f, 1.0f));
+	return FMath::Clamp(
+		PhysicalRatio,
+		ActivePhysicalFlightSettings.MinimumLoadedSpeedMultiplier,
+		1.0f);
 }
 
 float ADronePrototypePawn::CalculateActualRateDegreesPerSecond(
@@ -933,6 +973,9 @@ float ADronePrototypePawn::CalculateActualRateDegreesPerSecond(
 
 FRotator ADronePrototypePawn::GetCurrentAcroBodyRateSetpointDegreesPerSecond() const
 {
+	const float ControlEffectiveness = CollisionResponseComponent
+		? CollisionResponseComponent->GetFlightControlEffectivenessMultiplier()
+		: 1.0f;
 	const float PitchRate = -CalculateActualRateDegreesPerSecond(
 		VisualTiltForwardInput,
 		ActiveAcroRateSettings.PitchRollCenterSensitivityDegreesPerSecond,
@@ -948,7 +991,7 @@ FRotator ADronePrototypePawn::GetCurrentAcroBodyRateSetpointDegreesPerSecond() c
 		ActiveAcroRateSettings.YawCenterSensitivityDegreesPerSecond,
 		ActiveAcroRateSettings.MaximumYawRateDegreesPerSecond,
 		ActiveAcroRateSettings.YawExpo);
-	return FRotator(PitchRate, YawRate, RollRate);
+	return FRotator(PitchRate, YawRate, RollRate) * ControlEffectiveness;
 }
 
 void ADronePrototypePawn::SetFirstPersonViewEnabled(const bool bEnabled)
@@ -1015,6 +1058,15 @@ void ADronePrototypePawn::ApplyCameraViewMode()
 	}
 
 	const FAttachmentTransformRules KeepRelativeAttachment(EAttachmentRule::KeepRelative, false);
+	// Keep look/flight rotation immediate. Only smooth translation and isolate
+	// feedback; disabling arm collision globally would let the camera enter walls.
+	CameraBoom->bEnableCameraLag = bEnableCameraPositionSmoothing;
+	CameraBoom->CameraLagSpeed = FMath::Max(1.0f, CameraPositionSmoothingSpeed);
+	CameraBoom->CameraLagMaxDistance = FMath::Max(0.0f,
+		bFirstPersonViewEnabled && !bDropCameraViewEnabled
+			? FirstPersonCameraMaximumLagCentimeters : ThirdPersonCameraMaximumLagCentimeters);
+	CameraBoom->bUseCameraLagSubstepping = true;
+	CameraBoom->CameraLagMaxTimeStep = 1.0f / 120.0f;
 	if (bDropCameraViewEnabled)
 	{
 		CameraBoom->AttachToComponent(CollisionComponent, KeepRelativeAttachment);
@@ -1043,7 +1095,8 @@ void ADronePrototypePawn::ApplyCameraViewMode()
 	}
 	if (bFirstPersonViewEnabled)
 	{
-		CameraBoom->AttachToComponent(VisualTiltPivot, KeepRelativeAttachment);
+		CameraBoom->AttachToComponent(bIsolateContactFeedbackFromCamera && CameraFlightPivot
+			? CameraFlightPivot.Get() : VisualTiltPivot.Get(), KeepRelativeAttachment);
 		CameraBoom->SetRelativeLocation(FirstPersonCameraBoomOffset);
 		CameraBoom->TargetArmLength = 0.0f;
 	}
@@ -1066,6 +1119,16 @@ void ADronePrototypePawn::RefreshVisualTiltAttachments()
 	if (VisualTiltPivot->GetAttachParent() != CollisionComponent)
 	{
 		VisualTiltPivot->AttachToComponent(CollisionComponent, KeepRelativeAttachment);
+	}
+	if (CameraFlightPivot && CameraFlightPivot->GetAttachParent() != CollisionComponent)
+	{
+		CameraFlightPivot->AttachToComponent(CollisionComponent, KeepRelativeAttachment);
+	}
+	USceneComponent* GroundAimParent = bIsolateContactFeedbackFromCamera && CameraFlightPivot
+		? CameraFlightPivot.Get() : VisualTiltPivot.Get();
+	if (GroundUpperYawPivot && GroundUpperYawPivot->GetAttachParent() != GroundAimParent)
+	{
+		GroundUpperYawPivot->AttachToComponent(GroundAimParent, KeepRelativeAttachment);
 	}
 	if (VisualMeshComponent && VisualMeshComponent->GetAttachParent() != VisualTiltPivot)
 	{
@@ -1725,20 +1788,42 @@ void ADronePrototypePawn::UpdateAcroFlightPhysics(const float DeltaSeconds)
 	const float GravityAcceleration = FMath::Max(
 		1.0f,
 		ActiveAcroRateSettings.GravityAccelerationCentimetersPerSecondSquared);
-	const float HoverThrottle = FMath::Clamp(
-		ActiveAcroRateSettings.HoverThrottleNormalized,
-		0.05f,
-		0.95f);
-	const float MaximumThrustAcceleration = GravityAcceleration / HoverThrottle;
-	const float ThrustAcceleration = GetCurrentAcroThrottleNormalized() * MaximumThrustAcceleration;
+	const float TotalMassKilograms = GetCurrentTotalFlightMassKilograms();
+	const float MaximumThrustAcceleration =
+		FMath::Max(0.1f, ActivePhysicalFlightSettings.MaximumTotalThrustNewtons)
+		/ TotalMassKilograms * 100.0f;
+	const float MotorResponseAlpha = 1.0f - FMath::Exp(
+		-SafeDeltaSeconds / FMath::Max(0.001f, ActivePhysicalFlightSettings.MotorResponseTimeSeconds));
+	CurrentAcroMotorThrustNormalized = FMath::Lerp(
+		CurrentAcroMotorThrustNormalized,
+		GetCurrentAcroThrottleNormalized(),
+		MotorResponseAlpha);
+	const float ControlEffectiveness = CollisionResponseComponent
+		? CollisionResponseComponent->GetFlightControlEffectivenessMultiplier()
+		: 1.0f;
+	const float ThrustAcceleration = CurrentAcroMotorThrustNormalized
+		* MaximumThrustAcceleration * ControlEffectiveness;
 	const FVector NetAcceleration =
 		GetActorUpVector() * ThrustAcceleration
 		+ FVector::DownVector * GravityAcceleration;
 
-	// 속도 비례 항력은 프레임 시간에 안정적인 지수 감쇠로 적용한다.
+	// 선형 항력은 프레임 시간에 안정적인 지수 감쇠, 고속 항력은 속도 제곱 가속도로 적용한다.
 	FVector Velocity = PrototypeMovementComponent->Velocity;
-	const float DragPerSecond = FMath::Max(0.0f, ActiveAcroRateSettings.LinearDragPerSecond);
+	const float DryToTotalMassRatio = FMath::Clamp(
+		FMath::Max(0.01f, ActivePhysicalFlightSettings.DryMassKilograms) / TotalMassKilograms,
+		0.05f,
+		1.0f);
+	const float DragPerSecond = FMath::Max(0.0f, ActiveAcroRateSettings.LinearDragPerSecond)
+		* DryToTotalMassRatio;
 	Velocity *= FMath::Exp(-DragPerSecond * SafeDeltaSeconds);
+	const float Speed = Velocity.Size();
+	if (Speed > UE_SMALL_NUMBER)
+	{
+		const FVector QuadraticDragAcceleration = -Velocity * Speed
+			* FMath::Max(0.0f, ActivePhysicalFlightSettings.QuadraticDragPerCentimeter)
+			* DryToTotalMassRatio;
+		Velocity += QuadraticDragAcceleration * SafeDeltaSeconds;
+	}
 	Velocity += NetAcceleration * SafeDeltaSeconds;
 	PrototypeMovementComponent->Velocity = Velocity;
 }
@@ -1792,9 +1877,22 @@ void ADronePrototypePawn::UpdateVisualBank(const float DeltaSeconds)
 		FMath::Max(0.0f, DeltaSeconds),
 		RollInterpolationSpeed);
 	FRotator CombinedRotation = CurrentDamageShakeVisualRotation;
+	if (CollisionResponseComponent)
+	{
+		CombinedRotation += CollisionResponseComponent->GetContactVisualRotation();
+	}
 	CombinedRotation.Pitch += CurrentVisualTiltPitchDegrees;
 	CombinedRotation.Roll += CurrentVisualBankRollDegrees;
 	VisualTiltPivot->SetRelativeRotation(CombinedRotation);
+	if (CameraFlightPivot)
+	{
+		// Contact lean is isolated, but the existing bullet damage camera/body shake
+		// and intentional flight bank remain unchanged.
+		FRotator CameraFlightRotation = CurrentDamageShakeVisualRotation;
+		CameraFlightRotation.Pitch += CurrentVisualTiltPitchDegrees;
+		CameraFlightRotation.Roll += CurrentVisualBankRollDegrees;
+		CameraFlightPivot->SetRelativeRotation(CameraFlightRotation);
+	}
 }
 
 void ADronePrototypePawn::TriggerDamageShakeGreybox(const float AppliedDamage)
@@ -1917,7 +2015,10 @@ void ADronePrototypePawn::ChangeAltitude(const FInputActionValue& Value)
 	const FVector AltitudeAxis = ControlTuning.bUseLocalAltitudeAxis
 		? GetActorUpVector()
 		: FVector::UpVector;
-	AddMovementInput(AltitudeAxis, Value.Get<float>());
+	const float ControlEffectiveness = CollisionResponseComponent
+		? CollisionResponseComponent->GetFlightControlEffectivenessMultiplier()
+		: 1.0f;
+	AddMovementInput(AltitudeAxis, Value.Get<float>() * ControlEffectiveness);
 }
 
 void ADronePrototypePawn::ChangeYaw(const FInputActionValue& Value)
@@ -1944,7 +2045,11 @@ void ADronePrototypePawn::ChangeYaw(const FInputActionValue& Value)
 	}
 
 	// 키·Gamepad 축은 프레임률에 무관하도록 초당 회전량에 DeltaSeconds를 곱한다.
-	const float YawDelta = Value.Get<float>() * PrototypeYawRateDegreesPerSecond * World->GetDeltaSeconds();
+	const float ControlEffectiveness = CollisionResponseComponent
+		? CollisionResponseComponent->GetFlightControlEffectivenessMultiplier()
+		: 1.0f;
+	const float YawDelta = Value.Get<float>() * PrototypeYawRateDegreesPerSecond
+		* ControlEffectiveness * World->GetDeltaSeconds();
 	AddActorLocalRotation(FRotator(0.0f, YawDelta, 0.0f));
 }
 

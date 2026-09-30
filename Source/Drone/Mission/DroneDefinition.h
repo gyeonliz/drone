@@ -46,12 +46,17 @@ struct DRONE_API FDroneFlightProfile
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Control")
 	EDroneControlMode DefaultControlMode = EDroneControlMode::AssistedEasy;
 
+	/** Legacy Asset 호환 필드다. 런타임은 항상 Balanced로 정규화한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Control")
 	EDroneHandlingPreset DefaultHandlingPreset = EDroneHandlingPreset::Balanced;
 
 	/** FPV Rate/Acro 모드에서 사용하는 각속도 곡선과 수직 속도 제한이다. 다른 조작 모드에는 영향이 없다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Control", meta=(ShowOnlyInnerProperties))
 	FDroneAcroRateSettings AcroRateSettings;
+
+	/** 모든 조작 모드와 RC Mode 1/2가 공유하는 질량·추력·모터 응답·항력 기준이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Physics", meta=(ShowOnlyInnerProperties))
+	FDronePhysicalFlightSettings PhysicalFlightSettings;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Movement", meta=(ClampMin="1.0", ForceUnits="cm/s"))
 	float MaxSpeedCentimetersPerSecond = 1200.0f;

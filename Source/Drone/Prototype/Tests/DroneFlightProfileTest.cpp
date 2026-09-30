@@ -61,9 +61,11 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("FPV Strike starts in Rate/Acro control"),
 		FPVStrikeDefinition->FlightProfile.DefaultControlMode,
 		EDroneControlMode::AcroRateRealisticGreybox);
-	TestEqual(TEXT("FPV Strike uses the fast speed step"),
-		FPVStrikeDefinition->FlightProfile.DefaultHandlingPreset,
-		EDroneHandlingPreset::Agile);
+	TestTrue(TEXT("FPV Strike has a positive dry mass"),
+		FPVStrikeDefinition->FlightProfile.PhysicalFlightSettings.DryMassKilograms > 0.0f);
+	TestTrue(TEXT("FPV Strike maximum thrust exceeds its weight"),
+		FPVStrikeDefinition->FlightProfile.PhysicalFlightSettings.MaximumTotalThrustNewtons
+			> FPVStrikeDefinition->FlightProfile.PhysicalFlightSettings.DryMassKilograms * 9.8f);
 	TestTrue(TEXT("FPV Strike uses the 650 deg/s pitch rate reference"), FMath::IsNearlyEqual(
 		FPVStrikeDefinition->FlightProfile.AcroRateSettings.MaximumPitchRateDegreesPerSecond,
 		650.0f));
@@ -134,7 +136,8 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 			Pawn->ApplyDroneDefinition(Definition));
 		TestEqual(TEXT("Applied Drone ID is preserved"), Pawn->GetAppliedDroneId(), Definition->DroneId);
 		TestEqual(TEXT("Default control mode applies"), Pawn->GetControlMode(), Definition->FlightProfile.DefaultControlMode);
-		TestEqual(TEXT("Default handling preset applies"), Pawn->GetHandlingPreset(), Definition->FlightProfile.DefaultHandlingPreset);
+		TestEqual(TEXT("Legacy handling preset is normalized to the single performance baseline"),
+			Pawn->GetHandlingPreset(), EDroneHandlingPreset::Balanced);
 		if (Definition == FPVStrikeDefinition)
 		{
 			TestTrue(TEXT("FPV Agile runtime max speed reaches the 27 m/s reference"), FMath::IsNearlyEqual(
@@ -154,35 +157,32 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 			Pawn->GetSignalComponent()->IsJammingImmune(),
 			Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::JammingImmunity));
 
-		// 두 축을 명시적으로 바꿔 기체 역할과 무관하게 같은 API로 동작하는지 확인한다.
+		const float ExpectedUnloadedMaximumSpeed = Definition->FlightProfile.MaxSpeedCentimetersPerSecond
+			* Definition->FlightProfile.PhysicalFlightSettings.UnloadedMaximumSpeedMultiplier;
+		const float PayloadSpeedMultiplier = Pawn->GetCurrentPayloadSpeedMultiplier();
+		const float DryToTotalMassRatio = Definition->FlightProfile.PhysicalFlightSettings.DryMassKilograms
+			/ Pawn->GetCurrentTotalFlightMassKilograms();
+
+		// 조작 방식은 바꿀 수 있지만 별도의 느림/보통/빠름 단계는 더 이상 존재하지 않는다.
 		Pawn->SetControlMode(EDroneControlMode::AssistedEasy);
 		Pawn->SetHandlingPreset(EDroneHandlingPreset::Balanced);
-		TestTrue(TEXT("Normal speed uses the Definition base max speed"), FMath::IsNearlyEqual(
+		TestTrue(TEXT("Single performance baseline uses the former fast maximum speed"), FMath::IsNearlyEqual(
 			Pawn->GetPrototypeMovementComponent()->MaxSpeed,
-			Definition->FlightProfile.MaxSpeedCentimetersPerSecond));
-		TestTrue(TEXT("Assisted Easy uses the Definition base acceleration"), FMath::IsNearlyEqual(
+			ExpectedUnloadedMaximumSpeed * PayloadSpeedMultiplier));
+		TestTrue(TEXT("Assisted Easy acceleration reflects the current carried mass"), FMath::IsNearlyEqual(
 			Pawn->GetPrototypeMovementComponent()->Acceleration,
-			Definition->FlightProfile.AccelerationCentimetersPerSecondSquared));
-		TestTrue(TEXT("Normal speed uses the Definition base yaw rate"), FMath::IsNearlyEqual(
+			Definition->FlightProfile.AccelerationCentimetersPerSecondSquared * DryToTotalMassRatio));
+		TestTrue(TEXT("Yaw response reflects the current carried mass"), FMath::IsNearlyEqual(
 			Pawn->GetPrototypeYawRateDegreesPerSecond(),
-			Definition->FlightProfile.YawRateDegreesPerSecond));
+			Definition->FlightProfile.YawRateDegreesPerSecond * PayloadSpeedMultiplier));
 
 		Pawn->SetHandlingPreset(EDroneHandlingPreset::Stable);
-		const float StableSpeed = Pawn->GetPrototypeMovementComponent()->MaxSpeed;
-		const float SlowAcceleration = Pawn->GetPrototypeMovementComponent()->Acceleration;
-		const float SlowYawRate = Pawn->GetPrototypeYawRateDegreesPerSecond();
+		const float LegacyStableSpeed = Pawn->GetPrototypeMovementComponent()->MaxSpeed;
 		Pawn->SetHandlingPreset(EDroneHandlingPreset::Agile);
-		const float AgileSpeed = Pawn->GetPrototypeMovementComponent()->MaxSpeed;
-		TestTrue(TEXT("Slow is slower than Normal"),
-			StableSpeed < Definition->FlightProfile.MaxSpeedCentimetersPerSecond);
-		TestTrue(TEXT("Fast is faster than Normal"),
-			AgileSpeed > Definition->FlightProfile.MaxSpeedCentimetersPerSecond);
-		TestTrue(TEXT("Speed steps do not secretly alter acceleration"), FMath::IsNearlyEqual(
-			SlowAcceleration,
-			Pawn->GetPrototypeMovementComponent()->Acceleration));
-		TestTrue(TEXT("Speed steps do not secretly alter yaw rate"), FMath::IsNearlyEqual(
-			SlowYawRate,
-			Pawn->GetPrototypeYawRateDegreesPerSecond()));
+		TestEqual(TEXT("Legacy speed setter remains on the single performance baseline"),
+			Pawn->GetHandlingPreset(), EDroneHandlingPreset::Balanced);
+		TestTrue(TEXT("Legacy speed values cannot change runtime maximum speed"), FMath::IsNearlyEqual(
+			LegacyStableSpeed, Pawn->GetPrototypeMovementComponent()->MaxSpeed));
 
 		Pawn->SetHandlingPreset(EDroneHandlingPreset::Balanced);
 		const float AssistedDeceleration = Pawn->GetPrototypeMovementComponent()->Deceleration;
@@ -235,6 +235,13 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 
 			// Rate/Acro는 Stick 끝에서 Profile 최대 각속도를 내고 Stick을 놓으면 자동 수평 복귀하지 않는다.
 			Pawn->SetActorRotation(FRotator::ZeroRotator);
+			Pawn->SetControlMode(EDroneControlMode::AcroRateRealisticGreybox);
+			const FDronePhysicalFlightSettings Mode2Physics = Pawn->GetPhysicalFlightSettings();
+			Pawn->SetControlMode(EDroneControlMode::AcroRateMode1Greybox);
+			TestTrue(TEXT("RC Mode 1 and Mode 2 share the same dry mass"), FMath::IsNearlyEqual(
+				Pawn->GetPhysicalFlightSettings().DryMassKilograms, Mode2Physics.DryMassKilograms));
+			TestTrue(TEXT("RC Mode 1 and Mode 2 share the same maximum thrust"), FMath::IsNearlyEqual(
+				Pawn->GetPhysicalFlightSettings().MaximumTotalThrustNewtons, Mode2Physics.MaximumTotalThrustNewtons));
 			Pawn->SetControlMode(EDroneControlMode::AcroRateRealisticGreybox);
 			Pawn->SetAcroRateInputGreybox(0.0f, 0.0f, 0.0f);
 			Pawn->SetAcroThrottleInputGreybox(0.0f);

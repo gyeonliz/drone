@@ -8,6 +8,7 @@
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/ProjectileMovementComponent.h"
+#include "Prototype/DronePrototypePawn.h"
 #include "UObject/ConstructorHelpers.h"
 
 ADroneDroppedPayload::ADroneDroppedPayload()
@@ -121,6 +122,18 @@ bool ADroneDroppedPayload::PrepareForCarry(AActor* NewCarrierActor, USceneCompon
 		ETeleportType::TeleportPhysics);
 	SetLifeSpan(0.0f);
 	return true;
+}
+
+void ADroneDroppedPayload::SetPayloadMassKilograms(const float NewPayloadMassKilograms)
+{
+	PayloadMassKilograms = FMath::Max(0.0f, NewPayloadMassKilograms);
+	if (bCarried)
+	{
+		if (ADronePrototypePawn* CarrierDrone = Cast<ADronePrototypePawn>(GetOwner()))
+		{
+			CarrierDrone->RefreshPayloadMassEffects();
+		}
+	}
 }
 
 void ADroneDroppedPayload::InitializePayload(

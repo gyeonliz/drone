@@ -5,8 +5,10 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
+#include "Sound/SoundBase.h"
 #include "Prototype/DronePrototypePawn.h"
 #include "Tutorial/DroneTrainingGateSequenceComponent.h"
 #include "UObject/ConstructorHelpers.h"
@@ -60,6 +62,12 @@ ADroneTrainingGate::ADroneTrainingGate()
 		RingVisualSegments.Add(Segment);
 	}
 
+	GateAssetVisual = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("GateAssetVisual"));
+	GateAssetVisual->SetupAttachment(GateRoot);
+	GateAssetVisual->SetMobility(EComponentMobility::Movable);
+	GateAssetVisual->SetVisibility(false);
+	GateAssetVisual->SetHiddenInGame(true);
+
 	ApplyComponentRules();
 }
 
@@ -76,6 +84,15 @@ void ADroneTrainingGate::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	PendingEntryLocations.Reset();
 	AssignedGateSequence.Reset();
 	Super::EndPlay(EndPlayReason);
+}
+
+void ADroneTrainingGate::BeginPlay()
+{
+	Super::BeginPlay();
+	// 기존 맵의 저장된 Component에도 최신 BP 메시/보정을 적용한다.
+	// Course/Selector가 꺼 둔 Trigger나 Actor Collision은 다시 켜지 않는다.
+	RefreshRingVisual();
+	RefreshStateMaterial();
 }
 
 FVector ADroneTrainingGate::GetForwardDirectionWorld() const
@@ -124,6 +141,43 @@ void ADroneTrainingGate::SetGateStateColors(
 	RefreshStateMaterial();
 }
 
+void ADroneTrainingGate::SetGateStateMaterials(UMaterialInterface* BeforePassMaterial,
+	UMaterialInterface* CurrentTargetMaterial, UMaterialInterface* AfterPassMaterial)
+{
+	InactiveMaterial = BeforePassMaterial;
+	CurrentMaterial = CurrentTargetMaterial;
+	CompletedMaterial = AfterPassMaterial;
+	RefreshStateMaterial();
+}
+
+void ADroneTrainingGate::SetGateAssetMesh(UStaticMesh* Mesh, const FTransform MeshLocalTransform)
+{
+	GateAssetMesh = Mesh;
+	GateAssetLocalTransform = MeshLocalTransform;
+	RefreshRingVisual();
+	RefreshStateMaterial();
+}
+
+void ADroneTrainingGate::PlayAcceptedPassFeedback(AActor* PassingDrone)
+{
+	// Construction/Reset/색 변경에서는 호출하지 않는다. Audio가 비어도 BP 연출은 전달한다.
+	++AcceptedPassFeedbackCount;
+	if (GatePassSound && GatePassSoundVolume > 0.0f && GetWorld() && GetWorld()->IsGameWorld())
+	{
+		if (bGatePassSound2D)
+		{
+			UGameplayStatics::PlaySound2D(this, GatePassSound,
+				GatePassSoundVolume, FMath::Max(GatePassSoundPitch, 0.1f));
+		}
+		else
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, GatePassSound, GetActorLocation(),
+				GatePassSoundVolume, FMath::Max(GatePassSoundPitch, 0.1f));
+		}
+	}
+	OnGatePassed(PassingDrone);
+}
+
 void ADroneTrainingGate::AssignGateSequence(UDroneTrainingGateSequenceComponent* InSequence)
 {
 	AssignedGateSequence = InSequence;
@@ -144,7 +198,13 @@ void ADroneTrainingGate::ApplyComponentRules()
 	}
 
 	// Visual은 보이기만 하며 Hit, Overlap, Physics, Nav 어느 쪽에도 참여하지 않는다.
+	TArray<UStaticMeshComponent*> Visuals;
 	for (UStaticMeshComponent* Segment : RingVisualSegments)
+	{
+		Visuals.Add(Segment);
+	}
+	Visuals.Add(GateAssetVisual);
+	for (UStaticMeshComponent* Segment : Visuals)
 	{
 		if (!Segment)
 		{
@@ -213,8 +273,8 @@ void ADroneTrainingGate::RefreshRingVisual()
 				FramePositions[SegmentIndex],
 				FRotator::ZeroRotator);
 			Segment->SetRelativeScale3D(SegmentIndex < 2 ? HorizontalBarScale : VerticalBarScale);
-			Segment->SetVisibility(true);
-			Segment->SetHiddenInGame(false);
+			Segment->SetVisibility(!GateAssetMesh);
+			Segment->SetHiddenInGame(GateAssetMesh != nullptr);
 		}
 		else
 		{
@@ -222,6 +282,17 @@ void ADroneTrainingGate::RefreshRingVisual()
 			Segment->SetVisibility(false);
 			Segment->SetHiddenInGame(true);
 		}
+	}
+
+	if (GateAssetVisual)
+	{
+		GateAssetVisual->SetStaticMesh(GateAssetMesh);
+		GateAssetVisual->SetRelativeTransform(GateAssetLocalTransform);
+		GateAssetVisual->SetVisibility(GateAssetMesh != nullptr);
+		GateAssetVisual->SetHiddenInGame(GateAssetMesh == nullptr);
+		// 메시를 바꿀 때 이전 Override가 새 자산의 기본 재질을 덮지 않도록 초기화한다.
+		GateAssetVisual->EmptyOverrideMaterials();
+		DynamicAssetMaterials.Reset();
 	}
 
 	if (GateTrigger)
@@ -233,27 +304,82 @@ void ADroneTrainingGate::RefreshRingVisual()
 	}
 }
 
+UMaterialInterface* ADroneTrainingGate::GetMaterialForVisualState() const
+{
+	if (GateVisualState == EDroneTrainingGateVisualState::Current && CurrentMaterial)
+	{
+		return CurrentMaterial;
+	}
+	if (GateVisualState == EDroneTrainingGateVisualState::Completed && CompletedMaterial)
+	{
+		return CompletedMaterial;
+	}
+	if (GateVisualState == EDroneTrainingGateVisualState::Inactive && InactiveMaterial)
+	{
+		return InactiveMaterial;
+	}
+	return RingMaterial;
+}
+
 void ADroneTrainingGate::RefreshStateMaterial()
 {
-	if (!RingMaterial)
+	UMaterialInterface* StateMaterial = GetMaterialForVisualState();
+	const FLinearColor StateColor = GetColorForVisualState(GateVisualState);
+	if (StateMaterial)
+	{
+		// 같은 상태의 반복 호출은 MID를 재사용한다. 상태별 재질이 다를 때만 부모를 교체한다.
+		if (!DynamicRingMaterial || DynamicRingMaterial->Parent != StateMaterial)
+		{
+			DynamicRingMaterial = UMaterialInstanceDynamic::Create(StateMaterial, this);
+		}
+		if (DynamicRingMaterial && !StateColorParameterName.IsNone())
+		{
+			DynamicRingMaterial->SetVectorParameterValue(StateColorParameterName, StateColor);
+		}
+	}
+	else
 	{
 		DynamicRingMaterial = nullptr;
-		return;
 	}
-
-	DynamicRingMaterial = UMaterialInstanceDynamic::Create(RingMaterial, this);
-	if (!DynamicRingMaterial)
-	{
-		return;
-	}
-
-	DynamicRingMaterial->SetVectorParameterValue(TEXT("Color"), GetColorForVisualState(GateVisualState));
 	for (UStaticMeshComponent* Segment : RingVisualSegments)
 	{
 		if (Segment)
 		{
 			Segment->SetMaterial(0, DynamicRingMaterial);
 		}
+	}
+
+	if (!GateAssetVisual || !GateAssetMesh)
+	{
+		return;
+	}
+	const int32 SlotCount = GateAssetVisual->GetNumMaterials();
+	DynamicAssetMaterials.SetNum(SlotCount);
+	for (int32 SlotIndex = 0; SlotIndex < SlotCount; ++SlotIndex)
+	{
+		if (!GateAssetStateMaterialSlots.IsEmpty() && !GateAssetStateMaterialSlots.Contains(SlotIndex))
+		{
+			// 지정하지 않은 금속/기둥 등의 슬롯은 원래 Asset 재질을 보존한다.
+			GateAssetVisual->SetMaterial(SlotIndex, nullptr);
+			DynamicAssetMaterials[SlotIndex] = nullptr;
+			continue;
+		}
+		UMaterialInterface* ParentMaterial = StateMaterial ? StateMaterial : GateAssetMesh->GetMaterial(SlotIndex);
+		UMaterialInstanceDynamic* DynamicMaterial = DynamicAssetMaterials[SlotIndex];
+		if (ParentMaterial && (!DynamicMaterial || DynamicMaterial->Parent != ParentMaterial))
+		{
+			DynamicMaterial = UMaterialInstanceDynamic::Create(ParentMaterial, this);
+		}
+		if (!ParentMaterial)
+		{
+			DynamicMaterial = nullptr;
+		}
+		DynamicAssetMaterials[SlotIndex] = DynamicMaterial;
+		if (DynamicMaterial && !StateColorParameterName.IsNone())
+		{
+			DynamicMaterial->SetVectorParameterValue(StateColorParameterName, StateColor);
+		}
+		GateAssetVisual->SetMaterial(SlotIndex, DynamicMaterial);
 	}
 }
 

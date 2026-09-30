@@ -11,6 +11,7 @@
 #include "Components/SphereComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "EngineUtils.h"
+#include "GameFramework/FloatingPawnMovement.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Health/DroneHealthComponent.h"
 #include "Mission/DroneDefinition.h"
@@ -180,6 +181,8 @@ bool FDroneRoleAbilitiesTest::RunTest(const FString& Parameters)
 	}
 	TestTrue(TEXT("Drop capability is enabled"), Drop->IsFeatureEnabled());
 	TestEqual(TEXT("Drop Drone starts with one payload"), Drop->GetRemainingPayloadCount(), 1);
+	TestTrue(TEXT("Drop Drone starts with positive carried payload mass"), Drop->GetCurrentPayloadMassKilograms() > 0.0f);
+	const float LoadedInitialMaximumSpeed = DropDrone->GetPrototypeMovementComponent()->MaxSpeed;
 	TestNotNull(TEXT("Drop Drone visibly carries one payload"), CarriedPayloadVisual);
 	TestTrue(TEXT("Carried payload is visible before release"),
 		CarriedPayloadVisual && CarriedPayloadVisual->IsVisible() && !CarriedPayloadVisual->bHiddenInGame);
@@ -199,6 +202,8 @@ bool FDroneRoleAbilitiesTest::RunTest(const FString& Parameters)
 	}
 	TestNotNull(TEXT("One payload spawns"), Payload);
 	TestEqual(TEXT("Payload inventory decreases"), Drop->GetRemainingPayloadCount(), 0);
+	TestTrue(TEXT("Dropping cargo restores a higher maximum speed"),
+		DropDrone->GetPrototypeMovementComponent()->MaxSpeed > LoadedInitialMaximumSpeed);
 	TestTrue(TEXT("Carried payload visual disappears after release"),
 		CarriedPayloadVisual && (!CarriedPayloadVisual->IsVisible() || CarriedPayloadVisual->bHiddenInGame));
 	TestEqual(TEXT("Drop stores the automatically selected target"), Drop->GetDropTarget(), DropTarget);
@@ -218,6 +223,7 @@ bool FDroneRoleAbilitiesTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("Map-placeable carryable payload spawns"), CarryablePayload);
 	if (CarryablePayload)
 	{
+		CarryablePayload->SetPayloadMassKilograms(1.25f);
 		CarryablePayload->ActivateCarryablePickup();
 	}
 	TestEqual(TEXT("Empty Drop Drone finds the nearest carryable payload"), Drop->FindBestAvailableCarryablePayload(), CarryablePayload);
@@ -225,6 +231,10 @@ bool FDroneRoleAbilitiesTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Picked-up payload becomes the carried Actor"), Drop->GetCarriedPayloadActor(), CarryablePayload);
 	TestTrue(TEXT("Picked-up payload is attached and carried"), CarryablePayload && CarryablePayload->IsCarried() && CarryablePayload->GetAttachParentActor() == DropDrone);
 	TestEqual(TEXT("Pickup restores one payload in inventory"), Drop->GetRemainingPayloadCount(), 1);
+	TestTrue(TEXT("Picked-up Actor mass is exposed by the Drop Component"),
+		FMath::IsNearlyEqual(Drop->GetCurrentPayloadMassKilograms(), 1.25f));
+	TestTrue(TEXT("Picking up cargo reduces maximum speed"),
+		DropDrone->GetPrototypeMovementComponent()->MaxSpeed < LoadedInitialMaximumSpeed);
 	TestTrue(TEXT("Primary action drops the same carried Actor"), DropDrone->TriggerPrimaryRoleAbility());
 	TestNull(TEXT("Carried Actor reference clears after drop"), Drop->GetCarriedPayloadActor());
 	TestTrue(TEXT("Dropped map payload is no longer carried"), CarryablePayload && !CarryablePayload->IsCarried());

@@ -37,6 +37,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Selection|Control")
 	void ToggleControlMode();
 
+	/** Legacy Blueprint 호출 호환용이다. 속도 단계는 제거되어 항상 단일 기본 성능을 유지한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Selection|Control")
 	void CycleHandlingPreset();
 

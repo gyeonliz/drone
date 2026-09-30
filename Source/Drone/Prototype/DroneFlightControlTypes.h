@@ -4,11 +4,12 @@
 #include "DroneFlightControlTypes.generated.h"
 
 /**
- * 조작 보조 수준이다. 기체 역할이나 속도 프리셋과 독립적으로 바꿀 수 있다.
+ * 조작 보조 수준이다. 기체 역할이나 비행 성능과 독립적으로 바꿀 수 있다.
  * ManualRealisticGreybox는 제한된 기울기와 관성을 사용하는 중간 단계다.
  * 두 Acro 모드는 스틱을 각속도 명령으로 해석하고 자동 수평 복귀를 끄며,
  * 실제 RC 송신기의 Mode 1/Mode 2 수직축 배치를 각각 사용한다.
- * 두 실제 조작형 모두 모터별 추력/PID/공기역학을 1:1 시뮬레이션하지는 않는다.
+ * Mode 1/2는 송신기 축 배치만 다르며 같은 질량·추력·모터 응답·항력 모델을 사용한다.
+ * 비행 컨트롤러의 내부 PID와 각 모터/프로펠러 유동을 1:1 해석하는 모델은 아니다.
  */
 UENUM(BlueprintType)
 enum class EDroneControlMode : uint8
@@ -71,13 +72,47 @@ struct DRONE_API FDroneAcroRateSettings
 	float BodyRateResponseTimeSeconds = 0.08f;
 };
 
-/** 동일 기체에서도 바꿀 수 있는 속도 단계다. 기존 열거형 이름은 Asset 호환을 위해 유지한다. */
+/**
+ * 모든 조작 모드가 공유하는 기체 물리 기준값이다. Mode 1/2는 이 값을 똑같이 사용하고
+ * Payload 질량만 총질량에 더해져 속도·가속·호버 여유를 낮춘다.
+ */
+USTRUCT(BlueprintType)
+struct DRONE_API FDronePhysicalFlightSettings
+{
+	GENERATED_BODY()
+
+	/** 기존 빠름 프리셋을 단일 무적재 기준 성능으로 승격하는 배율이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Physical Flight|Performance", meta=(ClampMin="0.1"))
+	float UnloadedMaximumSpeedMultiplier = 1.25f;
+
+	/** 배터리 포함, Payload 제외 기체 질량이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Physical Flight|Mass", meta=(ClampMin="0.01", ForceUnits="kg"))
+	float DryMassKilograms = 2.0f;
+
+	/** 전체 모터가 낼 수 있는 최대 합산 추력이다. 총질량이 늘면 같은 추력에서 가속도가 낮아진다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Physical Flight|Thrust", meta=(ClampMin="0.1", ForceUnits="N"))
+	float MaximumTotalThrustNewtons = 40.0f;
+
+	/** 스로틀 명령이 실제 합산 추력에 도달하는 1차 모터 응답 시간이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Physical Flight|Thrust", meta=(ClampMin="0.001", ForceUnits="s"))
+	float MotorResponseTimeSeconds = 0.055f;
+
+	/** 고속에서 속도의 제곱에 비례해 커지는 Greybox 항력 계수다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Physical Flight|Drag", meta=(ClampMin="0.0", ForceUnits="1/cm"))
+	float QuadraticDragPerCentimeter = 0.00004f;
+
+	/** 매우 무거운 Payload에서도 조작 가능한 시험 하한이다. 추력 부족에 의한 하강은 별도로 그대로 발생한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Physical Flight|Payload", meta=(ClampMin="0.1", ClampMax="1.0"))
+	float MinimumLoadedSpeedMultiplier = 0.55f;
+};
+
+/** 자산/Blueprint 직렬화 호환용이다. 런타임 속도 선택에는 더 이상 사용하지 않는다. */
 UENUM(BlueprintType)
 enum class EDroneHandlingPreset : uint8
 {
-	Stable UMETA(DisplayName="느림"),
-	Balanced UMETA(DisplayName="보통"),
-	Agile UMETA(DisplayName="빠름")
+	Stable UMETA(DisplayName="Legacy Stable"),
+	Balanced UMETA(DisplayName="기체 기본 성능"),
+	Agile UMETA(DisplayName="Legacy Agile")
 };
 
 /** 조작 방식이 이동 Component의 기본 수치를 얼마나 바꾸는지 정의한다. */
@@ -107,7 +142,7 @@ struct DRONE_API FDroneControlModeTuning
 	bool bTiltCollisionRoot = false;
 };
 
-/** 느림/보통/빠름 단계별 배율이다. 파생 Blueprint에서 수치를 조정할 수 있다. */
+/** 과거 속도 단계 직렬화 호환용이다. 새 런타임 계산에서는 사용하지 않는다. */
 USTRUCT(BlueprintType)
 struct DRONE_API FDroneHandlingPresetTuning
 {
