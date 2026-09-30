@@ -103,11 +103,11 @@ bool FDroneExtendedRoleTest::RunTest(const FString& Parameters)
 			TInlineComponentArray<UStaticMeshComponent*> StaticMeshes;
 			Pawn->GetComponents(StaticMeshes);
 			const TSet<FString> ExpectedFiberMeshPaths = {
-				TEXT("/Game/Drone/ThirdParty/DronePackFPV/SM_DroneFPVBody.SM_DroneFPVBody"),
-				TEXT("/Game/Drone/ThirdParty/DronePackFPV/SM_RotorA.SM_RotorA"),
-				TEXT("/Game/Drone/ThirdParty/DronePackFPV/SM_RotorB.SM_RotorB"),
-				TEXT("/Game/Drone/ThirdParty/DronePackFPV/SM_RotorC.SM_RotorC"),
-				TEXT("/Game/Drone/ThirdParty/DronePackFPV/SM_RotorD.SM_RotorD")
+				TEXT("/Game/Drone/ThirdParty/DronePack/D_Mesh/DroneSpy/SM_Drone01Body.SM_Drone01Body"),
+				TEXT("/Game/Drone/ThirdParty/DronePack/D_Mesh/DroneSpy/SM_Drone01_r1.SM_Drone01_r1"),
+				TEXT("/Game/Drone/ThirdParty/DronePack/D_Mesh/DroneSpy/SM_Drone01_r2.SM_Drone01_r2"),
+				TEXT("/Game/Drone/ThirdParty/DronePack/D_Mesh/DroneSpy/SM_Drone01_r3.SM_Drone01_r3"),
+				TEXT("/Game/Drone/ThirdParty/DronePack/D_Mesh/DroneSpy/SM_Drone01_r4.SM_Drone01_r4")
 			};
 			TSet<FString> ActualFiberMeshPaths;
 			for (const UStaticMeshComponent* Component : StaticMeshes)
@@ -118,7 +118,7 @@ bool FDroneExtendedRoleTest::RunTest(const FString& Parameters)
 				}
 			}
 			TestTrue(
-				TEXT("Fiber Pawn reuses the same FPV body and four rotor meshes as the suicide drone"),
+				TEXT("Fiber Pawn uses the DroneSpy body and four separated rotor meshes"),
 				ActualFiberMeshPaths.Num() == ExpectedFiberMeshPaths.Num()
 					&& ActualFiberMeshPaths.Includes(ExpectedFiberMeshPaths));
 			const UStaticMeshComponent* FiberSpool = nullptr;
@@ -130,9 +130,10 @@ bool FDroneExtendedRoleTest::RunTest(const FString& Parameters)
 					break;
 				}
 			}
-			TestTrue(TEXT("Fiber Pawn exposes an empty replaceable spool mesh slot at a configured mount"),
+			TestTrue(TEXT("Fiber Pawn mounts the imported GSU canister in the dedicated spool slot"),
 				FiberSpool
-					&& FiberSpool->GetStaticMesh() == nullptr
+					&& FiberSpool->GetStaticMesh()
+					&& FiberSpool->GetStaticMesh()->GetPathName().Contains(TEXT("FiberOpticGSU/SM_FiberOpticGSU"))
 					&& !FiberSpool->GetRelativeLocation().IsNearlyZero());
 			TInlineComponentArray<USplineComponent*> Splines;
 			Pawn->GetComponents(Splines);
