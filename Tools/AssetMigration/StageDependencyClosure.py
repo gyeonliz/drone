@@ -146,15 +146,23 @@ if rename_data:
     if not asset_tools.rename_assets(rename_data):
         raise RuntimeError("Unreal failed to rename the dependency closure")
 
+moved_seeds = [package_map.get(package_name, package_name) for package_name in seeds]
+
+# Save only the migrated closure and the explicitly retained seed assets.  Saving
+# all of /Game/Drone needlessly rebuilds unrelated staging packs and can exhaust
+# the local DDC/memory on large environment migrations.
 if not unreal.EditorAssetLibrary.save_directory(
-    "/Game/Drone", only_if_is_dirty=False, recursive=True
+    target_root, only_if_is_dirty=False, recursive=True
 ):
-    raise RuntimeError("Failed to save staged project-owned assets")
+    raise RuntimeError("Failed to save staged dependency assets")
+for seed_package in moved_seeds:
+    if any(is_under(seed_package, prefix) for prefix in keep_prefixes):
+        if not unreal.EditorAssetLibrary.save_asset(seed_package, only_if_is_dirty=False):
+            raise RuntimeError(f"Failed to save retained staged seed: {seed_package}")
 
 registry.scan_paths_synchronous(["/Game/Drone"], force_rescan=True)
 registry.wait_for_completion()
 
-moved_seeds = [package_map.get(package_name, package_name) for package_name in seeds]
 final_closure = dependency_closure(registry, moved_seeds, options)
 external_game_dependencies = sorted(
     package_name
