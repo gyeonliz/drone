@@ -10,6 +10,11 @@
 #include "Drone.h"
 #include "Health/DroneHealthComponent.h"
 #include "Signal/DroneSignalComponent.h"
+#include "Health/DroneBatteryComponent.h"
+#include "Tutorial/DroneTrainingRecordSubsystem.h"
+#include "Tutorial/DroneTrainingCourse.h"
+#include "Prototype/DronePrototypePawn.h"
+#include "Engine/GameInstance.h"
 #include "Styling/CoreStyle.h"
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Tutorial/DroneTrainingLapRecorderComponent.h"
@@ -36,6 +41,7 @@ void UDroneFlightHUDWidget::NativeOnInitialized()
 	BuildHealthLayout();
 	BuildSignalLayout();
 	BuildWeatherLayout();
+	BuildDroneStatusLayout();
 	BuildTrainingLayout();
 	BindWeatherSource();
 	if (UDroneTelemetryComponent* CurrentSource = TelemetrySource.Get())
@@ -56,6 +62,7 @@ void UDroneFlightHUDWidget::NativeDestruct()
 	ClearTrainingRecordSource();
 	ClearHealthSource();
 	ClearSignalSource();
+	SetBatterySource(nullptr);
 	ClearWeatherSource();
 	ClearTelemetrySource();
 	Super::NativeDestruct();
@@ -475,6 +482,101 @@ void UDroneFlightHUDWidget::BuildSignalLayout()
 	ApplySignalSnapshot(DisplayedSignalSnapshot);
 }
 
+void UDroneFlightHUDWidget::BuildDroneStatusLayout()
+{
+	if (!WidgetTree || DroneStatusPanel)
+	{
+		return;
+	}
+	UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree->RootWidget);
+	if (!RootCanvas)
+	{
+		return;
+	}
+	// 오른쪽 위 체력(24)·신호(76)·바람(128) 아래에 둔다.
+	DroneStatusPanel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("DroneStatusPanel"));
+	DroneStatusPanel->SetBrushColor(FLinearColor(0.02f, 0.07f, 0.10f, 0.84f));
+	DroneStatusPanel->SetPadding(FMargin(14.0f, 9.0f));
+	DroneStatusPanel->SetVisibility(ESlateVisibility::Collapsed);
+	UCanvasPanelSlot* StatusSlot = RootCanvas->AddChildToCanvas(DroneStatusPanel);
+	StatusSlot->SetAnchors(FAnchors(1.0f, 0.0f));
+	StatusSlot->SetAlignment(FVector2D(1.0f, 0.0f));
+	StatusSlot->SetPosition(FVector2D(-24.0f, 180.0f));
+	StatusSlot->SetAutoSize(true);
+	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>();
+	DroneIdentityValueText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("DroneIdentityValueText"));
+	DroneIdentityValueText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 16.0f));
+	DroneIdentityValueText->SetColorAndOpacity(FSlateColor(FLinearColor(0.74f, 0.94f, 1.0f, 1.0f)));
+	Column->AddChildToVerticalBox(DroneIdentityValueText);
+	BatteryValueText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("BatteryValueText"));
+	BatteryValueText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 16.0f));
+	Column->AddChildToVerticalBox(BatteryValueText);
+	DroneStatusPanel->SetContent(Column);
+	RefreshDroneStatusDisplay();
+}
+
+void UDroneFlightHUDWidget::SetBatterySource(UDroneBatteryComponent* InBatterySource)
+{
+	if (UDroneBatteryComponent* Current = BatterySource.Get(); Current && Current != InBatterySource)
+	{
+		Current->OnBatteryChanged.RemoveDynamic(this, &UDroneFlightHUDWidget::HandleBatteryChanged);
+	}
+	BatterySource = InBatterySource;
+	if (InBatterySource)
+	{
+		InBatterySource->OnBatteryChanged.AddUniqueDynamic(this, &UDroneFlightHUDWidget::HandleBatteryChanged);
+	}
+	RefreshDroneStatusDisplay();
+}
+
+void UDroneFlightHUDWidget::SetDroneIdentity(const FText& InDroneName, const FText& InSignalBand)
+{
+	// Figma HUD: 기체명과 신호 주파수. 대역이 없으면 기체명만 보인다.
+	DroneIdentityDisplayText = InSignalBand.IsEmpty()
+		? InDroneName
+		: FText::Format(FText::FromString(TEXT("{0}  |  {1}")), InDroneName, InSignalBand);
+	RefreshDroneStatusDisplay();
+}
+
+void UDroneFlightHUDWidget::HandleBatteryChanged(float /*RemainingFraction*/)
+{
+	RefreshDroneStatusDisplay();
+}
+
+void UDroneFlightHUDWidget::RefreshDroneStatusDisplay()
+{
+	const UDroneBatteryComponent* Battery = BatterySource.Get();
+	const bool bShowBattery = Battery && Battery->IsBatteryEnabled();
+	if (bShowBattery)
+	{
+		const int32 Seconds = FMath::CeilToInt(Battery->GetRemainingSeconds());
+		BatteryDisplayText = FText::FromString(FString::Printf(TEXT("BATTERY %d%%  (%02d:%02d)%s"),
+			FMath::RoundToInt(Battery->GetRemainingFraction() * 100.0f), Seconds / 60, Seconds % 60,
+			Battery->IsDepleted() ? TEXT("  방전") : Battery->IsLow() ? TEXT("  부족") : TEXT("")));
+	}
+	else
+	{
+		BatteryDisplayText = FText::GetEmpty();
+	}
+	if (BatteryValueText)
+	{
+		BatteryValueText->SetText(BatteryDisplayText);
+		BatteryValueText->SetVisibility(bShowBattery ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		BatteryValueText->SetColorAndOpacity(FSlateColor(bShowBattery && Battery->IsLow()
+			? FLinearColor(1.0f, 0.35f, 0.28f, 1.0f) : FLinearColor(0.74f, 0.94f, 1.0f, 1.0f)));
+	}
+	const bool bShowIdentity = !DroneIdentityDisplayText.IsEmpty();
+	if (DroneIdentityValueText)
+	{
+		DroneIdentityValueText->SetText(DroneIdentityDisplayText);
+		DroneIdentityValueText->SetVisibility(bShowIdentity ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (DroneStatusPanel)
+	{
+		DroneStatusPanel->SetVisibility(bShowBattery || bShowIdentity ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+}
+
 void UDroneFlightHUDWidget::BuildWeatherLayout()
 {
 	if (!WidgetTree || WeatherReadoutPanel)
@@ -786,6 +888,16 @@ void UDroneFlightHUDWidget::RefreshLapComparisonDisplay()
 	{
 		PreviousLapAverageTimeDisplayText = FText::FromString(TEXT("이전 완주 평균  --.--초"));
 		BestLapTimeDisplayText = FText::FromString(TEXT("최고 완주 기록  --.--초"));
+		// TUT-BEST-01: 이번 실행에서 아직 완주 전이면 같은 코스·기체·조작 방식의 저장 기록을 보여 준다(재실행 복원).
+		const ADroneTrainingCourse* Course = Source ? Cast<ADroneTrainingCourse>(Source->GetOwner()) : nullptr;
+		const ADronePrototypePawn* Pawn = Cast<ADronePrototypePawn>(GetOwningPlayerPawn());
+		const UGameInstance* GameInstance = GetGameInstance();
+		const UDroneTrainingRecordSubsystem* Records = GameInstance ? GameInstance->GetSubsystem<UDroneTrainingRecordSubsystem>() : nullptr;
+		double SavedBest = 0.0;
+		if (Course && Pawn && Records && Records->GetBestLap(Course->GetCourseId(), Pawn->GetAppliedDroneId(), Pawn->GetControlMode(), SavedBest))
+		{
+			BestLapTimeDisplayText = FText::FromString(FString::Printf(TEXT("최고 완주 기록  %.2f초 (저장)"), SavedBest));
+		}
 		LapTimeDeltaDisplayText = FText::FromString(Source && Source->IsLapRecording()
 			? TEXT("비교 결과  새 기록 측정 중")
 			: TEXT("비교 결과  완주 후 생성"));

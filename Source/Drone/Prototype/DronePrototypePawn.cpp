@@ -22,6 +22,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Health/DroneHealthComponent.h"
+#include "Health/DroneBatteryComponent.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
@@ -183,6 +184,7 @@ ADronePrototypePawn::ADronePrototypePawn()
 	// HUD가 Pawn을 직접 계산하지 않도록 공용 데이터 공급 Component를 기본 부착한다.
 	TelemetryComponent = CreateDefaultSubobject<UDroneTelemetryComponent>(TEXT("TelemetryComponent"));
 	HealthComponent = CreateDefaultSubobject<UDroneHealthComponent>(TEXT("HealthComponent"));
+	BatteryComponent = CreateDefaultSubobject<UDroneBatteryComponent>(TEXT("BatteryComponent"));
 	SignalComponent = CreateDefaultSubobject<UDroneSignalComponent>(TEXT("SignalComponent"));
 	WeatherResponseComponent = CreateDefaultSubobject<UDroneWeatherResponseComponent>(TEXT("WeatherResponseComponent"));
 	ReconScanComponent = CreateDefaultSubobject<UDroneReconScanComponent>(TEXT("ReconScanComponent"));
@@ -247,6 +249,9 @@ bool ADronePrototypePawn::ApplyDroneDefinition(const UDroneDefinition* Definitio
 	bStartInFirstPersonView = Profile.bStartInFirstPersonView;
 	SetFirstPersonViewEnabled(Profile.bStartInFirstPersonView);
 	HealthComponent->ConfigureMaxHealth(Profile.MaxHealth, true);
+	BatteryComponent->ConfigureCapacity(Profile.BatteryLifeSeconds);
+	AppliedDroneDisplayName = Definition->DisplayName;
+	AppliedSignalBandLabel = Profile.SignalBandLabel;
 	// 기획된 기능이 아니라 현재 빌드에서 검증 완료된 기능만 활성화해 역할 중첩을 막는다.
 	ReconScanComponent->ConfigureFeatureEnabled(
 		Definition->ImplementedCapabilities.Contains(EDroneGameplayCapability::ReconScan));

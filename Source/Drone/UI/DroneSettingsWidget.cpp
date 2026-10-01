@@ -407,3 +407,32 @@ void UDroneSettingsWidget::BuildLayout()
 	Actions->AddChildToHorizontalBox(Back.Value);
 	Back.Key->OnClicked.AddUniqueDynamic(this, &UDroneSettingsWidget::RequestClose);
 }
+
+TArray<UWidget*> UDroneSettingsWidget::GetGamepadControls() const
+{
+	TArray<UWidget*> Controls{MasterVolumeSlider, DisplayModeCombo, ResolutionCombo, GraphicsCombo, VSyncCheck, FrameRateCombo};
+	if (WidgetTree)
+	{
+		// 하단 버튼은 네이티브·WBP 레이아웃 모두 같은 이름을 쓴다.
+		for (const TCHAR* Name : {TEXT("RestoreDefaultsButton"), TEXT("ApplySettingsButton"), TEXT("SettingsBackButton")})
+		{
+			Controls.Add(WidgetTree->FindWidget(FName(Name)));
+		}
+	}
+	Controls.RemoveAll([](const UWidget* Widget) { return Widget == nullptr; });
+	return Controls;
+}
+
+void UDroneSettingsWidget::RequestGamepadFocus()
+{
+	// 슬라이더는 패드 A로 잠근 뒤 좌우로 값을 바꾼다(UE 기본 동작). 콤보는 A로 펼친다.
+	GamepadFocus.RequestFocus(GetGamepadControls());
+}
+
+void UDroneSettingsWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	GamepadFocus.FocusScale = GamepadFocusScale;
+	GamepadFocus.FocusTint = GamepadFocusTint;
+	GamepadFocus.Tick(GetOwningPlayer(), GetGamepadControls());
+}

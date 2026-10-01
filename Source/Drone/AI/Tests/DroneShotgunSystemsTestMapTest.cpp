@@ -118,6 +118,26 @@ public:
 		LastNPC = ShotgunNPC;
 		LastController = Controller;
 		LastWeapon = Weapon;
+
+		// 이 단계는 산탄 8발·탄약·사격 이벤트를 검증한다. 감지 여부가 맵의 초기 배치 방향에 좌우되지 않도록
+		// Drone을 NPC 정면에 고정한다. 위치 규칙은 다음 단계(시선 안정)와 같은 정면 900cm·높이 150cm이며,
+		// 산탄 사거리(기본 1600cm)보다 가깝게 제한한다.
+		// 2026-10-01: 맵 초기 배치의 Drone은 NPC 정면에서 약 93° 옆(시야 반각 70° 밖, 8.8m)이라 감지 0으로 실패했다.
+		// 실기 플레이에서는 Drone이 정면으로 접근하면 감지됨을 사용자가 확인했다.
+		if (ShotgunNPC && Drone && Controller)
+		{
+			if (!bDronePlacedInView)
+			{
+				// 첫 배치 때의 NPC 정면을 고정한다. NPC가 표적 쪽으로 몸을 돌려도 Drone은 같은 자리에 둔다.
+				const FVector NPCForward = ShotgunNPC->GetActorForwardVector().GetSafeNormal2D();
+				const float InViewDistance = FMath::Min(900.0f, FMath::Max(100.0f, Controller->GetPersonalWeaponRange() - 100.0f));
+				InViewTarget = ShotgunNPC->GetActorLocation() + NPCForward * InViewDistance + FVector::UpVector * 150.0f;
+				bDronePlacedInView = true;
+				Test->AddInfo(FString::Printf(TEXT("Shotgun fire PIE placed the Drone %.0f cm in front of the NPC."), InViewDistance));
+			}
+			Drone->SetActorLocation(InViewTarget, false, nullptr, ETeleportType::TeleportPhysics);
+		}
+
 		const bool bVolleyObserved = Weapon
 			&& Weapon->GetShotgunVolleyAttemptCount() >= 1
 			&& Weapon->GetShotgunProjectileSpawnCount() >= Weapon->GetShotgunPelletCount()
@@ -274,6 +294,8 @@ private:
 	double AimElapsedAtDetectionObservation = 0.0;
 	double VolleyObservedAt = 0.0;
 	bool bInitialAimDelayVerified = false;
+	bool bDronePlacedInView = false;
+	FVector InViewTarget = FVector::ZeroVector;
 	TWeakObjectPtr<ADroneNPCCharacter> LastNPC;
 	TWeakObjectPtr<ADroneNPCAIController> LastController;
 	TWeakObjectPtr<UDroneNPCWeaponComponent> LastWeapon;

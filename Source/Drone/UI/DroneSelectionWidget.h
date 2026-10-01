@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "Flow/DroneGameFlowTypes.h"
 #include "Prototype/DroneFlightControlTypes.h"
+#include "UI/DroneGamepadFocus.h"
 #include "DroneSelectionWidget.generated.h"
 
 class UBorder;
@@ -30,6 +31,18 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|Selection")
 	UDroneGameFlowSubsystem* GetFlowSubsystem() const { return FlowSubsystem.Get(); }
+
+	/** 패드 포커스 강조(UI-PAD-01). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Selection|Gamepad", meta=(ClampMin="1.0", ClampMax="1.3"))
+	float GamepadFocusScale = 1.06f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Selection|Gamepad")
+	FLinearColor GamepadFocusTint = FLinearColor(1.0f, 0.86f, 0.42f, 1.0f);
+
+	UWidget* GetGamepadHighlightedWidget() const { return GamepadFocus.GetHighlighted(); }
+	UButton* GetDroneButton(int32 Index) const { return DroneButtons.IsValidIndex(Index) ? DroneButtons[Index].Get() : nullptr; }
+	FName GetDisplayedDroneId(int32 Index) const { return DisplayedDroneButtonIds.IsValidIndex(Index) ? DisplayedDroneButtonIds[Index] : NAME_None; }
+	int32 GetDroneButtonCount() const { return DroneButtons.Num(); }
 
 	/** Mission이 허용하고 현재 구현된 기체만 Flow가 승인한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Selection")
@@ -75,8 +88,14 @@ protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeDestruct() override;
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
+	/** 기체 선택 화면에 들어올 때 한 번: 고른 기체 → 첫 기체 → 출격 → 뒤로 순으로 첫 포커스. */
+	void RequestDroneSelectFocus(FName SelectedDroneId);
+	TArray<UWidget*> GetGamepadHighlightables() const;
+	FDroneGamepadFocus GamepadFocus;
+	bool bDroneSelectFocusRequested = false;
 	UFUNCTION()
 	void HandleBackClicked();
 	UPROPERTY(Transient, meta=(BindWidgetOptional))

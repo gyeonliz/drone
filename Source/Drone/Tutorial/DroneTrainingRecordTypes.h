@@ -144,6 +144,18 @@ struct FDroneTrainingLapComparison
 	UPROPERTY(BlueprintReadOnly, Category="Tutorial|Comparison")
 	bool bIsNewBestTime = false;
 
+	/** TUT-BEST-01: 이번 랩 전에 디스크에 저장된 같은 코스·기체·조작 방식 최고 기록이 있었는지. */
+	UPROPERTY(BlueprintReadOnly, Category="Tutorial|Comparison")
+	bool bHasSavedBest = false;
+
+	/** 이번 랩 전 저장 최고 기록(초). BestElapsedSeconds에는 이 값까지 합쳐 반영된다. */
+	UPROPERTY(BlueprintReadOnly, Category="Tutorial|Comparison", meta=(Units="s"))
+	double SavedBestElapsedSeconds = 0.0;
+
+	/** 이번 랩이 저장 최고 기록을 새로 썼는지(처음 기록 포함). */
+	UPROPERTY(BlueprintReadOnly, Category="Tutorial|Comparison")
+	bool bIsNewSavedBest = false;
+
 	UPROPERTY(BlueprintReadOnly, Category="Tutorial|Comparison")
 	TArray<FDroneTrainingSegmentComparison> SegmentComparisons;
 };

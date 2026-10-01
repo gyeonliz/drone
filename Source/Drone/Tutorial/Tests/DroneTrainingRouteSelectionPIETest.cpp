@@ -122,9 +122,15 @@ public:
 			{
 				PlayerInput->InputKey(FInputKeyEventArgs::CreateSimulated(Selection.Key, IE_Pressed, 1.0f));
 				bWaitingForKeyResult = true;
+				KeyWaitFrames = 0;
 				return false;
 			}
 
+			// 렌더링 실행에서 다른 PIE 테스트 뒤에 돌면 입력 처리가 한 프레임보다 늦을 수 있다. 최대 30프레임 기다린 뒤 판정한다.
+			if (Selector->GetActiveRouteNumber() != Selection.ExpectedRouteNumber && ++KeyWaitFrames < 30)
+			{
+				return false;
+			}
 			TestRouteState(*Selector, Selection.ExpectedRouteNumber);
 			PlayerInput->InputKey(FInputKeyEventArgs::CreateSimulated(Selection.Key, IE_Released, 0.0f));
 			++FixedSelectionIndex;
@@ -137,6 +143,11 @@ public:
 			RouteBeforeRandom = Selector->GetActiveRouteNumber();
 			PlayerInput->InputKey(FInputKeyEventArgs::CreateSimulated(EKeys::Five, IE_Pressed, 1.0f));
 			bRandomKeySent = true;
+			KeyWaitFrames = 0;
+			return false;
+		}
+		if (Selector->GetActiveRouteNumber() == RouteBeforeRandom && ++KeyWaitFrames < 30)
+		{
 			return false;
 		}
 
@@ -182,6 +193,7 @@ private:
 	bool bInitialStateChecked = false;
 	bool bWaitingForKeyResult = false;
 	bool bRandomKeySent = false;
+	int32 KeyWaitFrames = 0;
 };
 }
 

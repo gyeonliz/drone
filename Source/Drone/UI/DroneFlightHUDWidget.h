@@ -11,6 +11,7 @@
 class UBorder;
 class UDroneHealthComponent;
 class UDroneSignalComponent;
+class UDroneBatteryComponent;
 class UDroneTelemetryComponent;
 class UDroneTrainingLapRecorderComponent;
 class UTextBlock;
@@ -82,6 +83,18 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Drone|HUD|Signal")
 	void ClearSignalSource();
+
+	/** HUD-FIGMA-01: 배터리 Source. 용량 0인 기체는 배터리 줄을 숨긴다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|HUD|Battery")
+	void SetBatterySource(UDroneBatteryComponent* InBatterySource);
+
+	/** HUD-FIGMA-01: 기체명과 신호 대역(예: 5.8GHz). 둘 다 비우면 줄을 숨긴다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|HUD|Identity")
+	void SetDroneIdentity(const FText& InDroneName, const FText& InSignalBand);
+
+	/** 테스트·디버그: 지금 HUD에 보이는 배터리·기체명 문구. */
+	FText GetBatteryDisplayText() const { return BatteryDisplayText; }
+	FText GetDroneIdentityDisplayText() const { return DroneIdentityDisplayText; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|HUD|Signal")
 	FDroneSignalSnapshot GetDisplayedSignalSnapshot() const { return DisplayedSignalSnapshot; }
@@ -159,6 +172,11 @@ private:
 	void HandleSignalSnapshotChanged(FDroneSignalSnapshot Snapshot);
 
 	UFUNCTION()
+	void HandleBatteryChanged(float RemainingFraction);
+	void BuildDroneStatusLayout();
+	void RefreshDroneStatusDisplay();
+
+	UFUNCTION()
 	void HandleWeatherSnapshotChanged(FDroneWeatherSnapshot Snapshot);
 
 	UFUNCTION()
@@ -215,6 +233,9 @@ private:
 	TWeakObjectPtr<UDroneHealthComponent> HealthSource;
 
 	TWeakObjectPtr<UDroneSignalComponent> SignalSource;
+	TWeakObjectPtr<UDroneBatteryComponent> BatterySource;
+	FText BatteryDisplayText;
+	FText DroneIdentityDisplayText;
 
 	TWeakObjectPtr<UDroneTrainingLapRecorderComponent> TrainingRecordSource;
 
@@ -315,6 +336,13 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UBorder> SignalReadoutPanel;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBorder> DroneStatusPanel;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> DroneIdentityValueText;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> BatteryValueText;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> SignalValueText;

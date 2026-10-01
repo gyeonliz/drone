@@ -11,6 +11,7 @@ class AController;
 class UCameraComponent;
 class UDroneTelemetryComponent;
 class UDroneHealthComponent;
+class UDroneBatteryComponent;
 class UDroneGroundWeaponComponent;
 class UDroneImpactDetonationComponent;
 class UDroneCollisionResponseComponent;
@@ -82,6 +83,13 @@ public:
 	UFloatingPawnMovement* GetPrototypeMovementComponent() const { return PrototypeMovementComponent; }
 	UDroneTelemetryComponent* GetTelemetryComponent() const { return TelemetryComponent; }
 	UDroneHealthComponent* GetHealthComponent() const { return HealthComponent; }
+	UDroneBatteryComponent* GetBatteryComponent() const { return BatteryComponent; }
+
+	/** HUD 기체명·신호 대역(HUD-FIGMA-01). ApplyDroneDefinition 때 정해진다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Display")
+	FText GetDroneDisplayName() const { return AppliedDroneDisplayName; }
+	UFUNCTION(BlueprintPure, Category="Drone|Display")
+	FText GetSignalBandLabel() const { return AppliedSignalBandLabel; }
 
 	UFUNCTION(BlueprintPure, Category="Drone|GroundWeapon")
 	UDroneGroundWeaponComponent* GetGroundWeaponComponent() const { return GroundWeaponComponent; }
@@ -362,6 +370,13 @@ protected:
 	/** 드론 기본 체력 100과 파괴/실패 판정용 사망 Event를 제공한다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UDroneHealthComponent> HealthComponent;
+
+	/** 기체별 배터리 시간. 용량 0이면 꺼져 있다(HUD-FIGMA-01). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UDroneBatteryComponent> BatteryComponent;
+
+	FText AppliedDroneDisplayName;
+	FText AppliedSignalBandLabel;
 
 	/** Jamming Volume이 overlap Event로 공급하는 신호 상태. 드론 역할에 관계없이 같은 계약을 사용한다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Prototype|Components", meta=(AllowPrivateAccess="true"))

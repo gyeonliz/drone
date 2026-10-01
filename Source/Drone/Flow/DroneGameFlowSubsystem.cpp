@@ -1,12 +1,47 @@
 #include "Flow/DroneGameFlowSubsystem.h"
 
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
+#include "Drone.h"
 #include "Mission/DroneDefinition.h"
 #include "Mission/DroneMissionDefinition.h"
+#include "Modules/ModuleManager.h"
 
 #define LOCTEXT_NAMESPACE "DroneGameFlow"
 
 namespace DroneGameFlow
 {
+// 기본 목록 밖에 새로 만든 Definition을 자동 등록하는 폴더다.
+// 새 Mission은 이 폴더에 DA_Mission_* 를 만들고 MissionMap·LobbyCategory 등을 채우면 C++ 수정 없이 로비에 뜬다.
+const TCHAR* AutoRegisterDronePath = TEXT("/Game/Drone/Data/Drones");
+const TCHAR* AutoRegisterMissionPath = TEXT("/Game/Drone/Data/Missions");
+
+/** PackagePath 아래(하위 폴더 포함)의 TDefinition Data Asset을 불러온다. */
+template <typename TDefinition>
+TArray<TDefinition*> LoadDefinitionsUnderPath(const TCHAR* PackagePath)
+{
+	IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+#if WITH_EDITOR
+	// Editor를 막 켰을 때는 비동기 스캔이 끝나지 않았을 수 있어 이 폴더만 동기 스캔한다.
+	Registry.ScanPathsSynchronous({FString(PackagePath)});
+#endif
+	TArray<FAssetData> Assets;
+	Registry.GetAssetsByPath(FName(PackagePath), Assets, /*bRecursive*/ true);
+
+	TArray<TDefinition*> Result;
+	for (const FAssetData& Asset : Assets)
+	{
+		if (Asset.IsInstanceOf(TDefinition::StaticClass()))
+		{
+			if (TDefinition* Definition = Cast<TDefinition>(Asset.GetAsset()))
+			{
+				Result.Add(Definition);
+			}
+		}
+	}
+	return Result;
+}
+
 const TCHAR* DefaultDronePaths[] =
 {
 	TEXT("/Game/Drone/Data/Drones/DA_Drone_Scout_Greybox.DA_Drone_Scout_Greybox"),
@@ -43,8 +78,8 @@ void UDroneGameFlowSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	LastLobbyMissionId = NAME_None;
 	ClearRejection();
 
-	// FLOW-02의 Front-end 화면이 열리기 전에 첫 Vertical Slice Catalog를 준비한다.
-	// 실제 프로젝트가 여러 Mission을 갖게 되면 Asset Manager 검색으로 교체할 경계다.
+	// FLOW-02의 Front-end 화면이 열리기 전에 Catalog를 준비한다.
+	// 기본 목록 + /Game/Drone/Data/{Drones,Missions} 폴더 자동 검색(2026-10-01).
 	EnsureDefaultCatalog();
 }
 
@@ -103,6 +138,36 @@ bool UDroneGameFlowSubsystem::EnsureDefaultCatalog()
 		else if (!RegisterMissionDefinition(DefaultMission))
 		{
 			return false;
+		}
+	}
+
+	// 기본 목록 밖의 Definition: 위 폴더에 새로 만든 DA를 C++ 수정 없이 등록한다.
+	// 기본 목록은 계약 테스트의 기준이라 그대로 두고, 추가 DA 하나가 잘못돼도 기존 Catalog·로비는 유지한 채 경고만 남긴다.
+	// Drone을 먼저 등록해야 Mission의 AllowedDroneIds 검증을 통과한다.
+	for (UDroneDefinition* ExtraDrone : DroneGameFlow::LoadDefinitionsUnderPath<UDroneDefinition>(DroneGameFlow::AutoRegisterDronePath))
+	{
+		if (const UDroneDefinition* Registered = FindDroneDefinition(ExtraDrone->DroneId))
+		{
+			UE_CLOG(Registered != ExtraDrone, LogDrone, Warning,
+				TEXT("Drone ID '%s'가 이미 다른 Asset으로 등록돼 '%s'를 건너뛴다."), *ExtraDrone->DroneId.ToString(), *GetPathNameSafe(ExtraDrone));
+			continue;
+		}
+		if (!RegisterDroneDefinition(ExtraDrone))
+		{
+			UE_LOG(LogDrone, Warning, TEXT("Drone Definition '%s' 자동 등록 실패: %s"), *GetPathNameSafe(ExtraDrone), *LastRejectionReason.ToString());
+		}
+	}
+	for (UDroneMissionDefinition* ExtraMission : DroneGameFlow::LoadDefinitionsUnderPath<UDroneMissionDefinition>(DroneGameFlow::AutoRegisterMissionPath))
+	{
+		if (const UDroneMissionDefinition* Registered = FindMissionDefinition(ExtraMission->MissionId))
+		{
+			UE_CLOG(Registered != ExtraMission, LogDrone, Warning,
+				TEXT("Mission ID '%s'가 이미 다른 Asset으로 등록돼 '%s'를 건너뛴다."), *ExtraMission->MissionId.ToString(), *GetPathNameSafe(ExtraMission));
+			continue;
+		}
+		if (!RegisterMissionDefinition(ExtraMission))
+		{
+			UE_LOG(LogDrone, Warning, TEXT("Mission Definition '%s' 자동 등록 실패: %s"), *GetPathNameSafe(ExtraMission), *LastRejectionReason.ToString());
 		}
 	}
 
@@ -257,12 +322,22 @@ bool UDroneGameFlowSubsystem::SelectMission(const FName MissionId)
 		return Reject(LOCTEXT("SelectMissionWrongState", "로비의 Mission 선택 상태에서만 Mission을 선택할 수 있습니다."));
 	}
 
-	UDroneMissionDefinition* Mission = FindMissionDefinition(MissionId);
-	if (!Mission)
+	if (!ApplyMissionSelection(MissionId))
 	{
 		return Reject(FText::Format(LOCTEXT("MissionNotFound", "Mission ID '{0}'를 찾을 수 없습니다."), FText::FromName(MissionId)));
 	}
+	ClearRejection();
+	BroadcastSnapshot();
+	return true;
+}
 
+bool UDroneGameFlowSubsystem::ApplyMissionSelection(const FName MissionId)
+{
+	const UDroneMissionDefinition* Mission = FindMissionDefinition(MissionId);
+	if (!Mission)
+	{
+		return false;
+	}
 	Snapshot.SelectedMissionId = MissionId;
 	LastLobbyMissionId = MissionId;
 	Snapshot.AvailableDroneIds.Reset();
@@ -277,9 +352,8 @@ bool UDroneGameFlowSubsystem::SelectMission(const FName MissionId)
 	Snapshot.SelectedDroneId = NAME_None;
 	Snapshot.bMissionStartRequested = false;
 	Snapshot.LastMissionOutcome = EDroneMissionOutcome::None;
+	Snapshot.LastMissionElapsedSeconds = -1.0;
 	Snapshot.bLobbyReturnRequested = false;
-	ClearRejection();
-	BroadcastSnapshot();
 	return true;
 }
 
@@ -362,7 +436,8 @@ bool UDroneGameFlowSubsystem::CompleteMission(const EDroneMissionOutcome Outcome
 bool UDroneGameFlowSubsystem::CompleteMissionWithStoryFacts(
 	const EDroneMissionOutcome Outcome,
 	const TArray<FName>& GrantedFacts,
-	const TArray<FName>& RemovedFacts)
+	const TArray<FName>& RemovedFacts,
+	const double ElapsedSeconds)
 {
 	if (Snapshot.State != EDroneGameFlowState::InMission
 		|| Outcome == EDroneMissionOutcome::None)
@@ -386,10 +461,15 @@ bool UDroneGameFlowSubsystem::CompleteMissionWithStoryFacts(
 		{
 			return Left.LexicalLess(Right);
 		});
+		if (!Snapshot.SelectedMissionId.IsNone())
+		{
+			Snapshot.CompletedMissionIds.AddUnique(Snapshot.SelectedMissionId);
+		}
 	}
 
 	Snapshot.bMissionStartRequested = false;
 	Snapshot.LastMissionOutcome = Outcome;
+	Snapshot.LastMissionElapsedSeconds = ElapsedSeconds;
 	return ChangeState(EDroneGameFlowState::InMission, EDroneGameFlowState::MissionResult);
 }
 
@@ -410,8 +490,156 @@ bool UDroneGameFlowSubsystem::RequestRetry()
 	Snapshot.SelectedDroneId = NAME_None;
 	Snapshot.bMissionStartRequested = false;
 	Snapshot.LastMissionOutcome = EDroneMissionOutcome::None;
+	Snapshot.LastMissionElapsedSeconds = -1.0;
 	Snapshot.bLobbyReturnRequested = false;
 	return ChangeState(EDroneGameFlowState::MissionResult, EDroneGameFlowState::LoadingMissionMap);
+}
+
+bool UDroneGameFlowSubsystem::RequestNextMission()
+{
+	const FName NextId = GetNextMissionId();
+	if (Snapshot.State != EDroneGameFlowState::MissionResult
+		|| Snapshot.LastMissionOutcome != EDroneMissionOutcome::Success
+		|| NextId.IsNone())
+	{
+		return Reject(LOCTEXT("NextMissionInvalid", "성공한 미션에 이어질 다음 미션이 있을 때만 넘어갈 수 있습니다."));
+	}
+	ApplyMissionSelection(NextId);
+	// 다음 미션도 조작·목표 브리핑부터 본다(Tutorial 가이드: 브리핑 → 시작 → 플레이 → 클리어 → 다음 수업).
+	return ChangeState(EDroneGameFlowState::MissionResult, EDroneGameFlowState::MissionTrailer);
+}
+
+FName UDroneGameFlowSubsystem::GetNextMissionId() const
+{
+	const UDroneMissionDefinition* Mission = FindMissionDefinition(Snapshot.SelectedMissionId);
+	if (!Mission || Mission->NextMissionId == Snapshot.SelectedMissionId || !FindMissionDefinition(Mission->NextMissionId))
+	{
+		return NAME_None;
+	}
+	return Mission->NextMissionId;
+}
+
+TArray<FName> UDroneGameFlowSubsystem::GetMissionSequence(const FName MissionId) const
+{
+	TArray<FName> Sequence;
+	if (!FindMissionDefinition(MissionId))
+	{
+		return Sequence;
+	}
+	// 앞 미션 표. 여러 미션이 같은 다음 미션을 가리키면 ID 순 첫 번째를 앞 미션으로 본다.
+	TMap<FName, FName> Previous;
+	for (const FName Id : GetRegisteredMissionIds())
+	{
+		const UDroneMissionDefinition* Definition = FindMissionDefinition(Id);
+		if (Definition && Definition->NextMissionId != Id && FindMissionDefinition(Definition->NextMissionId)
+			&& !Previous.Contains(Definition->NextMissionId))
+		{
+			Previous.Add(Definition->NextMissionId, Id);
+		}
+	}
+	// 처음 미션까지 거슬러 올라간 뒤 끝까지 따라간다. DA를 고리로 잘못 이어도 멈추도록 방문 기록을 둔다.
+	FName Head = MissionId;
+	TSet<FName> Visited;
+	Visited.Add(Head);
+	while (const FName* Before = Previous.Find(Head))
+	{
+		if (Visited.Contains(*Before))
+		{
+			break;
+		}
+		Visited.Add(*Before);
+		Head = *Before;
+	}
+	Visited.Reset();
+	for (FName Id = Head; !Id.IsNone() && !Visited.Contains(Id);)
+	{
+		const UDroneMissionDefinition* Definition = FindMissionDefinition(Id);
+		if (!Definition)
+		{
+			break;
+		}
+		Visited.Add(Id);
+		Sequence.Add(Id);
+		Id = Definition->NextMissionId;
+	}
+	return Sequence;
+}
+
+bool UDroneGameFlowSubsystem::GetMissionSequencePosition(
+	const FName MissionId,
+	int32& OutNumber,
+	int32& OutCount,
+	int32& OutCompletedCount) const
+{
+	const TArray<FName> Sequence = GetMissionSequence(MissionId);
+	OutNumber = Sequence.IndexOfByKey(MissionId) + 1;
+	OutCount = Sequence.Num();
+	OutCompletedCount = 0;
+	for (const FName Id : Sequence)
+	{
+		OutCompletedCount += IsMissionCompleted(Id) ? 1 : 0;
+	}
+	return OutCount >= 2 && OutNumber >= 1;
+}
+
+bool UDroneGameFlowSubsystem::IsMissionCompleted(const FName MissionId) const
+{
+	return !MissionId.IsNone() && Snapshot.CompletedMissionIds.Contains(MissionId);
+}
+
+TArray<FName> UDroneGameFlowSubsystem::GetMissionIdsInLobbyOrder(const EDroneMissionCategory Category) const
+{
+	TArray<FName> Result;
+	for (const FName Id : GetRegisteredMissionIds())
+	{
+		const UDroneMissionDefinition* Definition = FindMissionDefinition(Id);
+		if (Definition && Definition->GetLobbyCategory() == Category)
+		{
+			Result.Add(Id);
+		}
+	}
+	TMap<FName, TPair<FName, int32>> SortKeys;
+	for (const FName Id : Result)
+	{
+		const TArray<FName> Sequence = GetMissionSequence(Id);
+		SortKeys.Add(Id, Sequence.Num() >= 2
+			? TPair<FName, int32>(Sequence[0], Sequence.IndexOfByKey(Id))
+			: TPair<FName, int32>(Id, 0));
+	}
+	Result.StableSort([&SortKeys](const FName Left, const FName Right)
+	{
+		const TPair<FName, int32>& L = SortKeys[Left];
+		const TPair<FName, int32>& R = SortKeys[Right];
+		const int32 HeadOrder = L.Key.Compare(R.Key);
+		return HeadOrder != 0 ? HeadOrder < 0 : L.Value < R.Value;
+	});
+	return Result;
+}
+
+bool UDroneGameFlowSubsystem::RequestReturnToLobbyFocusing(const FName FocusMissionId)
+{
+	if (!RequestReturnToLobby())
+	{
+		return false;
+	}
+	// 로비는 LastLobbyMissionId가 속한 탭을 열고 그 미션에 포커스를 둔다.
+	if (FindMissionDefinition(FocusMissionId))
+	{
+		LastLobbyMissionId = FocusMissionId;
+		BroadcastSnapshot();
+	}
+	return true;
+}
+
+bool UDroneGameFlowSubsystem::RequestReturnToTitle()
+{
+	if (Snapshot.State != EDroneGameFlowState::MissionResult)
+	{
+		return Reject(LOCTEXT("ReturnTitleInvalid", "Mission 결과 상태에서만 시작 메뉴로 갈 수 있습니다."));
+	}
+	ResetRuntimeSelection(true);
+	Snapshot.LastMissionElapsedSeconds = -1.0;
+	return ChangeState(EDroneGameFlowState::MissionResult, EDroneGameFlowState::OpeningTrailer);
 }
 
 bool UDroneGameFlowSubsystem::RequestReturnToLobby()

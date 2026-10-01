@@ -88,6 +88,14 @@ struct DRONE_API FDroneFlightProfile
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Survivability", meta=(ClampMin="1.0"))
 	float MaxHealth = 100.0f;
 
+	/** HUD-FIGMA-01: 배터리 지속 시간(초). 0이면 배터리 시스템을 쓰지 않는다(지급 기체 시간은 현재 미정). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Survivability", meta=(ClampMin="0.0", ForceUnits="s"))
+	float BatteryLifeSeconds = 0.0f;
+
+	/** HUD-FIGMA-01: HUD "신호 주파수" 칸에 보일 짧은 표기(예: 5.8GHz, 광섬유). 비우면 표시하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Display")
+	FText SignalBandLabel;
+
 	/** FLOW-05 선택 카드가 구현된 차이만 사용자에게 설명할 수 있는 짧은 문구다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone Flight Profile|Display")
 	TArray<FText> FeatureHighlights;

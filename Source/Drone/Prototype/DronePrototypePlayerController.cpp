@@ -5,6 +5,8 @@
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
 #include "Health/DroneHealthComponent.h"
+#include "Health/DroneBatteryComponent.h"
+#include "Prototype/DronePrototypePawn.h"
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Tutorial/DroneTrainingCourse.h"
 #include "Tutorial/DroneTrainingLapRecorderComponent.h"
@@ -124,6 +126,12 @@ void ADronePrototypePlayerController::SyncFlightHUDToPawn(APawn* NewPawn)
 	FlightHUDWidget->SetTelemetrySource(Telemetry);
 	FlightHUDWidget->SetHealthSource(Health);
 	FlightHUDWidget->SetSignalSource(Signal);
+	// HUD-FIGMA-01: 배터리·기체명·신호 대역.
+	FlightHUDWidget->SetBatterySource(NewPawn ? NewPawn->FindComponentByClass<UDroneBatteryComponent>() : nullptr);
+	const ADronePrototypePawn* DronePawn = Cast<ADronePrototypePawn>(NewPawn);
+	FlightHUDWidget->SetDroneIdentity(
+		DronePawn ? DronePawn->GetDroneDisplayName() : FText::GetEmpty(),
+		DronePawn ? DronePawn->GetSignalBandLabel() : FText::GetEmpty());
 }
 
 void ADronePrototypePlayerController::SyncTrainingHUDToWorld()

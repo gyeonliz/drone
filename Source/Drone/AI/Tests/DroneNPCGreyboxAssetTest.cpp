@@ -53,6 +53,16 @@
 
 namespace DroneNPCGreybox
 {
+/**
+ * TEST-NPC-COUNT-01: 시험 장면의 기준 NPC는 생성 도구(Setup-DroneNPCGreybox)가 만든 "NPC_" 이름의 4명(적 2·아군 2)이다.
+ * 2026-09-22 사용자가 같은 맵에 Rifle·Shotgun 각 2명과 Spline 차량 1대를 직접 더 배치했다(에디터 기본 이름).
+ * 장면 검증은 기준 4명만 고르고, 맵 구성 검증은 "기준 이상"으로 본다. 사용자가 늘린 배치를 테스트 때문에 지우지 않는다.
+ */
+bool IsAuthoredScenarioNPC(const AActor* Actor)
+{
+	return Actor && Actor->GetActorLabel().StartsWith(TEXT("NPC_"));
+}
+
 constexpr const TCHAR* MapPackage = TEXT("/Game/Drone/Maps/TestMap/Lvl_NPCSmartObjectGreybox");
 constexpr const TCHAR* MapObjectPath =
 	TEXT("/Game/Drone/Maps/TestMap/Lvl_NPCSmartObjectGreybox.Lvl_NPCSmartObjectGreybox");
@@ -265,7 +275,7 @@ public:
 			}
 		}
 
-		Test->TestEqual(TEXT("NPC Greybox PIE contains four NPCs"), NPCs.Num(), 4);
+		Test->TestTrue(FString::Printf(TEXT("NPC Greybox PIE contains at least the four authored NPCs (%d)"), NPCs.Num()), NPCs.Num() >= 4);
 		Test->TestNotNull(TEXT("NPC Greybox PIE has a Navigation System"), Navigation);
 		Test->TestNotNull(TEXT("NPC Greybox PIE registers its RecastNavMesh"), RecastNavMesh);
 		Test->TestTrue(
@@ -352,9 +362,9 @@ public:
 			}
 		}
 
-		Test->TestEqual(TEXT("PIE has one Hostile Rifle NPC"), HostileRifleCount, 1);
-		Test->TestEqual(TEXT("PIE has one Hostile Shotgun NPC"), HostileShotgunCount, 1);
-		Test->TestEqual(TEXT("PIE has two Friendly Base NPCs"), FriendlyCount, 2);
+		Test->TestTrue(TEXT("PIE has at least one Hostile Rifle NPC"), HostileRifleCount >= 1);
+		Test->TestTrue(TEXT("PIE has at least one Hostile Shotgun NPC"), HostileShotgunCount >= 1);
+		Test->TestTrue(TEXT("PIE has at least two Friendly Base NPCs"), FriendlyCount >= 2);
 		return true;
 	}
 
@@ -399,7 +409,8 @@ public:
 		for (TActorIterator<ADroneNPCCharacter> It(PIEWorld); It; ++It)
 		{
 			ADroneNPCCharacter* NPC = *It;
-			const UDroneNPCProfileComponent* Profile = NPC ? NPC->GetNPCProfileComponent() : nullptr;
+			// 기준 장면(NPC_ 이름)만 검증한다. 사용자가 추가한 NPC는 같은 맵에서 함께 움직이지만 판정 대상이 아니다.
+			const UDroneNPCProfileComponent* Profile = NPC && IsAuthoredScenarioNPC(NPC) ? NPC->GetNPCProfileComponent() : nullptr;
 			if (Profile && Profile->GetProfile().Faction == EDroneNPCFaction::Hostile)
 			{
 				Hostiles.Add(NPC);
@@ -653,6 +664,14 @@ public:
 				? Cast<ADroneNPCAIController>(NPC->GetController())
 				: nullptr;
 			const UDroneNPCProfileComponent* Profile = NPC ? NPC->GetNPCProfileComponent() : nullptr;
+			// 기준 장면(NPC_ 이름)만 판정한다(TEST-NPC-COUNT-01). 이 테스트는 Drone을 기준 적 사이에 세워 두므로,
+			// 사용자가 추가한 NPC(예: 중앙의 Shotgun)가 Drone을 쏘아 장면을 흔들지 않게 PIE 월드에서만 치운다. 맵은 바꾸지 않는다.
+			if (NPC && !IsAuthoredScenarioNPC(NPC))
+			{
+				Test->AddInfo(FString::Printf(TEXT("Perception PIE removes user-added %s from this PIE world only"), *NPC->GetActorLabel()));
+				NPC->Destroy();
+				continue;
+			}
 			if (!Controller || !Profile)
 			{
 				continue;
@@ -1766,7 +1785,8 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 		if (const ADroneGroundConformingVehicle* GroundVehicle = Cast<ADroneGroundConformingVehicle>(Actor))
 		{
 			++GroundConformingVehicleCount;
-			TestTrue(TEXT("Placed ground vehicle enables its Greybox auto drive"), GroundVehicle->IsGreyboxAutoDriveEnabled());
+			TestTrue(TEXT("Placed ground vehicle drives (Greybox auto drive or a Spline route)"),
+				GroundVehicle->IsGreyboxAutoDriveEnabled() || GroundVehicle->IsFollowingSplineRoute());
 			TestEqual(TEXT("Placed ground vehicle exposes four wheel visuals"), GroundVehicle->GetWheelMeshes().Num(), 4);
 			TestNotNull(TEXT("Placed ground vehicle exposes its automatic-turret mount"), GroundVehicle->GetTurretMount());
 		}
@@ -1832,18 +1852,20 @@ bool FDroneNPCGreyboxAssetTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("NPC Greybox map has one native Navigation Floor"), NavigationFloorCount, 1);
 	TestEqual(TEXT("NPC Greybox map saves one RecastNavMesh"), RecastNavMeshCount, 1);
 	TestEqual(TEXT("NPC Greybox map uses runtime Dynamic Recast generation"), DynamicRecastNavMeshCount, 1);
-	TestEqual(TEXT("NPC Greybox map has twelve Smart Object Stations"), StationCount, 12);
+	TestTrue(FString::Printf(TEXT("NPC Greybox map keeps at least the twelve authored Smart Object Stations (%d)"), StationCount), StationCount >= 12);
 	TestEqual(TEXT("NPC Greybox map has two Cover Stations"), CoverStationCount, 2);
 	TestEqual(TEXT("NPC Greybox map has one emplaced automatic turret"), EmplacedAutomaticTurretCount, 1);
-	TestEqual(TEXT("NPC Greybox map has one vehicle automatic turret"), VehicleAutomaticTurretCount, 1);
-	TestEqual(TEXT("NPC Greybox map has one ground-conforming vehicle carrier"), GroundConformingVehicleCount, 1);
+	TestTrue(TEXT("NPC Greybox map has at least one vehicle automatic turret"), VehicleAutomaticTurretCount >= 1);
+	TestTrue(TEXT("NPC Greybox map has at least one ground-conforming vehicle carrier"), GroundConformingVehicleCount >= 1);
+	TestTrue(TEXT("Every vehicle carrier has a vehicle automatic turret"), VehicleAutomaticTurretCount >= GroundConformingVehicleCount);
 	TestEqual(TEXT("NPC Greybox map has five rough-road segments"), VehicleRoughRoadSegmentCount, 5);
 	for (const TPair<UClass*, int32>& Expected : ExpectedPlacedCounts)
 	{
-		TestEqual(
-			*FString::Printf(TEXT("NPC Greybox map places expected count for %s"), *GetNameSafe(Expected.Key)),
-			ActualPlacedCounts.FindRef(Expected.Key),
-			Expected.Value);
+		const int32 Actual = ActualPlacedCounts.FindRef(Expected.Key);
+		TestTrue(
+			*FString::Printf(TEXT("NPC Greybox map places at least the authored %d of %s (found %d)"),
+				Expected.Value, *GetNameSafe(Expected.Key), Actual),
+			Actual >= Expected.Value);
 	}
 	for (const AActor* Actor : NavigationUsers)
 	{

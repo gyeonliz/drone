@@ -267,6 +267,37 @@ bool UDroneSelectionWidget::NavigateBack()
 
 void UDroneSelectionWidget::HandleBackClicked() { NavigateBack(); }
 
+void UDroneSelectionWidget::RequestDroneSelectFocus(const FName SelectedDroneId)
+{
+	TArray<UWidget*> Candidates;
+	const int32 SelectedIndex = SelectedDroneId.IsNone() ? INDEX_NONE : DisplayedDroneButtonIds.IndexOfByKey(SelectedDroneId);
+	if (SelectedIndex != INDEX_NONE) Candidates.Add(GetDroneButton(SelectedIndex));
+	for (UButton* DroneButton : DroneButtons) Candidates.Add(DroneButton);
+	Candidates.Add(LaunchDroneButton);
+	Candidates.Add(SelectionBackButton);
+	GamepadFocus.RequestFocus(Candidates);
+}
+
+TArray<UWidget*> UDroneSelectionWidget::GetGamepadHighlightables() const
+{
+	TArray<UWidget*> Result;
+	for (UButton* DroneButton : DroneButtons) Result.Add(DroneButton);
+	for (UWidget* Widget : TArray<UWidget*>{ControlModeButton, HandlingPresetButton, LaunchDroneButton, SelectionBackButton})
+	{
+		Result.Add(Widget);
+	}
+	Result.RemoveAll([](const UWidget* Widget) { return Widget == nullptr; });
+	return Result;
+}
+
+void UDroneSelectionWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	GamepadFocus.FocusScale = GamepadFocusScale;
+	GamepadFocus.FocusTint = GamepadFocusTint;
+	GamepadFocus.Tick(GetOwningPlayer(), GetGamepadHighlightables());
+}
+
 FReply UDroneSelectionWidget::NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
 	const FKey Key = InKeyEvent.GetKey();
@@ -578,6 +609,16 @@ void UDroneSelectionWidget::RefreshFromFlow()
 {
 	UDroneGameFlowSubsystem* Flow = FlowSubsystem.Get();
 	const FDroneGameFlowSnapshot Snapshot = Flow ? Flow->GetSnapshot() : FDroneGameFlowSnapshot();
+	// 기체 선택 화면에 들어올 때만 첫 포커스를 잡는다. 화면 안에서 기체를 바꿀 때는 포커스를 그대로 둔다.
+	if (Snapshot.State != EDroneGameFlowState::DroneSelect)
+	{
+		bDroneSelectFocusRequested = false;
+	}
+	else if (!bDroneSelectFocusRequested)
+	{
+		bDroneSelectFocusRequested = true;
+		RequestDroneSelectFocus(Snapshot.SelectedDroneId);
+	}
 	if (DroneSelectionPanel)
 	{
 		DroneSelectionPanel->SetVisibility(
@@ -617,6 +658,17 @@ void UDroneSelectionWidget::RefreshFromFlow()
 		}
 		const bool bSelected = Definition && Definition->DroneId == Snapshot.SelectedDroneId;
 		const bool bGround = Definition && Definition->MissionRole == EDroneMissionRole::GroundUGV;
+		// 패드(UI-PAD-01): 아래 기체 카드에서 ↑ 는 [출격], [출격]·[조작 모드]에서 ↓ 는 고른 기체 카드로 간다.
+		// 카드 가로 위치에 따라 ↑ 대상이 [출격]/[조작 모드]로 갈리지 않게 명시한다.
+		if (UButton* DroneButton = GetDroneButton(Index); DroneButton && LaunchDroneButton)
+		{
+			DroneButton->SetNavigationRuleExplicit(EUINavigation::Up, LaunchDroneButton);
+			if (bSelected)
+			{
+				LaunchDroneButton->SetNavigationRuleExplicit(EUINavigation::Down, DroneButton);
+				if (ControlModeButton) ControlModeButton->SetNavigationRuleExplicit(EUINavigation::Down, DroneButton);
+			}
+		}
 		if (DroneCardBorders.IsValidIndex(Index) && DroneCardBorders[Index])
 		{
 			DroneCardBorders[Index]->SetBrush(FSlateRoundedBoxBrush(

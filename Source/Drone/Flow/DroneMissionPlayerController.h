@@ -66,6 +66,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Mission Result")
 	bool ReturnToFrontEndLobby();
 
+	/** 성공 결과에서 다음 수업(NextMissionId)의 브리핑으로 간다. 브리핑은 FrontEnd 맵에서 보여 준다(TUT-PROGRESS-01). */
+	UFUNCTION(BlueprintCallable, Category="Drone|Mission Result")
+	bool StartNextMission();
+
+	/** 로비의 미션(스토리) 탭 첫 미션으로 간다. 튜토리얼 전체 완료 화면의 [미션 진행]. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Mission Result")
+	bool ContinueToMissionLobby();
+
+	/** 시작 메뉴(타이틀)로 간다. 튜토리얼 전체 완료 화면의 [시작 메뉴]. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Mission Result")
+	bool ReturnToTitleMenu();
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -78,6 +90,13 @@ private:
 
 	UFUNCTION()
 	void HandleMissionFinished(EDroneMissionOutcome Outcome);
+
+	/** MISSION-CHECKPOINT-01: Director가 실패를 재출격으로 돌렸다. 사망 이벤트 처리 도중이라 다음 프레임에 기체를 바꾼다. */
+	UFUNCTION()
+	void HandleMissionRestartRequested(const FTransform& RestartTransform);
+	void PerformCheckpointRestart();
+	FTransform PendingRestartTransform = FTransform::Identity;
+	bool bCheckpointRestartPending = false;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Drone|Mission Entry", meta=(AllowPrivateAccess="true"))
 	TSubclassOf<UDroneSelectionWidget> DroneSelectionWidgetClass;
