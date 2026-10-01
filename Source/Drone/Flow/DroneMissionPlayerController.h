@@ -56,6 +56,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Mission Entry")
 	bool StartSelectedDrone(EDroneControlMode ControlMode, EDroneHandlingPreset HandlingPreset);
 
+	/** 기체를 아직 생성하지 않은 선택 화면에서만 FrontEnd의 미션 설명으로 돌아간다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Mission Entry")
+	bool BackToMissionBriefing();
+
 	UFUNCTION(BlueprintCallable, Category="Drone|Mission Result")
 	bool RetrySelectedMission();
 

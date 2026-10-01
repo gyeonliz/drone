@@ -165,7 +165,8 @@ bool ADroneMissionDirector::ReportObjectiveEvent(
 	{
 		return false;
 	}
-	if (IsValid(EventActor) && CountedObjectiveActorNames.Contains(EventActor->GetFName()))
+	if (Event != EDroneMissionObjectiveEvent::TrainingLap
+		&& IsValid(EventActor) && CountedObjectiveActorNames.Contains(EventActor->GetFName()))
 	{
 		return false;
 	}
@@ -251,7 +252,9 @@ void ADroneMissionDirector::HandleTrainingLapCompleted(FDroneTrainingLapRecord /
 	}
 	else
 	{
-		ReportObjectiveEvent(EDroneMissionObjectiveEvent::TrainingLap, nullptr);
+		// 코스 Actor를 전달해야 원형/슬라럼 등 서로 다른 코스의 Tag를 구분할 수 있다.
+		ReportObjectiveEvent(EDroneMissionObjectiveEvent::TrainingLap,
+			TrainingLapRecorder ? TrainingLapRecorder->GetOwner() : nullptr);
 	}
 }
 
@@ -329,6 +332,14 @@ bool ADroneMissionDirector::FinishMission(const EDroneMissionOutcome Outcome)
 
 void ADroneMissionDirector::BindOptionalTrainingCourse()
 {
+	FName RequiredCourseTag = NAME_None;
+	if (MissionDefinition && !MissionDefinition->ObjectiveRules.IsEmpty())
+	{
+		const FDroneMissionObjectiveRule* LapRule = MissionDefinition->ObjectiveRules.FindByPredicate(
+			[](const FDroneMissionObjectiveRule& Rule) { return Rule.Event == EDroneMissionObjectiveEvent::TrainingLap; });
+		if (!LapRule) return;
+		RequiredCourseTag = LapRule->TargetId;
+	}
 	if (UWorld* World = GetWorld())
 	{
 		for (TActorIterator<ADroneTrainingCourse> It(World); It; ++It)
@@ -338,8 +349,10 @@ void ADroneMissionDirector::BindOptionalTrainingCourse()
 			{
 				continue;
 			}
-			TrainingLapRecorder = Course->GetLapRecorderComponent();
-			break;
+			const bool bMatches = RequiredCourseTag.IsNone() || Course->ActorHasTag(RequiredCourseTag);
+			// 명시적 코스 목표에서는 다른 시험 코스의 선/Trigger를 꺼 혼선을 막는다.
+			if (!RequiredCourseTag.IsNone()) Course->SetCourseRuntimeActive(bMatches);
+			if (bMatches && !TrainingLapRecorder) TrainingLapRecorder = Course->GetLapRecorderComponent();
 		}
 	}
 	if (TrainingLapRecorder)

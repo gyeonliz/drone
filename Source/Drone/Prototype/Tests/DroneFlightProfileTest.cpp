@@ -140,9 +140,14 @@ bool FDroneFlightProfileTest::RunTest(const FString& Parameters)
 			Pawn->GetHandlingPreset(), EDroneHandlingPreset::Balanced);
 		if (Definition == FPVStrikeDefinition)
 		{
-			TestTrue(TEXT("FPV Agile runtime max speed reaches the 27 m/s reference"), FMath::IsNearlyEqual(
-				Pawn->GetPrototypeMovementComponent()->MaxSpeed,
-				2700.0f));
+			// 속도는 현재 DA의 편집값이 기준이다. 과거 27m/s 참조값을 고정하면 정상 튜닝도 회귀로 오인한다.
+			const float ExpectedSpeed = Definition->FlightProfile.MaxSpeedCentimetersPerSecond
+				* Definition->FlightProfile.PhysicalFlightSettings.UnloadedMaximumSpeedMultiplier;
+			if (!Pawn->UsesBlueprintFlightProfileOverride())
+			{
+				TestEqual(TEXT("FPV runtime max speed matches the current unloaded Definition baseline"),
+					Pawn->GetPrototypeMovementComponent()->MaxSpeed, ExpectedSpeed);
+			}
 		}
 		TestEqual(TEXT("Only the Definition's Recon feature state applies"),
 			Pawn->GetReconScanComponent()->IsFeatureEnabled(),

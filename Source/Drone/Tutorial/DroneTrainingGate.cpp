@@ -63,6 +63,9 @@ ADroneTrainingGate::ADroneTrainingGate()
 	}
 
 	GateAssetVisual = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("GateAssetVisual"));
+	// 선택적 완성형 Gate 슬롯이 비어 있어도 Map Check에 Null Mesh 경고를 만들지 않는다.
+	// 숨겨진 안전 Mesh일 뿐이며 슬롯이 비어 있으면 아래 코드가 외형을 계속 숨긴다.
+	GateAssetVisual->SetStaticMesh(RingSegmentMesh);
 	GateAssetVisual->SetupAttachment(GateRoot);
 	GateAssetVisual->SetMobility(EComponentMobility::Movable);
 	GateAssetVisual->SetVisibility(false);
@@ -286,7 +289,7 @@ void ADroneTrainingGate::RefreshRingVisual()
 
 	if (GateAssetVisual)
 	{
-		GateAssetVisual->SetStaticMesh(GateAssetMesh);
+		GateAssetVisual->SetStaticMesh(GateAssetMesh ? GateAssetMesh.Get() : RingSegmentMesh.Get());
 		GateAssetVisual->SetRelativeTransform(GateAssetLocalTransform);
 		GateAssetVisual->SetVisibility(GateAssetMesh != nullptr);
 		GateAssetVisual->SetHiddenInGame(GateAssetMesh == nullptr);

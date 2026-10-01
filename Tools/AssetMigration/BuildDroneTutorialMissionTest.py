@@ -8,6 +8,7 @@ team's production `Lvl_DroneTraining` map.
 from __future__ import annotations
 
 import os
+import math
 import traceback
 
 import unreal
@@ -37,6 +38,10 @@ OWNED_TAG = unreal.Name("DroneTutorialMissionTest.Owned")
 HOVER_TAG = unreal.Name("Tutorial.Hover.Zone")
 FORWARD_TAG = unreal.Name("Tutorial.Forward.Goal")
 HEADING_TAG = unreal.Name("Tutorial.Heading.Zone")
+ORBIT_TAG = unreal.Name("Tutorial.Orbit.Course")
+GATE_COURSE_TAG = unreal.Name("Tutorial.GateFlight.Course")
+ORBIT_COURSE_LABEL = "TutorialMissionTest_OrbitCourse"
+ORBIT_GATE_COUNT = 9
 PAYLOAD_TAG = unreal.Name("Tutorial.Payload.Target")
 FPV_TAG = unreal.Name("Tutorial.FPV.Target")
 UGV_NPC_TAG = unreal.Name("Tutorial.UGV.NPC")
@@ -103,11 +108,11 @@ MISSION_SPECS = (
     {
         "asset": "DA_Mission_Tutorial_Heading",
         "id": "Mission.Tutorial.Heading",
-        "name": "튜토리얼 1-3 - 회전",
-        "description": "표시 구역 안에서 기체를 동쪽 90도로 회전해 1초간 유지한 뒤 귀환합니다.",
+        "name": "튜토리얼 1-3 - 원형 코스 비행",
+        "description": "회전은 제자리 방향 맞추기가 아닙니다. 원형 안내선을 따라 9개 게이트를 순서와 정방향에 맞게 통과해 한 바퀴 돈 뒤 귀환합니다.",
         "drone": "Drone.Scout.Greybox",
         "rules": (
-            ("Objective.Tutorial.Heading", "화살표 방향으로 회전해 1초간 유지하세요.", "heading", 90.0, HEADING_TAG),
+            ("Objective.Tutorial.Heading", "원형 코스의 시작 → 7개 체크포인트 → 결승을 순서대로 통과하세요.", "lap", 180.0, ORBIT_TAG),
             ("Objective.Tutorial.Heading.Return", "출발 지점으로 귀환하세요.", "return", 60.0, RETURN_TAG),
         ),
     },
@@ -118,7 +123,7 @@ MISSION_SPECS = (
         "description": "정찰 드론으로 네 개의 게이트를 순서와 정방향에 맞게 통과합니다.",
         "drone": "Drone.Scout.Greybox",
         "rules": (
-            ("Objective.Tutorial.GateFlight", "게이트 코스를 1회 완주하세요.", "lap", 180.0, unreal.Name()),
+            ("Objective.Tutorial.GateFlight", "게이트 코스를 1회 완주하세요.", "lap", 180.0, GATE_COURSE_TAG),
         ),
     },
     {
@@ -247,6 +252,52 @@ def configure_course(course: unreal.Actor, gate_class: unreal.Class) -> None:
     course.initialize_automatic_gate_spline_handles_from_current_layout()
 
 
+def configure_orbit_course(course: unreal.Actor, gate_class: unreal.Class, radius: float = 1000.0) -> None:
+    """Closed circle + finish past start: visiting 7/8 of a circle must NOT count as a lap."""
+    spline = course.get_course_spline()
+    spline.modify()
+    spline.clear_spline_points(False)
+    for index in range(8):
+        angle = math.tau * index / 8
+        spline.add_spline_point(unreal.Vector(radius * math.cos(angle), radius * math.sin(angle), 500.0),
+                                unreal.SplineCoordinateSpace.LOCAL, False)
+        spline.set_spline_point_type(index, unreal.SplinePointType.CURVE, False)
+    spline.set_closed_loop(True, False)
+    spline.update_spline()
+    course.set_editor_property("course_id", unreal.Name("Course.Tutorial.Orbit"))
+    course.set_editor_property("automatic_gate_class", gate_class)
+    course.set_editor_property("course_line_segment_length_centimeters", 100.0)
+    course.set_editor_property("automatic_gate_scale", unreal.Vector(1.0, 1.0, 1.0))
+    course.configure_automatic_gate_layout(True, ORBIT_GATE_COUNT, True, 0.0, 900.0, 0.0)
+    # End Gate is at distance L, not 7L/8. Separate it 2.5m along the tangent so its mesh/trigger
+    # does not sit on the start Gate. It is reached only after a whole circuit.
+    length = spline.get_spline_length()
+    course.configure_automatic_gate_overrides(
+        [length * index / 8 for index in range(ORBIT_GATE_COUNT)],
+        [unreal.Vector() for _ in range(8)] + [unreal.Vector(250.0, 0.0, 0.0)],
+    )
+
+
+def ensure_orbit_station(actors: unreal.EditorActorSubsystem) -> None:
+    """Upgrade ONLY the previous generated heading station; preserve manual Hover/map edits."""
+    for label in (HEADING_ZONE_LABEL, HEADING_PAD_LABEL):
+        actor = actor_by_label(actors, label)
+        if actor and OWNED_TAG in actor.get_editor_property("tags"):
+            require(actors.destroy_actor(actor), f"Could not remove old owned Heading station: {label}")
+    course = actor_by_label(actors, ORBIT_COURSE_LABEL)
+    if course is None:
+        course = spawn_actor(actors, load_blueprint_class(COURSE_PATH), ORBIT_COURSE_LABEL,
+                             (4100.0, 700.0, 0.0), (ORBIT_TAG,))
+        configure_orbit_course(course, load_blueprint_class(GATE_PATH))
+    else:
+        require(ORBIT_TAG in course.get_editor_property("tags"), "Existing Orbit actor has no Orbit tag")
+    gate_course = actor_by_label(actors, COURSE_LABEL)
+    require(gate_course is not None, "Original GateFlight course missing")
+    tags = list(gate_course.get_editor_property("tags"))
+    if GATE_COURSE_TAG not in tags:
+        gate_course.set_editor_property("tags", tags + [GATE_COURSE_TAG])
+
+
 def clear_owned_actors(actors: unreal.EditorActorSubsystem) -> None:
     for actor in list(actors.get_all_level_actors()):
         if OWNED_TAG in actor.get_editor_property("tags"):
@@ -326,22 +377,6 @@ def create_or_rebuild_map(
         unreal.CollisionEnabled.NO_COLLISION,
     )
 
-    heading_zone = spawn_actor(
-        actors,
-        load_blueprint_class(HEADING_ZONE_PATH),
-        HEADING_ZONE_LABEL,
-        (3300.0, 0.0, 400.0),
-        (HEADING_TAG,),
-    )
-    heading_zone.set_editor_property("target_heading_degrees", 90.0)
-    heading_zone.set_editor_property("heading_tolerance_degrees", 8.0)
-    heading_zone.set_editor_property("required_hold_seconds", 1.0)
-    heading_zone.get_heading_box().set_box_extent(unreal.Vector(350.0, 350.0, 220.0), True)
-    spawn_cube(
-        actors, cube, HEADING_PAD_LABEL, (3300.0, 0.0, 5.0), (4.0, 4.0, 0.10),
-        unreal.CollisionEnabled.NO_COLLISION,
-    )
-
     course = spawn_actor(
         actors,
         load_blueprint_class(COURSE_PATH),
@@ -349,6 +384,7 @@ def create_or_rebuild_map(
         (-1000.0, 2600.0, 0.0),
     )
     configure_course(course, load_blueprint_class(GATE_PATH))
+    ensure_orbit_station(actors)
 
     spawn_actor(
         actors,
@@ -439,13 +475,15 @@ def make_rule(rule_id: str, description: str, event_name: str, time_limit: float
     )
 
 
-def configure_missions() -> None:
+def configure_missions(only_assets: set[str] | None = None) -> None:
     source = load_asset(SOURCE_MISSION_PATH)
     mission_map = load_asset(MAP_PATH)
     require(isinstance(source, unreal.DroneMissionDefinition), "Source Mission Definition type mismatch")
     unreal.EditorAssetLibrary.make_directory(MISSION_FOLDER)
 
     for spec in MISSION_SPECS:
+        if only_assets is not None and spec["asset"] not in only_assets:
+            continue
         path = f"{MISSION_FOLDER}/{spec['asset']}"
         mission = unreal.EditorAssetLibrary.load_asset(path)
         if mission is None:
@@ -456,12 +494,17 @@ def configure_missions() -> None:
 
         mission.set_editor_property("mission_id", unreal.Name(spec["id"]))
         mission.set_editor_property("display_name", spec["name"])
+        mission.set_editor_property("lobby_category", unreal.DroneMissionCategory.TUTORIAL)
         mission.set_editor_property("lobby_description", spec["description"])
         mission.set_editor_property("region_text", "튜토리얼 시험장")
         mission.set_editor_property("difficulty_text", "기초")
         mission.set_editor_property("thumbnail", None)
         mission.set_editor_property("briefing_asset", unreal.SoftObjectPath())
-        mission.set_editor_property("mission_map", mission_map)
+        # 독립 수업 맵이 있으면 기존 공유 맵 설정 도구를 재실행해도 연결을 되돌리지 않는다.
+        lesson_key = spec["asset"].removeprefix("DA_Mission_Tutorial_")
+        independent_map = f"{MAP_FOLDER}/Tutorial/Lvl_Tutorial_{lesson_key}_Test"
+        selected_map = load_asset(independent_map) if unreal.EditorAssetLibrary.does_asset_exist(independent_map) else mission_map
+        mission.set_editor_property("mission_map", selected_map)
         mission.set_editor_property("allowed_drone_ids", [unreal.Name(spec["drone"])])
         mission.set_editor_property("default_drone_id", unreal.Name(spec["drone"]))
         mission.set_editor_property("initial_objectives", [])
@@ -490,8 +533,7 @@ def validate(level_editor: unreal.LevelEditorSubsystem, actors: unreal.EditorAct
         HOVER_PAD_LABEL,
         FORWARD_TRIGGER_LABEL,
         FORWARD_PAD_LABEL,
-        HEADING_ZONE_LABEL,
-        HEADING_PAD_LABEL,
+        ORBIT_COURSE_LABEL,
         COURSE_LABEL,
         PAYLOAD_TARGET_LABEL,
         CARRYABLE_LABEL,
@@ -506,7 +548,7 @@ def validate(level_editor: unreal.LevelEditorSubsystem, actors: unreal.EditorAct
 
     require(HOVER_TAG in actor_by_label(actors, HOVER_ZONE_LABEL).get_editor_property("tags"), "Hover Tag mismatch")
     require(FORWARD_TAG in actor_by_label(actors, FORWARD_TRIGGER_LABEL).get_editor_property("tags"), "Forward Tag mismatch")
-    require(HEADING_TAG in actor_by_label(actors, HEADING_ZONE_LABEL).get_editor_property("tags"), "Heading Tag mismatch")
+    require(ORBIT_TAG in actor_by_label(actors, ORBIT_COURSE_LABEL).get_editor_property("tags"), "Orbit Tag mismatch")
     require(PAYLOAD_TAG in actor_by_label(actors, PAYLOAD_TARGET_LABEL).get_editor_property("tags"), "Payload Tag mismatch")
     require(FPV_TAG in actor_by_label(actors, FPV_TARGET_LABEL).get_editor_property("tags"), "FPV Tag mismatch")
     require(UGV_NPC_TAG in actor_by_label(actors, UGV_NPC_LABEL).get_editor_property("tags"), "UGV NPC Tag mismatch")
@@ -518,9 +560,10 @@ def validate(level_editor: unreal.LevelEditorSubsystem, actors: unreal.EditorAct
         forward_trigger.get_objective_event() == unreal.DroneMissionObjectiveEvent.MANUAL,
         "Forward Trigger Event mismatch",
     )
-    heading_zone = actor_by_label(actors, HEADING_ZONE_LABEL)
-    require(abs(heading_zone.get_target_heading_degrees() - 90.0) < 0.01, "Heading target mismatch")
-    require(abs(heading_zone.get_heading_tolerance_degrees() - 8.0) < 0.01, "Heading tolerance mismatch")
+    orbit_course = actor_by_label(actors, ORBIT_COURSE_LABEL)
+    require(orbit_course.get_course_spline().is_closed_loop(), "Orbit must be a closed circle")
+    require(orbit_course.get_resolved_automatic_gate_count() == ORBIT_GATE_COUNT, "Orbit Gate count mismatch")
+    require(orbit_course.get_gate_sequence_component().is_configuration_valid(), "Orbit sequence invalid")
     course = actor_by_label(actors, COURSE_LABEL)
     require(course.is_using_automatic_spline_gates(), "Gate Course automatic layout is disabled")
     require(course.get_resolved_automatic_gate_count() == GATE_COUNT, "Gate Course count mismatch")
@@ -546,7 +589,7 @@ def validate(level_editor: unreal.LevelEditorSubsystem, actors: unreal.EditorAct
     unreal.SystemLibrary.execute_console_command(world, "MAP CHECK")
     log("MAP_CHECK_EXECUTED")
     log(
-        "VALIDATION_OK|map=1|missions=8|hover=1|forward=1|heading=1|course=1|"
+        "VALIDATION_OK|map=1|missions=8|hover=1|forward=1|orbit=1|course=2|"
         "payload=1|fpv=1|ugv_npc=1|ugv_turret=1|return=1"
     )
 
@@ -561,6 +604,10 @@ def main() -> None:
     rebuild = os.environ.get("DRONE_TUTORIAL_MISSION_REBUILD") == "1"
     if not map_exists or rebuild:
         create_or_rebuild_map(level_editor, actors, rebuild)
+    else:
+        require(level_editor.load_level(MAP_PATH), "Could not load Tutorial map for Orbit upgrade")
+        ensure_orbit_station(actors)
+        require(level_editor.save_current_level(), "Could not save Tutorial Orbit upgrade")
     configure_missions()
     validate(level_editor, actors)
 

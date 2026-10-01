@@ -17,6 +17,7 @@ const TCHAR* DefaultDronePaths[] =
 };
 const TCHAR* DefaultMissionPaths[] =
 {
+	TEXT("/Game/Drone/Data/Missions/DA_Mission_Racing_Circuit_Test.DA_Mission_Racing_Circuit_Test"),
 	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Training.DA_Mission_Tutorial_Training"),
 	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Hover.DA_Mission_Tutorial_Hover"),
 	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_Forward.DA_Mission_Tutorial_Forward"),
@@ -225,6 +226,26 @@ bool UDroneGameFlowSubsystem::EnterLobbyFromOpeningTrailer()
 	}
 	ResetRuntimeSelection(true);
 	return ChangeState(EDroneGameFlowState::OpeningTrailer, EDroneGameFlowState::LobbyMissionSelect);
+}
+
+bool UDroneGameFlowSubsystem::RequestBackNavigation()
+{
+	const EDroneGameFlowState Previous = Snapshot.State;
+	switch (Previous)
+	{
+	case EDroneGameFlowState::LobbyMissionSelect:
+		// 시작 화면으로 나갈 때만 미션 선택을 지운다. Catalog/Story Fact는 유지한다.
+		ResetRuntimeSelection(true);
+		return ChangeState(Previous, EDroneGameFlowState::OpeningTrailer);
+	case EDroneGameFlowState::MissionTrailer:
+		ResetRuntimeSelection(false);
+		return ChangeState(Previous, EDroneGameFlowState::LobbyMissionSelect);
+	case EDroneGameFlowState::DroneSelect:
+		ResetRuntimeSelection(false);
+		return ChangeState(Previous, EDroneGameFlowState::MissionTrailer);
+	default:
+		return Reject(LOCTEXT("BackNavigationInvalid", "출격 전 선택 화면에서만 뒤로갈 수 있습니다."));
+	}
 }
 
 bool UDroneGameFlowSubsystem::SelectMission(const FName MissionId)

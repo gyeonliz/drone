@@ -46,6 +46,10 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Mission")
 	FDroneMissionObjectiveSnapshot GetCurrentObjective() const;
 
+	/** HUD도 판정기와 같은 코스를 읽는다. 맵의 첫 Actor에 의존하지 않는다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Mission")
+	UDroneTrainingLapRecorderComponent* GetTrainingLapRecorder() const { return TrainingLapRecorder; }
+
 	UFUNCTION(BlueprintPure, Category="Drone|Mission")
 	bool IsMissionActive() const { return Snapshot.State == EDroneMissionRuntimeState::Active; }
 

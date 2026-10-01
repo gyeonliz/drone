@@ -9,6 +9,16 @@
 class UTexture2D;
 class UWorld;
 
+/** Auto는 기존 DA 호환용이다. 새 DA는 로비에서 표시할 탭을 직접 선택한다. */
+UENUM(BlueprintType)
+enum class EDroneMissionCategory : uint8
+{
+	Auto,
+	Tutorial UMETA(DisplayName="튜토리얼"),
+	Racing UMETA(DisplayName="레이싱"),
+	Mission UMETA(DisplayName="미션")
+};
+
 /** 로비 설명, 브리핑, Map, 허용 Drone과 시작 목표의 단일 Mission 데이터다. */
 UCLASS(BlueprintType)
 class DRONE_API UDroneMissionDefinition : public UPrimaryDataAsset
@@ -23,6 +33,13 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Mission Definition|Display")
 	FText DisplayName;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Mission Definition|Display")
+	EDroneMissionCategory LobbyCategory = EDroneMissionCategory::Auto;
+
+	/** 분류는 맵과 별개다. 같은 맵을 쓰는 수업도 다른 탭에 배치할 수 있다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flow|Data")
+	EDroneMissionCategory GetLobbyCategory() const;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Mission Definition|Display", meta=(MultiLine="true"))
 	FText LobbyDescription;

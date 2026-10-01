@@ -16,6 +16,8 @@
 #include "Tutorial/DroneTrainingCourse.h"
 #include "Tutorial/DroneTutorialHeadingZone.h"
 #include "Tutorial/DroneTutorialHoverZone.h"
+#include "Components/SplineComponent.h"
+#include "Tutorial/DroneTrainingGateSequenceComponent.h"
 
 namespace DroneTutorialMissionTest
 {
@@ -41,7 +43,8 @@ constexpr const TCHAR* UGVTurretMissionPath =
 	TEXT("/Game/Drone/Data/Missions/DA_Mission_Tutorial_UGV_Turret.DA_Mission_Tutorial_UGV_Turret");
 const FName HoverTag(TEXT("Tutorial.Hover.Zone"));
 const FName ForwardTag(TEXT("Tutorial.Forward.Goal"));
-const FName HeadingTag(TEXT("Tutorial.Heading.Zone"));
+const FName HeadingTag(TEXT("Tutorial.Orbit.Course"));
+const FName GateCourseTag(TEXT("Tutorial.GateFlight.Course"));
 const FName PayloadTag(TEXT("Tutorial.Payload.Target"));
 const FName FPVTag(TEXT("Tutorial.FPV.Target"));
 const FName UGVNPCTag(TEXT("Tutorial.UGV.NPC"));
@@ -86,7 +89,15 @@ bool FDroneTutorialMissionTestMapTest::RunTest(const FString& Parameters)
 		PlayerStartCount += Actor->IsA<APlayerStart>() ? 1 : 0;
 		HoverZoneCount += Actor->IsA<ADroneTutorialHoverZone>() && Actor->ActorHasTag(HoverTag) ? 1 : 0;
 		ForwardTriggerCount += Actor->IsA<ADroneMissionTrigger>() && Actor->ActorHasTag(ForwardTag) ? 1 : 0;
-		HeadingZoneCount += Actor->IsA<ADroneTutorialHeadingZone>() && Actor->ActorHasTag(HeadingTag) ? 1 : 0;
+		if (const ADroneTrainingCourse* Course = Cast<ADroneTrainingCourse>(Actor); Course && Course->ActorHasTag(HeadingTag))
+		{
+			++HeadingZoneCount;
+			TestTrue(TEXT("Orbit spline is closed"), Course->GetCourseSpline()->IsClosedLoop());
+			TestEqual(TEXT("Orbit has start, seven checkpoints, finish"), Course->GetResolvedAutomaticGateCount(), 9);
+			TestTrue(TEXT("Orbit sequence is valid"), Course->GetGateSequenceComponent()->IsConfigurationValid());
+			TestTrue(TEXT("Finish is at full spline length, not seven eighths"),
+				FMath::IsNearlyEqual(Course->GetAutomaticGateDistanceAlongSpline(8), Course->GetCourseSpline()->GetSplineLength(), 1.f));
+		}
 		TrainingCourseCount += Actor->IsA<ADroneTrainingCourse>() ? 1 : 0;
 		PayloadTargetCount += Actor->IsA<ADronePayloadRoleTestTarget>() && Actor->ActorHasTag(PayloadTag) ? 1 : 0;
 		CarryableCount += Actor->IsA<ADroneDroppedPayload>() ? 1 : 0;
@@ -98,8 +109,8 @@ bool FDroneTutorialMissionTestMapTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Tutorial Mission map has one PlayerStart"), PlayerStartCount, 1);
 	TestEqual(TEXT("Tutorial Mission map has one tagged Hover Zone"), HoverZoneCount, 1);
 	TestEqual(TEXT("Tutorial Mission map has one tagged Forward Trigger"), ForwardTriggerCount, 1);
-	TestEqual(TEXT("Tutorial Mission map has one tagged Heading Zone"), HeadingZoneCount, 1);
-	TestEqual(TEXT("Tutorial Mission map has one Gate Course"), TrainingCourseCount, 1);
+	TestEqual(TEXT("Tutorial Mission map has one tagged Orbit course"), HeadingZoneCount, 1);
+	TestEqual(TEXT("Tutorial Mission map has two distinct courses"), TrainingCourseCount, 2);
 	TestEqual(TEXT("Tutorial Mission map has one tagged Payload target"), PayloadTargetCount, 1);
 	TestEqual(TEXT("Tutorial Mission map has one spare carryable object"), CarryableCount, 1);
 	TestEqual(TEXT("Tutorial Mission map has one tagged FPV damage target"), FPVTargetCount, 1);
@@ -124,11 +135,11 @@ bool FDroneTutorialMissionTestMapTest::RunTest(const FString& Parameters)
 			{EDroneMissionObjectiveEvent::Manual, EDroneMissionObjectiveEvent::ReturnToBase},
 			{ForwardTag, ReturnTag}},
 		{HeadingMissionPath, FName(TEXT("Mission.Tutorial.Heading")), FName(TEXT("Drone.Scout.Greybox")),
-			{EDroneMissionObjectiveEvent::HeadingAligned, EDroneMissionObjectiveEvent::ReturnToBase},
+			{EDroneMissionObjectiveEvent::TrainingLap, EDroneMissionObjectiveEvent::ReturnToBase},
 			{HeadingTag, ReturnTag}},
 		{GateMissionPath, FName(TEXT("Mission.Tutorial.GateFlight")), FName(TEXT("Drone.Scout.Greybox")),
 			{EDroneMissionObjectiveEvent::TrainingLap},
-			{NAME_None}},
+			{GateCourseTag}},
 		{PayloadMissionPath, FName(TEXT("Mission.Tutorial.Payload")), FName(TEXT("Drone.Drop.Greybox")),
 			{EDroneMissionObjectiveEvent::PayloadDelivered, EDroneMissionObjectiveEvent::ReturnToBase},
 			{PayloadTag, ReturnTag}},
@@ -156,7 +167,23 @@ bool FDroneTutorialMissionTestMapTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Tutorial Mission allows exactly one role Drone"), Mission->AllowedDroneIds.Num(), 1);
 		TestEqual(TEXT("Tutorial Mission default Drone matches lesson"), Mission->DefaultDroneId, Expectation.DroneId);
 		TestEqual(TEXT("Tutorial Mission rule count matches"), Mission->ObjectiveRules.Num(), Expectation.Events.Num());
-		TestEqual(TEXT("Tutorial Mission map is shared test map"), Mission->MissionMap.ToSoftObjectPath(), FSoftObjectPath(MapObjectPath));
+		const FString AssetName = FSoftObjectPath(Expectation.Path).GetAssetName();
+		const FString Key = AssetName.RightChop(FString(TEXT("DA_Mission_Tutorial_")).Len());
+		const FString MapName = FString::Printf(TEXT("Lvl_Tutorial_%s_Test"), *Key);
+		const FString IndependentPath = FString::Printf(TEXT("/Game/Drone/Maps/TestMap/Tutorial/%s.%s"), *MapName, *MapName);
+		TestEqual(TEXT("Tutorial Mission points to its independent map"), Mission->MissionMap.ToSoftObjectPath(), FSoftObjectPath(IndependentPath));
+		UWorld* LessonWorld = LoadObject<UWorld>(nullptr, *IndependentPath);
+		TestNotNull(TEXT("Independent lesson world loads"), LessonWorld);
+		if (LessonWorld)
+		{
+			TestTrue(TEXT("Independent lesson uses Mission GameMode"), LessonWorld->GetWorldSettings()->DefaultGameMode.Get() == MissionGameModeClass);
+			for (const FName Tag : Expectation.TargetIds)
+			{
+				bool bFound = false;
+				for (TActorIterator<AActor> It(LessonWorld); It; ++It) bFound |= It->ActorHasTag(Tag);
+				TestTrue(*FString::Printf(TEXT("Objective target %s exists in its independent map"), *Tag.ToString()), bFound);
+			}
+		}
 		for (int32 RuleIndex = 0; RuleIndex < Mission->ObjectiveRules.Num() && RuleIndex < Expectation.Events.Num(); ++RuleIndex)
 		{
 			TestTrue(TEXT("Tutorial Mission Event order matches"), Mission->ObjectiveRules[RuleIndex].Event == Expectation.Events[RuleIndex]);

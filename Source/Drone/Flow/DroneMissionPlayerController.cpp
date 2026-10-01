@@ -8,6 +8,8 @@
 #include "Mission/DroneDefinition.h"
 #include "Mission/DroneMissionDefinition.h"
 #include "Mission/DroneMissionDirector.h"
+#include "Mission/DroneMissionTestEntry.h"
+#include "EngineUtils.h"
 #include "Prototype/DronePrototypePawn.h"
 #include "UI/DroneFlightHUDWidget.h"
 #include "UI/DroneMissionObjectiveWidget.h"
@@ -40,6 +42,27 @@ void ADroneMissionPlayerController::BeginPlay()
 		return;
 	}
 
+	// 미션별 시험맵을 직접 Play하면 로비 GameInstance가 없어 Boot 상태다.
+	// TestMap의 명시적 Entry만 초기화하며 기존 로비 선택/재도전/Production은 바꾸지 않는다.
+	if (Flow->GetSnapshot().State == EDroneGameFlowState::Boot)
+	{
+		for (TActorIterator<ADroneMissionTestEntry> It(GetWorld()); It; ++It)
+		{
+			if (UDroneMissionDefinition* TestMission = It->DefaultTestMission;
+				It->ActorHasTag(TEXT("DroneIsolatedMissionTest.Owned")) && TestMission
+				&& (Flow->FindMissionDefinition(TestMission->MissionId) == TestMission
+					|| (!Flow->FindMissionDefinition(TestMission->MissionId)
+						&& Flow->RegisterMissionDefinition(TestMission))))
+			{
+				// 기본 카탈로그에 있는 동일 DA는 재등록하지 않는다. 중복 ID는 등록 API가 거절한다.
+				const bool bPrepared = Flow->BeginOpeningTrailer() && Flow->EnterLobbyFromOpeningTrailer()
+					&& Flow->SelectMission(TestMission->MissionId) && Flow->ConfirmMissionSelection()
+					&& Flow->NotifyMissionTrailerFinished();
+				if (!bPrepared) UE_LOG(LogDrone, Error, TEXT("Independent test map default Mission could not initialize."));
+				break;
+			}
+		}
+	}
 	// OpenLevel 동안 유지된 GameInstance 선택을 Map 준비 완료 상태로 한 번만 넘긴다.
 	if (Flow->GetSnapshot().State == EDroneGameFlowState::LoadingMissionMap
 		&& !Flow->NotifyMissionMapReady())
@@ -212,6 +235,10 @@ bool ADroneMissionPlayerController::StartSelectedDrone(
 	}
 	SpawnedDrone = NewDrone;
 	MissionDirector = NewDirector;
+	if (UDroneFlightHUDWidget* FlightHUD = GetFlightHUDWidget())
+	{
+		FlightHUD->SetTrainingRecordSource(NewDirector->GetTrainingLapRecorder());
+	}
 	++SuccessfulDroneSpawnCount;
 	CreateMissionObjectiveWidget(NewDirector);
 
@@ -247,6 +274,20 @@ bool ADroneMissionPlayerController::RetrySelectedMission()
 		SelectedMission->MissionMap,
 		true,
 		TEXT("game=/Script/Drone.DroneMissionGameMode"));
+	return true;
+}
+
+bool ADroneMissionPlayerController::BackToMissionBriefing()
+{
+	UDroneGameFlowSubsystem* Flow = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UDroneGameFlowSubsystem>() : nullptr;
+	if (!Flow || Flow->GetSnapshot().State != EDroneGameFlowState::DroneSelect
+		|| IsValid(SpawnedDrone) || SuccessfulDroneSpawnCount > 0 || !Flow->RequestBackNavigation())
+	{
+		return false;
+	}
+	// Widget은 상태만 전달하고 실제 맵 전환은 Controller가 한 번만 요청한다.
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/Drone/Maps/Lvl_DroneFrontEnd")), true);
 	return true;
 }
 

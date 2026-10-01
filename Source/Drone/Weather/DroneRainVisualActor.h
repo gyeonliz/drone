@@ -22,6 +22,8 @@ public:
 	ADroneRainVisualActor();
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void OnConstruction(const FTransform& Transform) override;
+	/** 실제 Tick과 같은 갱신 경로. Editor 자동화에서는 LocalPlayer 없이 지정 카메라 위치로 시험한다. */
+	void UpdateRainForCamera(float DeltaSeconds, const FVector& CameraLocation);
 
 	UFUNCTION(BlueprintCallable, Category="Drone|Weather|Rain")
 	void SetRainEnabled(bool bEnabled);
@@ -34,6 +36,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|Weather|Rain|Indoor")
 	float GetLocalRainExposure01() const { return CurrentLocalExposure01; }
+
+	/** 활성화/실내 진입 때도 열 추적 예산을 넘기지 않았는지 성능 테스트에서 확인한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Weather|Rain|Debug")
+	int32 GetLastCeilingTraceColumnCount() const { return LastCeilingTraceColumnCount; }
 
 	/** attenuation=1이면 지붕 아래 비 0%, 0이면 실내에서도 100%다. */
 	UFUNCTION(BlueprintPure, Category="Drone|Weather|Rain|Indoor")
@@ -99,7 +105,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather|Rain|Indoor")
 	bool bClipStreaksAgainstCeilings = true;
 
-	/** 프레임마다 분산할 빗줄기 천장 Trace 수다. 첫 활성화와 실내 진입 때는 현재 활성 묶음을 즉시 갱신한다. */
+	/** 활성화 순간도 이 예산을 지킨다. 아직 검사하지 않은 열은 숨겨 지붕 관통을 방지한다. 한 열당 Trace는 최대 두 번이다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Drone|Weather|Rain|Indoor", meta=(ClampMin="1", ClampMax="32"))
 	int32 CeilingTraceBudgetPerFrame = 8;
 
@@ -127,11 +133,14 @@ private:
 	TArray<FVector2D> StreakVisualScaleVariation;
 	TArray<float> StreakBlockingSurfaceWorldZ;
 	TArray<uint8> StreakHasBlockingSurface;
+	TArray<uint8> StreakSurfaceCacheValid;
+	TArray<FTransform> StreakTransforms;
 	FRandomStream RainRandomStream;
 	float IndoorCheckRemainingSeconds = 0.0f;
 	float CurrentLocalExposure01 = 1.0f;
 	int32 NextCeilingTraceIndex = 0;
 	int32 PreviousActiveStreakCount = 0;
+	int32 LastCeilingTraceColumnCount = 0;
 	bool bCameraIndoors = false;
 	bool bForceCeilingCacheRefresh = true;
 };

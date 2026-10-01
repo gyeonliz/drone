@@ -113,7 +113,7 @@ public:
 		Test->TestTrue(TEXT("Hover PIE finishes the briefing"), Widget->FinishMissionBriefing());
 		Test->TestEqual(TEXT("Hover lesson requests its isolated test map"),
 			Controller->GetLastRequestedMissionMap(),
-			FSoftObjectPath(TEXT("/Game/Drone/Maps/TestMap/Lvl_DroneTutorialMissionTest.Lvl_DroneTutorialMissionTest")));
+			FSoftObjectPath(TEXT("/Game/Drone/Maps/TestMap/Tutorial/Lvl_Tutorial_Hover_Test.Lvl_Tutorial_Hover_Test")));
 		return true;
 	}
 
@@ -152,6 +152,11 @@ public:
 			UDroneSelectionWidget* Selection = Controller->GetDroneSelectionWidget();
 			if (!Selection)
 			{
+				if (Now - StartedAt > 30.0)
+				{
+					Test->AddError(TEXT("Mission Entry did not prepare Drone Selection within 30 seconds"));
+					return true;
+				}
 				return false;
 			}
 			Test->TestTrue(TEXT("Hover PIE selects Scout"), Selection->SelectDrone(FName(TEXT("Drone.Scout.Greybox"))));
@@ -250,4 +255,22 @@ bool FDroneTutorialHoverPIETest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDroneTutorialDirectMapPIETest,
+	"Drone.Tutorial.IndependentMapEntryPIE",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FDroneTutorialDirectMapPIETest::RunTest(const FString& Parameters)
+{
+	using namespace DroneTutorialHoverPIE;
+	if (!GEditor || GEditor->IsPlaySessionInProgress())
+	{
+		AddError(TEXT("Independent map PIE requires an idle Editor"));
+		return false;
+	}
+	FAutomationEditorCommonUtils::LoadMap(TEXT("/Game/Drone/Maps/TestMap/Tutorial/Lvl_Tutorial_Hover_Test"));
+	// 로비를 거치지 않는다. 배치된 Test Entry가 Drone Select를 준비해야 아래 실제 호버 검사가 가능하다.
+	ADD_LATENT_AUTOMATION_COMMAND(FStartPIEForAutomationCommand(MakePlayParams()));
+	ADD_LATENT_AUTOMATION_COMMAND(FLaunchAndHoldHoverCommand(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
+	return true;
+}
 #endif

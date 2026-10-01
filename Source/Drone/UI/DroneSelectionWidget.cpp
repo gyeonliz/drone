@@ -15,6 +15,7 @@
 #include "Mission/DroneDefinition.h"
 #include "Mission/DroneMissionDefinition.h"
 #include "Styling/CoreStyle.h"
+#include "InputCoreTypes.h"
 
 namespace DroneSelectionUI
 {
@@ -63,6 +64,7 @@ void UDroneSelectionWidget::NativeOnInitialized()
 	Super::NativeOnInitialized();
 	SetIsFocusable(true);
 	BuildDefaultLayout();
+	if (SelectionBackButton) SelectionBackButton->OnClicked.AddUniqueDynamic(this, &UDroneSelectionWidget::HandleBackClicked);
 
 	if (DroneButtons.IsValidIndex(0) && DroneButtons[0])
 	{
@@ -97,6 +99,7 @@ void UDroneSelectionWidget::NativeOnInitialized()
 
 void UDroneSelectionWidget::NativeDestruct()
 {
+	if (SelectionBackButton) SelectionBackButton->OnClicked.RemoveDynamic(this, &UDroneSelectionWidget::HandleBackClicked);
 	if (DroneButtons.IsValidIndex(0) && DroneButtons[0])
 	{
 		DroneButtons[0]->OnClicked.RemoveDynamic(this, &UDroneSelectionWidget::HandleDroneButton0Clicked);
@@ -186,6 +189,24 @@ bool UDroneSelectionWidget::ConfirmAndLaunchSelectedDrone()
 		&& MissionController->StartSelectedDrone(SelectedControlMode, EDroneHandlingPreset::Balanced);
 }
 
+bool UDroneSelectionWidget::NavigateBack()
+{
+	ADroneMissionPlayerController* Controller = Cast<ADroneMissionPlayerController>(GetOwningPlayer());
+	return Controller && Controller->BackToMissionBriefing();
+}
+
+void UDroneSelectionWidget::HandleBackClicked() { NavigateBack(); }
+
+FReply UDroneSelectionWidget::NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+{
+	const FKey Key = InKeyEvent.GetKey();
+	if (Key == EKeys::Escape || Key == EKeys::Gamepad_FaceButton_Right || Key == EKeys::Virtual_Gamepad_Back.GetVirtualKey())
+	{
+		if (InKeyEvent.IsRepeat() || NavigateBack()) return FReply::Handled();
+	}
+	return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
+}
+
 void UDroneSelectionWidget::HandleFlowSnapshotChanged(const FDroneGameFlowSnapshot& /*Snapshot*/)
 {
 	RefreshFromFlow();
@@ -263,6 +284,7 @@ bool UDroneSelectionWidget::TryBindBlueprintLayout()
 		HandlingPresetButtonText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	LaunchDroneButton = Cast<UButton>(WidgetTree->FindWidget(DroneSelectionUI::LaunchButtonName));
+	SelectionBackButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("SelectionBackButton")));
 	return DroneSelectionPanel
 		&& MissionNameText
 		&& DroneNameText
@@ -304,6 +326,11 @@ void UDroneSelectionWidget::BuildDefaultLayout()
 
 	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("SelectionColumn"));
 	Panel->SetContent(Column);
+	SelectionBackButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("SelectionBackButton"));
+	UTextBlock* BackText = WidgetTree->ConstructWidget<UTextBlock>();
+	BackText->SetText(FText::FromString(TEXT("← 미션 설명  ·  Esc / 패드 B")));
+	SelectionBackButton->SetContent(BackText);
+	Column->AddChildToVerticalBox(SelectionBackButton)->SetPadding(FMargin(0, 0, 0, 12));
 	MissionNameText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), DroneSelectionUI::MissionNameName);
 	MissionNameText->SetText(FText::FromString(TEXT("DRONE LOADOUT  /  기체 선택")));
 	MissionNameText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 34.0f));

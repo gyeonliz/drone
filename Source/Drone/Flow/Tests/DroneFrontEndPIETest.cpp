@@ -16,6 +16,8 @@
 #include "Tests/AutomationCommon.h"
 #include "Tests/AutomationEditorCommon.h"
 #include "UI/DroneFrontEndRootWidget.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/Button.h"
 #include "UObject/UObjectIterator.h"
 
 namespace DroneFrontEndPIE
@@ -110,6 +112,10 @@ public:
 		Test->TestNotNull(TEXT("Front-end Root Widget exists"), FrontEndWidget);
 		if (FrontEndWidget)
 		{
+			FrontEndWidget->SetSettingsVisible(true);
+			Test->TestTrue(TEXT("Title Settings opens"), FrontEndWidget->IsSettingsVisible());
+			FrontEndWidget->SetSettingsVisible(false);
+			Test->TestFalse(TEXT("Title Settings closes"), FrontEndWidget->IsSettingsVisible());
 			Test->TestTrue(TEXT("Front-end Root Widget is in the viewport"), FrontEndWidget->IsInViewport());
 			Test->TestTrue(
 				TEXT("Front-end PIE uses WBP_DroneFrontEndRoot"),
@@ -147,7 +153,7 @@ public:
 		if (Flow)
 		{
 			Test->TestEqual(TEXT("PIE Catalog contains five functional Drone profiles"), Flow->GetRegisteredDroneCount(), 5);
-			Test->TestEqual(TEXT("PIE Catalog contains nine Tutorial entries plus four Story test Missions"), Flow->GetRegisteredMissionCount(), 13);
+			Test->TestEqual(TEXT("PIE Catalog contains fourteen Missions"), Flow->GetRegisteredMissionCount(), 14);
 		}
 
 		if (FrontEndWidget && Flow)
@@ -161,7 +167,12 @@ public:
 			Test->TestEqual(TEXT("Lobby still has one Root Widget creation"), Controller->GetFrontEndWidgetCreationCount(), 1);
 			if (FrontEndWidget->IsUsingNativeFallbackLayout())
 			{
-				Test->TestEqual(TEXT("Native Lobby exposes all thirteen registered Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 13);
+				Test->TestEqual(TEXT("Native Tutorial tab exposes nine Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 9);
+				FrontEndWidget->SetLobbyCategory(EDroneMissionCategory::Racing);
+				Test->TestEqual(TEXT("Native Racing tab exposes one Mission button"), FrontEndWidget->GetNativeMissionButtonCount(), 1);
+				FrontEndWidget->SetLobbyCategory(EDroneMissionCategory::Mission);
+				Test->TestEqual(TEXT("Native Mission tab exposes four Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 4);
+				FrontEndWidget->SetLobbyCategory(EDroneMissionCategory::Tutorial);
 			}
 			Test->TestFalse(TEXT("Opening completion cannot run twice"), FrontEndWidget->FinishOpeningTrailer());
 
@@ -207,6 +218,20 @@ public:
 						Mission->LobbyDescription.ToString()));
 			}
 			Test->TestFalse(TEXT("Mission confirmation cannot run twice"), FrontEndWidget->ConfirmSelectedMission());
+			UButton* BriefingBack = Cast<UButton>(FrontEndWidget->WidgetTree->FindWidget(TEXT("BriefingBackButton")));
+			UButton* LobbyBack = Cast<UButton>(FrontEndWidget->WidgetTree->FindWidget(TEXT("LobbyBackButton")));
+			Test->TestNotNull(TEXT("Briefing has a real Back button"), BriefingBack);
+			Test->TestNotNull(TEXT("Lobby has a real Back button"), LobbyBack);
+			if (BriefingBack && LobbyBack)
+			{
+				BriefingBack->OnClicked.Broadcast();
+				Test->TestEqual(TEXT("Briefing button returns to Lobby"), FrontEndWidget->GetDisplayedState(), EDroneGameFlowState::LobbyMissionSelect);
+				Test->TestEqual(TEXT("Briefing button preserves selection"), Flow->GetSnapshot().SelectedMissionId, TutorialMissionId);
+				LobbyBack->OnClicked.Broadcast();
+				Test->TestEqual(TEXT("Lobby button returns to Title"), FrontEndWidget->GetDisplayedState(), EDroneGameFlowState::OpeningTrailer);
+				Test->TestTrue(TEXT("Title return clears selection"), Flow->GetSnapshot().SelectedMissionId.IsNone());
+				Test->TestTrue(TEXT("Can enter Lobby again after Back"), FrontEndWidget->FinishOpeningTrailer());
+			}
 			Test->TestTrue(TEXT("FLOW-04 still reuses the same Root Widget"), Controller->GetFrontEndWidget() == FrontEndWidget);
 			Test->TestEqual(TEXT("FLOW-04 still has one Root Widget creation"), Controller->GetFrontEndWidgetCreationCount(), 1);
 		}

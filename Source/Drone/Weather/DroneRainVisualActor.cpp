@@ -122,13 +122,26 @@ bool ADroneRainVisualActor::ShouldRenderStreakAboveSurface(
 void ADroneRainVisualActor::Tick(const float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	LastCeilingTraceColumnCount = 0;
 	APlayerCameraManager* CameraManager = UGameplayStatics::GetPlayerCameraManager(this, 0);
-	if (!CameraManager || !RainStreaks)
+	if (CameraManager && RainStreaks) UpdateRainForCamera(DeltaSeconds, CameraManager->GetCameraLocation());
+}
+
+void ADroneRainVisualActor::UpdateRainForCamera(const float DeltaSeconds, const FVector& CameraLocation)
+{
+	LastCeilingTraceColumnCount = 0;
+	if (!RainStreaks) return;
+	const UDroneWeatherWorldSubsystem* Weather = GetWorld()
+		? GetWorld()->GetSubsystem<UDroneWeatherWorldSubsystem>() : nullptr;
+	const FDroneWeatherSnapshot Snapshot = Weather ? Weather->GetSnapshot() : FDroneWeatherSnapshot();
+	// 맑은 날에도 112개 Transform과 복잡한 천장 Trace를 계속 갱신하던 비용을 제거한다.
+	if (!bRainEnabled || Snapshot.RainIntensity01 * Snapshot.RainSpawnScale01 <= UE_SMALL_NUMBER)
 	{
+		if (RainStreaks) RainStreaks->SetVisibility(false, true);
+		PreviousActiveStreakCount = 0;
+		bForceCeilingCacheRefresh = true;
 		return;
 	}
-
-	const FVector CameraLocation = CameraManager->GetCameraLocation();
 	SetActorLocation(CameraLocation);
 	IndoorCheckRemainingSeconds -= FMath::Max(0.0f, DeltaSeconds);
 	if (IndoorCheckRemainingSeconds <= 0.0f)
@@ -149,6 +162,8 @@ void ADroneRainVisualActor::RebuildStreakPool()
 	StreakVisualScaleVariation.Reserve(SafeMaximum);
 	StreakBlockingSurfaceWorldZ.Init(0.0f, SafeMaximum);
 	StreakHasBlockingSurface.Init(false, SafeMaximum);
+	StreakSurfaceCacheValid.Init(false, SafeMaximum);
+	StreakTransforms.SetNum(SafeMaximum);
 	NextCeilingTraceIndex = 0;
 	PreviousActiveStreakCount = 0;
 	bForceCeilingCacheRefresh = true;
@@ -235,15 +250,19 @@ void ADroneRainVisualActor::UpdateCeilingSurfaceCache(
 		IndoorTraceDistanceCentimeters,
 		FMath::Max(100.0f, FollowHalfHeightCentimeters) + StreakLengthCentimeters);
 	const float TraceBottomOffset = FMath::Max(100.0f, FollowHalfHeightCentimeters) + StreakLengthCentimeters;
-	const int32 TraceCount = bForceFullRefresh
-		? SafeActiveCount
-		: FMath::Clamp(CeilingTraceBudgetPerFrame, 1, SafeActiveCount);
+	if (bForceFullRefresh)
+	{
+		// 최초/실내 전환 때 전부 즉시 검사하면 최대 512개 Complex Trace가 한 프레임에 몰린다.
+		// 대신 캐시를 무효화한 뒤 매 프레임 예산만큼 복구한다.
+		StreakSurfaceCacheValid.Init(false, StreakLocalPositions.Num());
+		NextCeilingTraceIndex = 0;
+	}
+	const int32 TraceCount = FMath::Clamp(CeilingTraceBudgetPerFrame, 1, SafeActiveCount);
+	LastCeilingTraceColumnCount = TraceCount;
 
 	for (int32 TraceOffset = 0; TraceOffset < TraceCount; ++TraceOffset)
 	{
-		const int32 Index = bForceFullRefresh
-			? TraceOffset
-			: NextCeilingTraceIndex % SafeActiveCount;
+		const int32 Index = NextCeilingTraceIndex % SafeActiveCount;
 		NextCeilingTraceIndex = (Index + 1) % SafeActiveCount;
 
 		const FVector& LocalPosition = StreakLocalPositions[Index];
@@ -262,6 +281,7 @@ void ADroneRainVisualActor::UpdateCeilingSurfaceCache(
 			CeilingTraceChannel,
 			QueryParams);
 		StreakHasBlockingSurface[Index] = bHit;
+		StreakSurfaceCacheValid[Index] = true;
 		StreakBlockingSurfaceWorldZ[Index] = bHit ? Hit.ImpactPoint.Z : 0.0f;
 	}
 }
@@ -332,23 +352,21 @@ void ADroneRainVisualActor::UpdateStreaks(const float DeltaSeconds, const FVecto
 			.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
 		const FQuat StreakRotation = FRotationMatrix::MakeFromYZ(FallDirection, FacingNormal).ToQuat();
 		const bool bAboveBlockingSurface = !bClipStreaksAgainstCeilings
-			|| ShouldRenderStreakAboveSurface(
+			|| (StreakSurfaceCacheValid.IsValidIndex(Index) && StreakSurfaceCacheValid[Index]
+			&& ShouldRenderStreakAboveSurface(
 				CameraLocation.Z + LocalPosition.Z,
 				StreakHalfLength * VisualVariation.Y,
 				StreakHasBlockingSurface.IsValidIndex(Index) && StreakHasBlockingSurface[Index] != 0,
 				StreakBlockingSurfaceWorldZ.IsValidIndex(Index) ? StreakBlockingSurfaceWorldZ[Index] : 0.0f,
-				CeilingSurfaceClearanceCentimeters);
+				CeilingSurfaceClearanceCentimeters));
 		const FVector Scale = Index < ActiveCount && bAboveBlockingSurface
 			? FVector(
 				StreakWidthCentimeters * VisualVariation.X / 100.0f,
 				StreakLengthCentimeters * VisualVariation.Y / 100.0f,
 				1.0f)
 			: FVector::ZeroVector;
-		RainStreaks->UpdateInstanceTransform(
-			Index,
-			FTransform(StreakRotation, LocalPosition, Scale),
-			false,
-			Index == StreakLocalPositions.Num() - 1,
-			true);
+		StreakTransforms[Index] = FTransform(StreakRotation, LocalPosition, Scale);
 	}
+	// 같은 ISM에 대한 개별 갱신을 묶고 렌더 상태 변경도 한 번만 알린다.
+	RainStreaks->BatchUpdateInstancesTransforms(0, StreakTransforms, false, true, true);
 }

@@ -45,6 +45,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Selection")
 	bool ConfirmAndLaunchSelectedDrone();
 
+	UFUNCTION(BlueprintCallable, Category="Drone|Selection|Navigation")
+	bool NavigateBack();
+
 	UFUNCTION(BlueprintPure, Category="Drone|Selection")
 	FName GetDisplayedDroneId() const { return DisplayedDroneId; }
 
@@ -70,8 +73,13 @@ public:
 protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeDestruct() override;
+	virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 
 private:
+	UFUNCTION()
+	void HandleBackClicked();
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UButton> SelectionBackButton;
 	UFUNCTION()
 	void HandleFlowSnapshotChanged(const FDroneGameFlowSnapshot& Snapshot);
 

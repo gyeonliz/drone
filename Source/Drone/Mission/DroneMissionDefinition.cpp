@@ -1,5 +1,20 @@
 #include "Mission/DroneMissionDefinition.h"
 
+EDroneMissionCategory UDroneMissionDefinition::GetLobbyCategory() const
+{
+	if (LobbyCategory != EDroneMissionCategory::Auto)
+	{
+		return LobbyCategory;
+	}
+	const FString Id = MissionId.ToString();
+	if (Id.StartsWith(TEXT("Mission.Tutorial.")))
+	{
+		return EDroneMissionCategory::Tutorial;
+	}
+	return Id.StartsWith(TEXT("Mission.Racing."))
+		? EDroneMissionCategory::Racing : EDroneMissionCategory::Mission;
+}
+
 FPrimaryAssetId UDroneMissionDefinition::GetPrimaryAssetId() const
 {
 	return MissionId.IsNone()

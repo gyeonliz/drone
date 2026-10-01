@@ -85,6 +85,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Drone|Flow")
 	bool EnterLobbyFromOpeningTrailer();
 
+	/** 출격 전 화면을 한 단계 되돌린다. 비행/로딩/결과에는 적용하지 않는다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Flow")
+	bool RequestBackNavigation();
+
 	UFUNCTION(BlueprintCallable, Category="Drone|Flow")
 	bool SelectMission(FName MissionId);
 
