@@ -76,6 +76,10 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Flow")
 	FDroneGameFlowSnapshot GetSnapshot() const { return Snapshot; }
 
+	/** 결과→로비에서 선택을 지워도 원래 Training/Story 그룹은 새 Widget이 복원한다. */
+	UFUNCTION(BlueprintPure, Category="Drone|Flow")
+	FName GetLastLobbyMissionId() const { return LastLobbyMissionId; }
+
 	UFUNCTION(BlueprintPure, Category="Drone|Flow")
 	FText GetLastRejectionReason() const { return LastRejectionReason; }
 
@@ -153,6 +157,9 @@ private:
 
 	UPROPERTY(Transient)
 	FDroneGameFlowSnapshot Snapshot;
+
+	UPROPERTY(Transient)
+	FName LastLobbyMissionId = NAME_None;
 
 	UPROPERTY(Transient)
 	FText LastRejectionReason;

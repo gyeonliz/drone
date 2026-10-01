@@ -16,8 +16,11 @@
 #include "Tests/AutomationCommon.h"
 #include "Tests/AutomationEditorCommon.h"
 #include "UI/DroneFrontEndRootWidget.h"
+#include "UI/DroneSettingsWidget.h"
+#include "UI/DroneAudioSettingsSubsystem.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Button.h"
+#include "Components/Slider.h"
 #include "UObject/UObjectIterator.h"
 
 namespace DroneFrontEndPIE
@@ -114,6 +117,40 @@ public:
 		{
 			FrontEndWidget->SetSettingsVisible(true);
 			Test->TestTrue(TEXT("Title Settings opens"), FrontEndWidget->IsSettingsVisible());
+			UDroneSettingsWidget* SettingsWidget = FrontEndWidget->WidgetTree
+				? Cast<UDroneSettingsWidget>(FrontEndWidget->WidgetTree->FindWidget(TEXT("SettingsWidget"))) : nullptr;
+			Test->TestNotNull(TEXT("Root constructs and initializes its Settings child"), SettingsWidget);
+			if (SettingsWidget && SettingsWidget->WidgetTree)
+			{
+				Test->TestFalse(TEXT("PIE Settings cannot change display mode or resolution"), SettingsWidget->AreDisplaySettingsAvailable());
+				USlider* VolumeSlider = Cast<USlider>(SettingsWidget->WidgetTree->FindWidget(TEXT("MasterVolumeSlider")));
+				UButton* BackButton = Cast<UButton>(SettingsWidget->WidgetTree->FindWidget(TEXT("SettingsBackButton")));
+				Test->TestNotNull(TEXT("Settings builds the master volume slider"), VolumeSlider);
+				Test->TestNotNull(TEXT("Settings builds the Apply button"), SettingsWidget->WidgetTree->FindWidget(TEXT("ApplySettingsButton")));
+				Test->TestNotNull(TEXT("Settings builds the Defaults button"), SettingsWidget->WidgetTree->FindWidget(TEXT("RestoreDefaultsButton")));
+				Test->TestNotNull(TEXT("Settings builds the Back button"), BackButton);
+				for (const TCHAR* ControlName : {TEXT("DisplayModeCombo"), TEXT("ResolutionCombo"), TEXT("GraphicsCombo"), TEXT("FrameRateCombo"), TEXT("VSyncCheck")})
+				{
+					Test->TestNotNull(FString::Printf(TEXT("Settings contains %s"), ControlName), SettingsWidget->WidgetTree->FindWidget(ControlName));
+				}
+				const float InitialVolume = SettingsWidget->GetMasterVolume();
+				if (VolumeSlider)
+				{
+					const float PreviewVolume = InitialVolume > 0.5f ? 0.25f : 0.75f;
+					VolumeSlider->OnValueChanged.Broadcast(PreviewVolume);
+					Test->TestEqual(TEXT("Actual slider delegate updates volume preview"), SettingsWidget->GetMasterVolume(), PreviewVolume);
+				}
+				if (BackButton)
+				{
+					BackButton->OnClicked.Broadcast();
+					Test->TestFalse(TEXT("Actual child Back closes the Root Settings panel"), FrontEndWidget->IsSettingsVisible());
+					Test->TestEqual(TEXT("Back cancels the unapplied volume preview"), SettingsWidget->GetMasterVolume(), InitialVolume);
+					if (const UDroneAudioSettingsSubsystem* Audio = PIEWorld->GetGameInstance()->GetSubsystem<UDroneAudioSettingsSubsystem>())
+					{
+						Test->TestEqual(TEXT("Back restores the subsystem volume without saving"), Audio->GetMasterVolume(), InitialVolume);
+					}
+				}
+			}
 			FrontEndWidget->SetSettingsVisible(false);
 			Test->TestFalse(TEXT("Title Settings closes"), FrontEndWidget->IsSettingsVisible());
 			Test->TestTrue(TEXT("Front-end Root Widget is in the viewport"), FrontEndWidget->IsInViewport());
@@ -158,25 +195,57 @@ public:
 
 		if (FrontEndWidget && Flow)
 		{
-			Test->TestTrue(TEXT("Continue finishes the Opening Trailer"), FrontEndWidget->FinishOpeningTrailer());
+			Test->TestTrue(TEXT("Title Start enters the Story lobby"), FrontEndWidget->FinishOpeningTrailer());
 			Test->TestEqual(
-				TEXT("Continue displays the Lobby in the same Widget"),
+				TEXT("Start displays the Lobby in the same Widget"),
 				FrontEndWidget->GetDisplayedState(),
 				EDroneGameFlowState::LobbyMissionSelect);
-			Test->TestTrue(TEXT("Continue reuses the same Root Widget"), Controller->GetFrontEndWidget() == FrontEndWidget);
+			Test->TestTrue(TEXT("Start reuses the same Root Widget"), Controller->GetFrontEndWidget() == FrontEndWidget);
 			Test->TestEqual(TEXT("Lobby still has one Root Widget creation"), Controller->GetFrontEndWidgetCreationCount(), 1);
+			Test->TestEqual(TEXT("Start opens the Story category"), FrontEndWidget->GetLobbyCategory(), EDroneMissionCategory::Mission);
+			Test->TestFalse(TEXT("Start opens outside the Training group"), FrontEndWidget->IsTrainingLobby());
+			Test->TestFalse(TEXT("Opening completion cannot run twice"), FrontEndWidget->FinishOpeningTrailer());
+			UButton* TutorialTab = Cast<UButton>(FrontEndWidget->WidgetTree->FindWidget(TEXT("TutorialTabButton")));
+			UButton* RacingTab = Cast<UButton>(FrontEndWidget->WidgetTree->FindWidget(TEXT("RacingTabButton")));
+			UButton* MissionTab = Cast<UButton>(FrontEndWidget->WidgetTree->FindWidget(TEXT("MissionTabButton")));
+			UWidget* TrainingTabs = FrontEndWidget->WidgetTree->FindWidget(TEXT("TrainingCategoryTabs"));
 			if (FrontEndWidget->IsUsingNativeFallbackLayout())
 			{
-				Test->TestEqual(TEXT("Native Tutorial tab exposes nine Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 9);
-				FrontEndWidget->SetLobbyCategory(EDroneMissionCategory::Racing);
-				Test->TestEqual(TEXT("Native Racing tab exposes one Mission button"), FrontEndWidget->GetNativeMissionButtonCount(), 1);
-				FrontEndWidget->SetLobbyCategory(EDroneMissionCategory::Mission);
-				Test->TestEqual(TEXT("Native Mission tab exposes four Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 4);
-				FrontEndWidget->SetLobbyCategory(EDroneMissionCategory::Tutorial);
+				Test->TestEqual(TEXT("Native Start exposes four Story Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 4);
+				Test->TestNotNull(TEXT("Native lobby has a Tutorial tab"), TutorialTab);
+				Test->TestNotNull(TEXT("Native lobby has a Racing tab"), RacingTab);
+				Test->TestNotNull(TEXT("Native lobby has a Story tab"), MissionTab);
+				Test->TestNotNull(TEXT("Native lobby has a Training tab group"), TrainingTabs);
+				if (TutorialTab && RacingTab && MissionTab)
+				{
+					Test->TestEqual(TEXT("Story hides the Tutorial tab"), TutorialTab->GetVisibility(), ESlateVisibility::Collapsed);
+					Test->TestEqual(TEXT("Story hides the Racing tab"), RacingTab->GetVisibility(), ESlateVisibility::Collapsed);
+					Test->TestEqual(TEXT("Story uses its dedicated screen without a category tab"), MissionTab->GetVisibility(), ESlateVisibility::Collapsed);
+				}
+				if (TrainingTabs) Test->TestEqual(TEXT("Story hides the Training tab group"), TrainingTabs->GetVisibility(), ESlateVisibility::Collapsed);
 			}
-			Test->TestFalse(TEXT("Opening completion cannot run twice"), FrontEndWidget->FinishOpeningTrailer());
 
 			const FName TutorialMissionId(TEXT("Mission.Tutorial.Training"));
+			Test->TestFalse(TEXT("Story cannot select the hidden Tutorial Mission"), FrontEndWidget->SelectLobbyMission(TutorialMissionId));
+			Test->TestTrue(TEXT("Story can return to title"), FrontEndWidget->NavigateBack());
+			Test->TestTrue(TEXT("Title Training enters the Tutorial lobby"), FrontEndWidget->OpenTrainingLobby());
+			Test->TestTrue(TEXT("Tutorial lobby belongs to the Training group"), FrontEndWidget->IsTrainingLobby());
+			if (FrontEndWidget->IsUsingNativeFallbackLayout())
+			{
+				Test->TestEqual(TEXT("Training Tutorial tab exposes nine Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 9);
+				if (TutorialTab && RacingTab && MissionTab)
+				{
+					Test->TestEqual(TEXT("Training displays the Tutorial tab"), TutorialTab->GetVisibility(), ESlateVisibility::Visible);
+					Test->TestEqual(TEXT("Training displays the Racing tab"), RacingTab->GetVisibility(), ESlateVisibility::Visible);
+					Test->TestEqual(TEXT("Training hides the Story tab"), MissionTab->GetVisibility(), ESlateVisibility::Collapsed);
+				}
+				if (TrainingTabs) Test->TestEqual(TEXT("Training displays its nested tab group"), TrainingTabs->GetVisibility(), ESlateVisibility::Visible);
+				Test->TestTrue(TEXT("Training switches to Racing"), FrontEndWidget->SetLobbyCategory(EDroneMissionCategory::Racing));
+				Test->TestTrue(TEXT("Racing stays in the Training group"), FrontEndWidget->IsTrainingLobby());
+				Test->TestEqual(TEXT("Training Racing tab exposes one Mission button"), FrontEndWidget->GetNativeMissionButtonCount(), 1);
+				Test->TestFalse(TEXT("Racing cannot select the hidden Tutorial Mission"), FrontEndWidget->SelectLobbyMission(TutorialMissionId));
+				Test->TestTrue(TEXT("Training switches back to Tutorial"), FrontEndWidget->SetLobbyCategory(EDroneMissionCategory::Tutorial));
+			}
 			Test->TestFalse(
 				TEXT("Unknown Lobby Mission is rejected"),
 				FrontEndWidget->SelectLobbyMission(FName(TEXT("Mission.Unknown"))));
@@ -230,7 +299,7 @@ public:
 				LobbyBack->OnClicked.Broadcast();
 				Test->TestEqual(TEXT("Lobby button returns to Title"), FrontEndWidget->GetDisplayedState(), EDroneGameFlowState::OpeningTrailer);
 				Test->TestTrue(TEXT("Title return clears selection"), Flow->GetSnapshot().SelectedMissionId.IsNone());
-				Test->TestTrue(TEXT("Can enter Lobby again after Back"), FrontEndWidget->FinishOpeningTrailer());
+				Test->TestTrue(TEXT("Can enter Training again after Back"), FrontEndWidget->OpenTrainingLobby());
 			}
 			Test->TestTrue(TEXT("FLOW-04 still reuses the same Root Widget"), Controller->GetFrontEndWidget() == FrontEndWidget);
 			Test->TestEqual(TEXT("FLOW-04 still has one Root Widget creation"), Controller->GetFrontEndWidgetCreationCount(), 1);

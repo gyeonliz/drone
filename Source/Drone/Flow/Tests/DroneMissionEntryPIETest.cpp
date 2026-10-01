@@ -167,7 +167,7 @@ public:
 		Test->TestEqual(TEXT("Each fresh run creates one Front-end Root Widget"), Controller->GetFrontEndWidgetCreationCount(), 1);
 
 		const FName MissionId(TEXT("Mission.Tutorial.Training"));
-		Test->TestTrue(TEXT("Travel path finishes Opening"), Widget->FinishOpeningTrailer());
+		Test->TestTrue(TEXT("Travel path opens Training from title"), Widget->OpenTrainingLobby());
 		Test->TestTrue(TEXT("Travel path selects Tutorial Mission"), Widget->SelectLobbyMission(MissionId));
 		Test->TestTrue(TEXT("Travel path confirms Tutorial Mission"), Widget->ConfirmSelectedMission());
 		Test->TestTrue(TEXT("Travel path finishes static Briefing"), Widget->FinishMissionBriefing());

@@ -45,25 +45,35 @@ bool FDroneFrontEndContractTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Default Catalog has nine Tutorial, one Racing, four Story Missions"), Flow ? Flow->GetRegisteredMissionCount() : 0, 14);
 	TestTrue(TEXT("Opening Trailer begins once"), Flow && Flow->BeginOpeningTrailer());
 	TestFalse(TEXT("Opening Trailer cannot be started twice"), Flow && Flow->BeginOpeningTrailer());
-	TestTrue(TEXT("Opening Trailer can enter Lobby once"), Flow && Flow->EnterLobbyFromOpeningTrailer());
+	UDroneFrontEndRootWidget* Widget = NewObject<UDroneFrontEndRootWidget>(GameInstance);
+	Widget->SetFlowSubsystem(Flow);
+	TestTrue(TEXT("Start can enter the Story lobby once"), Widget->FinishOpeningTrailer());
 	TestEqual(
 		TEXT("Front-end reaches Lobby Mission Select"),
 		Flow ? Flow->GetSnapshot().State : EDroneGameFlowState::Boot,
 		EDroneGameFlowState::LobbyMissionSelect);
-	TestFalse(TEXT("Lobby transition cannot be repeated"), Flow && Flow->EnterLobbyFromOpeningTrailer());
-	UDroneFrontEndRootWidget* Widget = NewObject<UDroneFrontEndRootWidget>(GameInstance);
-	Widget->SetFlowSubsystem(Flow);
+	TestFalse(TEXT("Start cannot repeat the lobby transition"), Widget->FinishOpeningTrailer());
 	Widget->SetSettingsVisible(true);
 	TestFalse(TEXT("Settings cannot cover the mission selection lobby"), Widget->IsSettingsVisible());
 	Widget->SetSettingsVisible(false);
 	TestFalse(TEXT("Settings can close"), Widget->IsSettingsVisible());
-	TestEqual(TEXT("Tutorial tab has nine entries"), Widget->GetVisibleMissionIds().Num(), 9);
+	TestEqual(TEXT("Start opens the Story category"), Widget->GetLobbyCategory(), EDroneMissionCategory::Mission);
+	TestFalse(TEXT("Start does not open the Training group"), Widget->IsTrainingLobby());
+	TestEqual(TEXT("Start exposes four Story entries"), Widget->GetVisibleMissionIds().Num(), 4);
+	TestFalse(TEXT("Story lobby cannot select a hidden Tutorial"), Widget->SelectLobbyMission(FName(TEXT("Mission.Tutorial.Heading"))));
+	TestTrue(TEXT("Story lobby returns to title"), Widget->NavigateBack());
+	TestTrue(TEXT("Training enters its lobby from title"), Widget->OpenTrainingLobby());
+	TestTrue(TEXT("Tutorial belongs to the Training group"), Widget->IsTrainingLobby());
+	TestEqual(TEXT("Training opens the Tutorial category"), Widget->GetLobbyCategory(), EDroneMissionCategory::Tutorial);
+	TestEqual(TEXT("Training Tutorial tab has nine entries"), Widget->GetVisibleMissionIds().Num(), 9);
 	TestTrue(TEXT("Tutorial selection succeeds"), Widget->SelectLobbyMission(FName(TEXT("Mission.Tutorial.Heading"))));
 	TestTrue(TEXT("Racing tab switches"), Widget->SetLobbyCategory(EDroneMissionCategory::Racing));
+	TestTrue(TEXT("Racing belongs to the same Training group"), Widget->IsTrainingLobby());
 	TestEqual(TEXT("Racing tab has one entry"), Widget->GetVisibleMissionIds().Num(), 1);
 	TestFalse(TEXT("Hidden Tutorial selection cannot start in Racing tab"), Widget->ConfirmSelectedMission());
 	TestFalse(TEXT("Other tab button cannot select a hidden mission"), Widget->SelectLobbyMission(FName(TEXT("Mission.Tutorial.Hover"))));
 	TestTrue(TEXT("Mission tab switches"), Widget->SetLobbyCategory(EDroneMissionCategory::Mission));
+	TestFalse(TEXT("Explicit Story category leaves the Training group"), Widget->IsTrainingLobby());
 	TestEqual(TEXT("Story tab has four entries"), Widget->GetVisibleMissionIds().Num(), 4);
 	TestFalse(TEXT("Auto is not a tab"), Widget->SetLobbyCategory(EDroneMissionCategory::Auto));
 	const UDroneFrontEndRootWidget* ArtworkDefaults = GetDefault<UDroneFrontEndRootWidget>(
@@ -100,7 +110,7 @@ bool FDroneBackNavigationContractTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Settings is closed"), Widget->IsSettingsVisible());
 	TestEqual(TEXT("Settings back keeps title"), Flow->GetSnapshot().State, EDroneGameFlowState::OpeningTrailer);
 	TestFalse(TEXT("Title back does not quit"), Widget->NavigateBack());
-	TestTrue(TEXT("Title enters lobby"), Widget->FinishOpeningTrailer());
+	TestTrue(TEXT("Title enters the Training lobby"), Widget->OpenTrainingLobby());
 	const FName MissionId(TEXT("Mission.Racing.Circuit.Test"));
 	TestTrue(TEXT("Racing tab opens"), Widget->SetLobbyCategory(EDroneMissionCategory::Racing));
 	TestTrue(TEXT("Racing mission selects"), Widget->SelectLobbyMission(MissionId));
@@ -113,7 +123,13 @@ bool FDroneBackNavigationContractTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Title return clears mission"), Flow->GetSnapshot().SelectedMissionId.IsNone());
 	TestTrue(TEXT("Title return clears allowed drones"), Flow->GetSnapshot().AvailableDroneIds.IsEmpty());
 
-	TestTrue(TEXT("Title can enter lobby again"), Widget->FinishOpeningTrailer());
+	TestTrue(TEXT("Start enters Story after returning from Racing"), Widget->FinishOpeningTrailer());
+	TestEqual(TEXT("Start resets the old Racing category to Story"), Widget->GetLobbyCategory(), EDroneMissionCategory::Mission);
+	TestFalse(TEXT("Start does not retain the Training group"), Widget->IsTrainingLobby());
+	TestFalse(TEXT("Start cannot select the hidden Racing mission"), Widget->SelectLobbyMission(MissionId));
+	TestTrue(TEXT("Story can return to title"), Widget->NavigateBack());
+	TestTrue(TEXT("Title can enter Training again"), Widget->OpenTrainingLobby());
+	TestTrue(TEXT("Racing category can reopen in Training"), Widget->SetLobbyCategory(EDroneMissionCategory::Racing));
 	TestTrue(TEXT("Mission can select again"), Widget->SelectLobbyMission(MissionId));
 	TestTrue(TEXT("Mission can confirm again"), Widget->ConfirmSelectedMission());
 	TestTrue(TEXT("Mission starts loading"), Flow->NotifyMissionTrailerFinished());
@@ -131,7 +147,10 @@ bool FDroneBackNavigationContractTest::RunTest(const FString& Parameters)
 	// 실제 Map Travel에서 새로 생성되는 FrontEnd Widget도 Racing 탭을 복원해야 한다.
 	UDroneFrontEndRootWidget* ReturnedWidget = NewObject<UDroneFrontEndRootWidget>(Instance);
 	ReturnedWidget->SetFlowSubsystem(Flow);
+	TestTrue(TEXT("Returned briefing restores the Training group"), ReturnedWidget->IsTrainingLobby());
+	TestEqual(TEXT("Returned briefing restores the Racing category"), ReturnedWidget->GetLobbyCategory(), EDroneMissionCategory::Racing);
 	TestTrue(TEXT("Returned briefing can go to lobby"), ReturnedWidget->NavigateBack());
+	TestTrue(TEXT("Returned lobby keeps the Training group"), ReturnedWidget->IsTrainingLobby());
 	TestEqual(TEXT("Returned lobby restores selected mission tab"), ReturnedWidget->GetLobbyCategory(), EDroneMissionCategory::Racing);
 	TestTrue(TEXT("Returned selection remains visible"), ReturnedWidget->GetVisibleMissionIds().Contains(MissionId));
 	TestTrue(TEXT("Returned mission can confirm"), ReturnedWidget->ConfirmSelectedMission());
@@ -146,6 +165,12 @@ bool FDroneBackNavigationContractTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Mission result still works"), Flow->CompleteMissionWithStoryFacts(EDroneMissionOutcome::Success, {Fact}, {}));
 	TestFalse(TEXT("Result uses explicit result buttons, not preflight back"), Flow->RequestBackNavigation());
 	TestTrue(TEXT("Result return still works"), Flow->RequestReturnToLobby());
+	UDroneFrontEndRootWidget* ResultLobbyWidget = NewObject<UDroneFrontEndRootWidget>(Instance);
+	ResultLobbyWidget->SetFlowSubsystem(Flow);
+	TestTrue(TEXT("Result return restores the Training group in a new Widget"), ResultLobbyWidget->IsTrainingLobby());
+	TestEqual(TEXT("Result return restores the Racing category"), ResultLobbyWidget->GetLobbyCategory(), EDroneMissionCategory::Racing);
+	TestTrue(TEXT("Result return keeps the mission selection cleared"), Flow->GetSnapshot().SelectedMissionId.IsNone());
+	TestEqual(TEXT("Result return exposes the one Racing entry"), ResultLobbyWidget->GetVisibleMissionIds().Num(), 1);
 	TestTrue(TEXT("Result lobby can return to title"), Flow->RequestBackNavigation());
 	TestTrue(TEXT("Back keeps Story Facts"), Flow->HasStoryFact(Fact));
 	TestEqual(TEXT("Back keeps mission catalog"), Flow->GetRegisteredMissionCount(), 14);

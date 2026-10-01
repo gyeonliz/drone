@@ -16,6 +16,7 @@ class UTextBlock;
 class UVerticalBox;
 class UWidget;
 class USoundBase;
+class UDroneSettingsWidget;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FDroneMissionMapLoadRequestedSignature,
@@ -78,6 +79,13 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Front End|Lobby")
 	EDroneMissionCategory GetLobbyCategory() const { return ActiveLobbyCategory; }
 
+	/** 시작은 Story, 훈련은 Tutorial/Racing 하위 목록으로 진입한다. Catalog/DA 분류는 바꾸지 않는다. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Front End|Lobby")
+	bool OpenTrainingLobby();
+
+	UFUNCTION(BlueprintPure, Category="Drone|Front End|Lobby")
+	bool IsTrainingLobby() const { return ActiveLobbyCategory != EDroneMissionCategory::Mission; }
+
 	/** Designer에 자체 목록을 만들 때 이 배열로 버튼을 만들고 SelectLobbyMission을 호출한다. */
 	UFUNCTION(BlueprintPure, Category="Drone|Front End|Lobby")
 	TArray<FName> GetVisibleMissionIds() const;
@@ -89,7 +97,7 @@ public:
 	UFUNCTION(BlueprintPure, Category="Drone|Front End")
 	UDroneGameFlowSubsystem* GetFlowSubsystem() const { return FlowSubsystem.Get(); }
 
-	/** 정적 대체 화면의 계속 버튼과 실제 Trailer 종료 Callback이 함께 사용하는 진입점이다. */
+	/** 시작 버튼/Opening Trailer 종료: Story Mission 목록으로 진입한다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Front End")
 	bool FinishOpeningTrailer();
 
@@ -179,10 +187,14 @@ private:
 
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UWidget> SettingsPanel;
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UDroneSettingsWidget> SettingsWidget;
 	UPROPERTY(Transient)
 	bool bSettingsVisible = false;
 	UFUNCTION()
 	void HandleTutorialTabClicked();
+	UFUNCTION()
+	void HandleTrainingClicked();
 	UFUNCTION()
 	void HandleRacingTabClicked();
 	UFUNCTION()
@@ -220,7 +232,13 @@ private:
 	void ApplyTitleButtonStyle(UButton* Button);
 
 	UPROPERTY(Transient)
-	EDroneMissionCategory ActiveLobbyCategory = EDroneMissionCategory::Tutorial;
+	EDroneMissionCategory ActiveLobbyCategory = EDroneMissionCategory::Mission;
+
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UWidget> TrainingCategoryTabs;
+
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UTextBlock> MissionObjectiveSummaryText;
 
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UImage> TitleBackgroundImage;

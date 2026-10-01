@@ -6,6 +6,7 @@
 #include "Prototype/DroneFlightControlTypes.h"
 #include "DroneSelectionWidget.generated.h"
 
+class UBorder;
 class UButton;
 class UDroneDefinition;
 class UDroneGameFlowSubsystem;
@@ -154,6 +155,30 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTextBlock>> DroneButtonTexts;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UBorder>> DroneCardBorders;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> DroneCardRoleTexts;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> DroneCardSelectionTexts;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UWidget>> DroneCardAirframes;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UWidget>> DroneCardGroundFrames;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> DroneAirframePreview;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> DroneGroundPreview;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> DronePreviewRoleText;
 
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UButton> ControlModeButton;

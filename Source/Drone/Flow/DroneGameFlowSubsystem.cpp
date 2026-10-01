@@ -40,6 +40,7 @@ void UDroneGameFlowSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	DroneDefinitions.Reset();
 	MissionDefinitions.Reset();
 	Snapshot = FDroneGameFlowSnapshot();
+	LastLobbyMissionId = NAME_None;
 	ClearRejection();
 
 	// FLOW-02의 Front-end 화면이 열리기 전에 첫 Vertical Slice Catalog를 준비한다.
@@ -52,6 +53,7 @@ void UDroneGameFlowSubsystem::Deinitialize()
 	DroneDefinitions.Reset();
 	MissionDefinitions.Reset();
 	Snapshot = FDroneGameFlowSnapshot();
+	LastLobbyMissionId = NAME_None;
 	ClearRejection();
 	Super::Deinitialize();
 }
@@ -262,6 +264,7 @@ bool UDroneGameFlowSubsystem::SelectMission(const FName MissionId)
 	}
 
 	Snapshot.SelectedMissionId = MissionId;
+	LastLobbyMissionId = MissionId;
 	Snapshot.AvailableDroneIds.Reset();
 	for (const FName AllowedDroneId : Mission->AllowedDroneIds)
 	{

@@ -8,6 +8,7 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/Image.h"
 #include "Components/ScaleBox.h"
 #include "Components/ScrollBox.h"
@@ -19,6 +20,7 @@
 #include "Mission/DroneMissionDefinition.h"
 #include "Styling/CoreStyle.h"
 #include "UI/DroneMissionSelectionButton.h"
+#include "UI/DroneSettingsWidget.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Engine/Texture2D.h"
 #include "GameFramework/GameUserSettings.h"
@@ -43,6 +45,14 @@ const FName StartMissionButtonName(TEXT("StartMissionButton"));
 const FName MissionBriefingTitleName(TEXT("MissionBriefingTitleText"));
 const FName MissionBriefingBodyName(TEXT("MissionBriefingBodyText"));
 const FName FinishMissionBriefingButtonName(TEXT("FinishMissionBriefingButton"));
+
+void SetButtonPadding(UButton* Button, const FMargin Padding)
+{
+	FButtonStyle Style = Button->GetStyle();
+	Style.SetNormalPadding(Padding);
+	Style.SetPressedPadding(Padding);
+	Button->SetStyle(Style);
+}
 }
 
 void UDroneFrontEndRootWidget::NativeOnInitialized()
@@ -52,6 +62,7 @@ void UDroneFrontEndRootWidget::NativeOnInitialized()
 	SetIsFocusable(true);
 	BuildDefaultLayout();
 	RefreshArtwork();
+	if (SettingsWidget) SettingsWidget->OnCloseRequested.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleSettingsBackClicked);
 	if (LobbyBackButton) LobbyBackButton->OnClicked.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleBackClicked);
 	if (BriefingBackButton) BriefingBackButton->OnClicked.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleBackClicked);
 	if (TutorialTabButton) TutorialTabButton->OnClicked.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleTutorialTabClicked);
@@ -81,6 +92,11 @@ void UDroneFrontEndRootWidget::NativeOnInitialized()
 
 void UDroneFrontEndRootWidget::NativeDestruct()
 {
+	if (SettingsWidget)
+	{
+		SettingsWidget->CancelPendingSettings();
+		SettingsWidget->OnCloseRequested.RemoveDynamic(this, &UDroneFrontEndRootWidget::HandleSettingsBackClicked);
+	}
 	if (LobbyBackButton) LobbyBackButton->OnClicked.RemoveDynamic(this, &UDroneFrontEndRootWidget::HandleBackClicked);
 	if (BriefingBackButton) BriefingBackButton->OnClicked.RemoveDynamic(this, &UDroneFrontEndRootWidget::HandleBackClicked);
 	if (TutorialTabButton) TutorialTabButton->OnClicked.RemoveDynamic(this, &UDroneFrontEndRootWidget::HandleTutorialTabClicked);
@@ -119,6 +135,13 @@ void UDroneFrontEndRootWidget::SetFlowSubsystem(UDroneGameFlowSubsystem* InFlowS
 
 	if (InFlowSubsystem)
 	{
+		// 기체 선택에서 돌아온 새 Widget도 원래 훈련 하위 탭/Story 목록을 복원한다.
+		const FName ContextMissionId = InFlowSubsystem->GetSnapshot().SelectedMissionId.IsNone()
+			? InFlowSubsystem->GetLastLobbyMissionId() : InFlowSubsystem->GetSnapshot().SelectedMissionId;
+		if (const UDroneMissionDefinition* Mission = InFlowSubsystem->FindMissionDefinition(ContextMissionId))
+		{
+			ActiveLobbyCategory = Mission->GetLobbyCategory();
+		}
 		// 같은 Widget을 다시 연결해도 State Delegate는 한 번만 등록한다.
 		InFlowSubsystem->OnFlowStateChanged.AddUniqueDynamic(
 			this,
@@ -196,6 +219,12 @@ void UDroneFrontEndRootWidget::RefreshArtwork()
 	Apply(TitleBackgroundImage, TitleBackgroundTexture);
 	Apply(TitleOverlayImage, TitleOverlayTexture);
 	Apply(TitleLogoImage, TitleLogoTexture);
+	if (WidgetTree)
+	{
+		Apply(Cast<UImage>(WidgetTree->FindWidget(TEXT("LobbyBackgroundImage"))), TitleBackgroundTexture);
+		Apply(Cast<UImage>(WidgetTree->FindWidget(TEXT("BriefingBackgroundImage"))), TitleBackgroundTexture);
+		Apply(Cast<UImage>(WidgetTree->FindWidget(TEXT("SettingsBackgroundImage"))), TitleBackgroundTexture);
+	}
 	if (OpeningTitleText) OpeningTitleText->SetVisibility(TitleLogoTexture ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
 	ApplyTitleButtonStyle(ContinueButton);
 	ApplyTitleButtonStyle(ExitButton);
@@ -255,7 +284,13 @@ void UDroneFrontEndRootWidget::HandleMediumQualityClicked() { ApplyGraphicsQuali
 void UDroneFrontEndRootWidget::HandleHighQualityClicked() { ApplyGraphicsQuality(2); }
 void UDroneFrontEndRootWidget::SetSettingsVisible(const bool bVisible)
 {
-	bSettingsVisible = bVisible && DisplayedState == EDroneGameFlowState::OpeningTrailer;
+	const bool bShouldShow = bVisible && DisplayedState == EDroneGameFlowState::OpeningTrailer;
+	if (SettingsWidget && bShouldShow != bSettingsVisible)
+	{
+		if (bShouldShow) SettingsWidget->RefreshFromCurrentSettings();
+		else SettingsWidget->CancelPendingSettings();
+	}
+	bSettingsVisible = bShouldShow;
 	if (SettingsPanel) SettingsPanel->SetVisibility(bSettingsVisible ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 }
 void UDroneFrontEndRootWidget::ApplyGraphicsQuality(const int32 Quality)
@@ -269,13 +304,17 @@ void UDroneFrontEndRootWidget::ApplyGraphicsQuality(const int32 Quality)
 
 void UDroneFrontEndRootWidget::HandleTutorialTabClicked()
 {
+	if (DisplayedState == EDroneGameFlowState::OpeningTrailer) { OpenTrainingLobby(); return; }
 	SetLobbyCategory(EDroneMissionCategory::Tutorial);
-	if (DisplayedState == EDroneGameFlowState::OpeningTrailer) FinishOpeningTrailer();
+}
+void UDroneFrontEndRootWidget::HandleTrainingClicked()
+{
+	OpenTrainingLobby();
 }
 void UDroneFrontEndRootWidget::HandleRacingTabClicked()
 {
+	if (DisplayedState == EDroneGameFlowState::OpeningTrailer && !OpenTrainingLobby()) return;
 	SetLobbyCategory(EDroneMissionCategory::Racing);
-	if (DisplayedState == EDroneGameFlowState::OpeningTrailer) FinishOpeningTrailer();
 }
 void UDroneFrontEndRootWidget::HandleMissionTabClicked()
 {
@@ -323,7 +362,17 @@ FReply UDroneFrontEndRootWidget::NativeOnPreviewKeyDown(const FGeometry& InGeome
 bool UDroneFrontEndRootWidget::FinishOpeningTrailer()
 {
 	UDroneGameFlowSubsystem* Flow = FlowSubsystem.Get();
-	return Flow && Flow->EnterLobbyFromOpeningTrailer();
+	if (!Flow || Flow->GetSnapshot().State != EDroneGameFlowState::OpeningTrailer) return false;
+	SetLobbyCategory(EDroneMissionCategory::Mission);
+	return Flow->EnterLobbyFromOpeningTrailer();
+}
+
+bool UDroneFrontEndRootWidget::OpenTrainingLobby()
+{
+	UDroneGameFlowSubsystem* Flow = FlowSubsystem.Get();
+	if (!Flow || Flow->GetSnapshot().State != EDroneGameFlowState::OpeningTrailer) return false;
+	SetLobbyCategory(EDroneMissionCategory::Tutorial);
+	return Flow->EnterLobbyFromOpeningTrailer();
 }
 
 bool UDroneFrontEndRootWidget::FinishMissionBriefing()
@@ -425,9 +474,12 @@ bool UDroneFrontEndRootWidget::TryBindBlueprintLayout()
 	MissionTabButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("MissionTabButton")));
 	ExitButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("ExitButton")));
 	SettingsPanel = WidgetTree->FindWidget(TEXT("SettingsPanel"));
+	SettingsWidget = Cast<UDroneSettingsWidget>(WidgetTree->FindWidget(TEXT("SettingsWidget")));
 	LobbyBackButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("LobbyBackButton")));
 	BriefingBackButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("BriefingBackButton")));
 	MissionButtonsColumn = Cast<UVerticalBox>(WidgetTree->FindWidget(TEXT("MissionButtonsColumn")));
+	TrainingCategoryTabs = WidgetTree->FindWidget(TEXT("TrainingCategoryTabs"));
+	MissionObjectiveSummaryText = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("MissionObjectiveSummaryText")));
 	return OpeningPanel
 		&& LobbyPanel
 		&& MissionBriefingPanel
@@ -521,32 +573,66 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		OpeningColumn->AddChildToVerticalBox(Size)->SetPadding(FMargin(0, 0, 0, 45));
 		return Button;
 	};
-	ContinueButton = AddTitleButton(DroneFrontEndUI::ContinueButtonName, TEXT("Start"));
-	UButton* TitleTutorialButton = AddTitleButton(TEXT("TitleTutorialButton"), TEXT("Training"));
-	TitleTutorialButton->OnClicked.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleTutorialTabClicked);
-	UButton* TitleSettingsButton = AddTitleButton(TEXT("TitleSettingsButton"), TEXT("Setting"));
+	ContinueButton = AddTitleButton(DroneFrontEndUI::ContinueButtonName, TEXT("시작"));
+	UButton* TitleTutorialButton = AddTitleButton(TEXT("TitleTutorialButton"), TEXT("훈련"));
+	TitleTutorialButton->OnClicked.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleTrainingClicked);
+	UButton* TitleSettingsButton = AddTitleButton(TEXT("TitleSettingsButton"), TEXT("설정"));
 	TitleSettingsButton->OnClicked.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleSettingsClicked);
-	ExitButton = AddTitleButton(TEXT("ExitButton"), TEXT("Exit"));
+	ExitButton = AddTitleButton(TEXT("ExitButton"), TEXT("종료"));
+
+	// 시작 화면 PNG를 재수입/교체하지 않고 같은 이미지 위에 읽기 쉬운 시안 패널만 배치한다.
+	// 고정 디자인 캔버스를 비율 유지해 축소하므로 1280 화면에서도 세 열/하단 버튼이 잘리지 않는다.
+	auto AddWorkspaceCanvas = [this](UBorder* Panel, const FName BackgroundName)
+	{
+		Panel->SetPadding(FMargin(0.f));
+		UOverlay* Layers = WidgetTree->ConstructWidget<UOverlay>();
+		Panel->SetContent(Layers);
+		UImage* Background = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), BackgroundName);
+		Background->SetVisibility(ESlateVisibility::HitTestInvisible);
+		UOverlaySlot* BackgroundSlot = Layers->AddChildToOverlay(Background);
+		BackgroundSlot->SetHorizontalAlignment(HAlign_Fill);
+		BackgroundSlot->SetVerticalAlignment(VAlign_Fill);
+		UBorder* Shade = WidgetTree->ConstructWidget<UBorder>();
+		Shade->SetBrushColor(FLinearColor(0.008f, 0.015f, 0.025f, 0.80f));
+		Shade->SetVisibility(ESlateVisibility::HitTestInvisible);
+		UOverlaySlot* ShadeSlot = Layers->AddChildToOverlay(Shade);
+		ShadeSlot->SetHorizontalAlignment(HAlign_Fill);
+		ShadeSlot->SetVerticalAlignment(VAlign_Fill);
+		UScaleBox* Scale = WidgetTree->ConstructWidget<UScaleBox>();
+		Scale->SetStretch(EStretch::ScaleToFit);
+		UOverlaySlot* ScaleSlot = Layers->AddChildToOverlay(Scale);
+		ScaleSlot->SetHorizontalAlignment(HAlign_Fill);
+		ScaleSlot->SetVerticalAlignment(VAlign_Fill);
+		USizeBox* Size = WidgetTree->ConstructWidget<USizeBox>();
+		Size->SetWidthOverride(1920.f);
+		Size->SetHeightOverride(1080.f);
+		Scale->SetContent(Size);
+		UBorder* Frame = WidgetTree->ConstructWidget<UBorder>();
+		Frame->SetBrushColor(FLinearColor::Transparent);
+		Frame->SetPadding(FMargin(100.f, 62.f));
+		Size->SetContent(Frame);
+		UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>();
+		Frame->SetContent(Column);
+		return Column;
+	};
 
 	UBorder* NativeLobbyPanel = AddFullScreenPanel(
 		DroneFrontEndUI::LobbyPanelName,
 		FLinearColor(0.012f, 0.025f, 0.032f, 1.0f));
 	LobbyPanel = NativeLobbyPanel;
-	NativeLobbyPanel->SetPadding(FMargin(64.0f, 42.0f));
-	UVerticalBox* LobbyColumn = WidgetTree->ConstructWidget<UVerticalBox>(
-		UVerticalBox::StaticClass(),
-		TEXT("LobbyColumn"));
-	NativeLobbyPanel->SetContent(LobbyColumn);
+	UVerticalBox* LobbyColumn = AddWorkspaceCanvas(NativeLobbyPanel, TEXT("LobbyBackgroundImage"));
 	LobbyBackButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("LobbyBackButton"));
 	UTextBlock* LobbyBackText = WidgetTree->ConstructWidget<UTextBlock>();
 	LobbyBackText->SetText(FText::FromString(TEXT("← 시작 화면  ·  Esc / 패드 B")));
 	LobbyBackButton->SetContent(LobbyBackText);
-	LobbyColumn->AddChildToVerticalBox(LobbyBackButton)->SetPadding(FMargin(0, 0, 0, 12));
+	UVerticalBoxSlot* LobbyBackSlot = LobbyColumn->AddChildToVerticalBox(LobbyBackButton);
+	LobbyBackSlot->SetPadding(FMargin(0, 0, 0, 22));
+	LobbyBackSlot->SetHorizontalAlignment(HAlign_Left);
 
 	LobbyTitleText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::LobbyTitleName);
-	LobbyTitleText->SetText(FText::FromString(TEXT("MISSION CONTROL  /  작전 선택")));
+	LobbyTitleText->SetText(FText::FromString(TEXT("미션 선택")));
 	LobbyTitleText->SetJustification(ETextJustify::Left);
 	LobbyTitleText->SetColorAndOpacity(FSlateColor(FLinearColor(0.20f, 0.95f, 0.82f, 1.0f)));
 	LobbyTitleText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 34.0f));
@@ -564,16 +650,18 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 	LobbyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.72f, 0.82f, 0.85f, 1.0f)));
 	if (UVerticalBoxSlot* StatusSlot = LobbyColumn->AddChildToVerticalBox(LobbyStatusText))
 	{
-		StatusSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 28.0f));
+		StatusSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 20.0f));
 	}
-	UHorizontalBox* Tabs = WidgetTree->ConstructWidget<UHorizontalBox>();
+	UHorizontalBox* Tabs = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("TrainingCategoryTabs"));
+	TrainingCategoryTabs = Tabs;
 	LobbyColumn->AddChildToVerticalBox(Tabs)->SetPadding(FMargin(0, 0, 0, 20));
 	auto AddTab = [this, Tabs](const FName Name, const TCHAR* Caption)
 	{
 		UButton* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), Name);
 		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
 		Label->SetText(FText::FromString(Caption));
-		Label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 24.f));
+		Label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 22.f));
+		DroneFrontEndUI::SetButtonPadding(Button, FMargin(24.f, 14.f));
 		Button->AddChild(Label);
 		UHorizontalBoxSlot* Slot = Tabs->AddChildToHorizontalBox(Button);
 		Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -591,14 +679,16 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		WorkspaceSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	}
 
-	auto AddWorkspacePanel = [this, MissionWorkspace](const FName Name, const FLinearColor Color)
+	auto AddWorkspacePanel = [this, MissionWorkspace](const FName Name, const FLinearColor Color, const float Weight)
 	{
 		UBorder* Panel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), Name);
 		Panel->SetBrushColor(Color);
 		Panel->SetPadding(FMargin(24.0f));
 		if (UHorizontalBoxSlot* Slot = MissionWorkspace->AddChildToHorizontalBox(Panel))
 		{
-			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			FSlateChildSize WeightedSize(ESlateSizeRule::Fill);
+			WeightedSize.Value = Weight;
+			Slot->SetSize(WeightedSize);
 			Slot->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
 		}
 		UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
@@ -607,7 +697,7 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 	};
 
 	UVerticalBox* MissionListColumn = AddWorkspacePanel(
-		TEXT("MissionListPanel"), FLinearColor(0.018f, 0.045f, 0.055f, 0.98f));
+		TEXT("MissionListPanel"), FLinearColor(0.018f, 0.028f, 0.038f, 0.94f), 0.75f);
 	UTextBlock* MissionListHeader = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(), TEXT("MissionListHeader"));
 	MissionListHeader->SetText(FText::FromString(TEXT("작전 목록")));
@@ -627,7 +717,7 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 	}
 
 	UVerticalBox* MissionCardColumn = AddWorkspacePanel(
-		TEXT("MissionCardPanel"), FLinearColor(0.025f, 0.055f, 0.065f, 0.98f));
+		TEXT("MissionCardPanel"), FLinearColor(0.032f, 0.045f, 0.055f, 0.95f), 1.15f);
 	UTextBlock* MissionCardHeader = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(), TEXT("MissionCardHeader"));
 	MissionCardHeader->SetText(FText::FromString(TEXT("선택 작전")));
@@ -635,10 +725,22 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 	MissionCardColumn->AddChildToVerticalBox(MissionCardHeader);
 	MissionThumbnailImage = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("MissionThumbnailImage"));
 	USizeBox* ThumbnailSize = WidgetTree->ConstructWidget<USizeBox>();
-	ThumbnailSize->SetHeightOverride(180.f);
+	ThumbnailSize->SetHeightOverride(330.f);
 	UScaleBox* ThumbnailScale = WidgetTree->ConstructWidget<UScaleBox>();
 	ThumbnailScale->SetStretch(EStretch::ScaleToFit);
-	ThumbnailScale->SetContent(MissionThumbnailImage);
+	UOverlay* PreviewLayers = WidgetTree->ConstructWidget<UOverlay>();
+	ThumbnailScale->SetContent(PreviewLayers);
+	UTextBlock* PreviewPlaceholder = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("MissionPreviewPlaceholder"));
+	PreviewPlaceholder->SetText(FText::FromString(TEXT("작전 이미지\n미션을 선택하세요")));
+	PreviewPlaceholder->SetJustification(ETextJustify::Center);
+	PreviewPlaceholder->SetColorAndOpacity(FSlateColor(FLinearColor(0.5f, 0.6f, 0.65f)));
+	PreviewPlaceholder->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 26.f));
+	UOverlaySlot* PlaceholderSlot = PreviewLayers->AddChildToOverlay(PreviewPlaceholder);
+	PlaceholderSlot->SetHorizontalAlignment(HAlign_Center);
+	PlaceholderSlot->SetVerticalAlignment(VAlign_Center);
+	UOverlaySlot* PreviewImageSlot = PreviewLayers->AddChildToOverlay(MissionThumbnailImage);
+	PreviewImageSlot->SetHorizontalAlignment(HAlign_Fill);
+	PreviewImageSlot->SetVerticalAlignment(VAlign_Fill);
 	ThumbnailSize->SetContent(ThumbnailScale);
 	MissionCardColumn->AddChildToVerticalBox(ThumbnailSize);
 
@@ -646,6 +748,7 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::MissionNameName);
 	MissionNameText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 24.0f));
+	MissionNameText->SetAutoWrapText(true);
 	MissionNameText->SetColorAndOpacity(FSlateColor(FLinearColor(0.90f, 0.96f, 0.96f, 1.0f)));
 	if (UVerticalBoxSlot* NameSlot = MissionCardColumn->AddChildToVerticalBox(MissionNameText))
 	{
@@ -656,10 +759,11 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::MissionMetaName);
 	MissionMetaText->SetColorAndOpacity(FSlateColor(FLinearColor(0.20f, 0.95f, 0.82f, 1.0f)));
+	MissionMetaText->SetAutoWrapText(true);
 	MissionCardColumn->AddChildToVerticalBox(MissionMetaText);
 
 	UVerticalBox* MissionDetailColumn = AddWorkspacePanel(
-		TEXT("MissionDetailPanel"), FLinearColor(0.014f, 0.034f, 0.043f, 0.98f));
+		TEXT("MissionDetailPanel"), FLinearColor(0.014f, 0.025f, 0.034f, 0.95f), 1.5f);
 	UTextBlock* MissionDetailHeader = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(), TEXT("MissionDetailHeader"));
 	MissionDetailHeader->SetText(FText::FromString(TEXT("작전 개요")));
@@ -671,8 +775,18 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::MissionDescriptionName);
 	MissionDescriptionText->SetAutoWrapText(true);
+	MissionDescriptionText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 22.f));
 	MissionDescriptionText->SetColorAndOpacity(FSlateColor(FLinearColor(0.72f, 0.82f, 0.85f, 1.0f)));
-	if (UVerticalBoxSlot* DescriptionSlot = MissionDetailColumn->AddChildToVerticalBox(MissionDescriptionText))
+	UScrollBox* DescriptionScroll = WidgetTree->ConstructWidget<UScrollBox>();
+	UVerticalBox* DescriptionContent = WidgetTree->ConstructWidget<UVerticalBox>();
+	DescriptionScroll->AddChild(DescriptionContent);
+	DescriptionContent->AddChildToVerticalBox(MissionDescriptionText);
+	MissionObjectiveSummaryText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("MissionObjectiveSummaryText"));
+	MissionObjectiveSummaryText->SetAutoWrapText(true);
+	MissionObjectiveSummaryText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 20.f));
+	MissionObjectiveSummaryText->SetColorAndOpacity(FSlateColor(FLinearColor(0.80f, 0.91f, 0.89f)));
+	DescriptionContent->AddChildToVerticalBox(MissionObjectiveSummaryText)->SetPadding(FMargin(0, 30, 0, 0));
+	if (UVerticalBoxSlot* DescriptionSlot = MissionDetailColumn->AddChildToVerticalBox(DescriptionScroll))
 	{
 		DescriptionSlot->SetPadding(FMargin(0.0f, 18.0f, 0.0f, 0.0f));
 		DescriptionSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -686,6 +800,7 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		TEXT("StartMissionButtonText"));
 	StartMissionText->SetText(FText::FromString(TEXT("미션 시작")));
 	StartMissionText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18.0f));
+	DroneFrontEndUI::SetButtonPadding(StartMissionButton, FMargin(80.f, 16.f));
 	StartMissionButton->AddChild(StartMissionText);
 	StartMissionButton->SetBackgroundColor(FLinearColor(0.08f, 0.65f, 0.56f, 1.0f));
 	if (UVerticalBoxSlot* StartSlot = LobbyColumn->AddChildToVerticalBox(StartMissionButton))
@@ -699,31 +814,42 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		DroneFrontEndUI::MissionBriefingPanelName,
 		FLinearColor(0.008f, 0.018f, 0.025f, 1.0f));
 	MissionBriefingPanel = NativeBriefingPanel;
-	NativeBriefingPanel->SetPadding(FMargin(96.0f, 72.0f));
-	UVerticalBox* BriefingColumn = WidgetTree->ConstructWidget<UVerticalBox>(
-		UVerticalBox::StaticClass(),
-		TEXT("MissionBriefingColumn"));
-	NativeBriefingPanel->SetContent(BriefingColumn);
+	UVerticalBox* BriefingColumn = AddWorkspaceCanvas(NativeBriefingPanel, TEXT("BriefingBackgroundImage"));
 	BriefingBackButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("BriefingBackButton"));
 	UTextBlock* BriefingBackText = WidgetTree->ConstructWidget<UTextBlock>();
 	BriefingBackText->SetText(FText::FromString(TEXT("← 미션 선택  ·  Esc / 패드 B")));
 	BriefingBackButton->SetContent(BriefingBackText);
-	BriefingColumn->AddChildToVerticalBox(BriefingBackButton)->SetPadding(FMargin(0, 0, 0, 20));
+	UVerticalBoxSlot* BriefingBackSlot = BriefingColumn->AddChildToVerticalBox(BriefingBackButton);
+	BriefingBackSlot->SetPadding(FMargin(0, 0, 0, 28));
+	BriefingBackSlot->SetHorizontalAlignment(HAlign_Left);
 
 	MissionBriefingTitleText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::MissionBriefingTitleName);
 	MissionBriefingTitleText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 32.0f));
-	MissionBriefingTitleText->SetJustification(ETextJustify::Center);
+	MissionBriefingTitleText->SetAutoWrapText(true);
 	MissionBriefingTitleText->SetColorAndOpacity(FSlateColor(FLinearColor(0.20f, 0.95f, 0.82f, 1.0f)));
-	BriefingColumn->AddChildToVerticalBox(MissionBriefingTitleText);
+	BriefingColumn->AddChildToVerticalBox(MissionBriefingTitleText)->SetPadding(FMargin(0, 0, 0, 28));
+	UHorizontalBox* BriefingWorkspace = WidgetTree->ConstructWidget<UHorizontalBox>();
+	BriefingColumn->AddChildToVerticalBox(BriefingWorkspace)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	USizeBox* BriefingPreviewSize = WidgetTree->ConstructWidget<USizeBox>();
+	BriefingPreviewSize->SetWidthOverride(600.f);
+	UImage* BriefingPreview = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("BriefingThumbnailImage"));
+	UScaleBox* BriefingPreviewScale = WidgetTree->ConstructWidget<UScaleBox>();
+	BriefingPreviewScale->SetStretch(EStretch::ScaleToFit);
+	BriefingPreviewScale->SetContent(BriefingPreview);
+	BriefingPreviewSize->SetContent(BriefingPreviewScale);
+	BriefingWorkspace->AddChildToHorizontalBox(BriefingPreviewSize)->SetPadding(FMargin(0, 0, 48, 0));
 
 	MissionBriefingBodyText = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(),
 		DroneFrontEndUI::MissionBriefingBodyName);
 	MissionBriefingBodyText->SetAutoWrapText(true);
+	MissionBriefingBodyText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 24.f));
 	MissionBriefingBodyText->SetColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.87f, 0.89f, 1.0f)));
-	BriefingColumn->AddChildToVerticalBox(MissionBriefingBodyText);
+	UScrollBox* BriefingScroll = WidgetTree->ConstructWidget<UScrollBox>();
+	BriefingScroll->AddChild(MissionBriefingBodyText);
+	BriefingWorkspace->AddChildToHorizontalBox(BriefingScroll)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
 	FinishMissionBriefingButton = WidgetTree->ConstructWidget<UButton>(
 		UButton::StaticClass(),
@@ -732,32 +858,23 @@ void UDroneFrontEndRootWidget::BuildDefaultLayout()
 		UTextBlock::StaticClass(),
 		TEXT("FinishMissionBriefingButtonText"));
 	FinishBriefingText->SetText(FText::FromString(TEXT("작전 지역으로 이동")));
+	FinishBriefingText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 24.f));
+	DroneFrontEndUI::SetButtonPadding(FinishMissionBriefingButton, FMargin(64.f, 16.f));
 	FinishMissionBriefingButton->AddChild(FinishBriefingText);
-	BriefingColumn->AddChildToVerticalBox(FinishMissionBriefingButton);
+	UVerticalBoxSlot* FinishBriefingSlot = BriefingColumn->AddChildToVerticalBox(FinishMissionBriefingButton);
+	FinishBriefingSlot->SetPadding(FMargin(0, 28, 0, 0));
+	FinishBriefingSlot->SetHorizontalAlignment(HAlign_Center);
 
-	// 시안의 Setting을 다른 메뉴로 바꾸지 않는다. 최소 기능은 UE 그래픽 품질 설정이다.
+	// 임시 품질 3버튼을 실제 사운드/화면/성능 설정 Widget으로 대체한다.
 	UBorder* NativeSettingsPanel = AddFullScreenPanel(TEXT("SettingsPanel"), FLinearColor(0.008f, 0.018f, 0.025f, 0.97f));
 	SettingsPanel = NativeSettingsPanel;
-	NativeSettingsPanel->SetPadding(FMargin(140.f, 100.f));
-	UVerticalBox* SettingsColumn = WidgetTree->ConstructWidget<UVerticalBox>();
-	NativeSettingsPanel->SetContent(SettingsColumn);
-	UTextBlock* SettingsTitle = WidgetTree->ConstructWidget<UTextBlock>();
-	SettingsTitle->SetText(FText::FromString(TEXT("그래픽 품질 — 동일한 맵에서 성능을 비교하세요")));
-	SettingsTitle->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 28.f));
-	SettingsColumn->AddChildToVerticalBox(SettingsTitle);
-	auto AddSettingButton = [this, SettingsColumn](const FName Name, const TCHAR* Caption)
+	UVerticalBox* SettingsColumn = AddWorkspaceCanvas(NativeSettingsPanel, TEXT("SettingsBackgroundImage"));
+	SettingsWidget = WidgetTree->ConstructWidget<UDroneSettingsWidget>(UDroneSettingsWidget::StaticClass(), TEXT("SettingsWidget"));
+	if (SettingsWidget)
 	{
-		UButton* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), Name);
-		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
-		Label->SetText(FText::FromString(Caption));
-		Button->SetContent(Label);
-		SettingsColumn->AddChildToVerticalBox(Button)->SetPadding(FMargin(0, 16, 0, 16));
-		return Button;
-	};
-	AddSettingButton(TEXT("LowQualityButton"), TEXT("낮음"))->OnClicked.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleLowQualityClicked);
-	AddSettingButton(TEXT("MediumQualityButton"), TEXT("중간"))->OnClicked.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleMediumQualityClicked);
-	AddSettingButton(TEXT("HighQualityButton"), TEXT("높음"))->OnClicked.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleHighQualityClicked);
-	AddSettingButton(TEXT("SettingsBackButton"), TEXT("돌아가기"))->OnClicked.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleSettingsBackClicked);
+		SettingsWidget->OnCloseRequested.AddUniqueDynamic(this, &UDroneFrontEndRootWidget::HandleSettingsBackClicked);
+		SettingsColumn->AddChildToVerticalBox(SettingsWidget)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	}
 	SetSettingsVisible(false);
 	RefreshLobbyContent();
 	RefreshMissionBriefingContent();
@@ -836,6 +953,16 @@ void UDroneFrontEndRootWidget::RefreshMissionBriefingContent()
 		DisplayedBriefingTitle = FText::FromString(TEXT("작전 브리핑"));
 		DisplayedBriefingBody = FText::FromString(TEXT("선택된 미션 정보가 없습니다."));
 	}
+	if (WidgetTree)
+	{
+		if (UImage* Preview = Cast<UImage>(WidgetTree->FindWidget(TEXT("BriefingThumbnailImage"))))
+		{
+			UTexture2D* Texture = Mission ? Mission->Thumbnail.LoadSynchronous() : nullptr;
+			if (!Texture) Texture = TitleBackgroundTexture;
+			Preview->SetBrushFromTexture(Texture);
+			Preview->SetVisibility(Texture ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		}
+	}
 
 	if (MissionBriefingTitleText)
 	{
@@ -880,15 +1007,31 @@ void UDroneFrontEndRootWidget::RefreshLobbyContent()
 	if (!MissionIds.Contains(SelectedMissionId)) SelectedMission = nullptr;
 	const FLinearColor SelectedTabColor(0.05f, 0.65f, 0.6f);
 	const FLinearColor OtherTabColor(0.06f, 0.15f, 0.2f);
+	const ESlateVisibility TrainingVisibility = IsTrainingLobby() ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	if (TrainingCategoryTabs) TrainingCategoryTabs->SetVisibility(TrainingVisibility);
+	if (TutorialTabButton) TutorialTabButton->SetVisibility(TrainingVisibility);
+	if (RacingTabButton) RacingTabButton->SetVisibility(TrainingVisibility);
+	// 기존 이름/API는 WBP 호환용으로 보존하되 별도의 3번째 훈련 탭으로 표시하지 않는다.
+	if (MissionTabButton) MissionTabButton->SetVisibility(ESlateVisibility::Collapsed);
 	if (TutorialTabButton) TutorialTabButton->SetBackgroundColor(ActiveLobbyCategory == EDroneMissionCategory::Tutorial ? SelectedTabColor : OtherTabColor);
 	if (RacingTabButton) RacingTabButton->SetBackgroundColor(ActiveLobbyCategory == EDroneMissionCategory::Racing ? SelectedTabColor : OtherTabColor);
 	if (MissionTabButton) MissionTabButton->SetBackgroundColor(ActiveLobbyCategory == EDroneMissionCategory::Mission ? SelectedTabColor : OtherTabColor);
-	if (LobbyStatusText) LobbyStatusText->SetText(FText::FromString(FString::Printf(TEXT("현재 탭: %d개 항목 · 목록에서 선택 후 시작"), MissionIds.Num())));
+	if (LobbyTitleText) LobbyTitleText->SetText(FText::FromString(IsTrainingLobby() ? TEXT("훈련 선택") : TEXT("미션 선택")));
+	if (LobbyStatusText) LobbyStatusText->SetText(FText::FromString(FString::Printf(
+		TEXT("%s  ·  %d개 항목  |  왼쪽 목록 선택 → 설명 확인 → 하단 시작"),
+		ActiveLobbyCategory == EDroneMissionCategory::Tutorial ? TEXT("훈련 / 튜토리얼")
+		: ActiveLobbyCategory == EDroneMissionCategory::Racing ? TEXT("훈련 / 레이싱") : TEXT("스토리 미션"), MissionIds.Num())));
 	if (MissionThumbnailImage)
 	{
 		UTexture2D* Thumbnail = SelectedMission ? SelectedMission->Thumbnail.LoadSynchronous() : nullptr;
+		if (SelectedMission && !Thumbnail) Thumbnail = TitleBackgroundTexture;
 		MissionThumbnailImage->SetBrushFromTexture(Thumbnail, true);
 		MissionThumbnailImage->SetVisibility(Thumbnail ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		if (WidgetTree)
+		{
+			if (UWidget* Placeholder = WidgetTree->FindWidget(TEXT("MissionPreviewPlaceholder")))
+				Placeholder->SetVisibility(Thumbnail ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+		}
 	}
 	if (SelectedMission)
 	{
@@ -917,6 +1060,26 @@ void UDroneFrontEndRootWidget::RefreshLobbyContent()
 	if (MissionMetaText)
 	{
 		MissionMetaText->SetText(DisplayedMissionMeta);
+	}
+	if (MissionObjectiveSummaryText)
+	{
+		FString Summary;
+		if (SelectedMission)
+		{
+			Summary = TEXT("진행 목표");
+			int32 Number = 1;
+			if (!SelectedMission->ObjectiveRules.IsEmpty())
+			{
+				for (const FDroneMissionObjectiveRule& Rule : SelectedMission->ObjectiveRules)
+					Summary += FString::Printf(TEXT("\n%d. %s"), Number++, *Rule.Description.ToString());
+			}
+			else
+			{
+				for (const FText& Objective : SelectedMission->InitialObjectives)
+					Summary += FString::Printf(TEXT("\n%d. %s"), Number++, *Objective.ToString());
+			}
+		}
+		MissionObjectiveSummaryText->SetText(FText::FromString(Summary));
 	}
 	if (StartMissionButton)
 	{
@@ -969,9 +1132,11 @@ void UDroneFrontEndRootWidget::RebuildNativeMissionButtons(const TArray<FName>& 
 			UTextBlock::StaticClass(),
 			FName(*FString::Printf(TEXT("MissionSelectButtonText_%d"), Index)));
 		Label->SetText(Mission ? Mission->DisplayName : FText::FromName(MissionId));
+		Label->SetAutoWrapText(true);
 		Label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 16.0f));
 		Label->SetColorAndOpacity(FSlateColor(FLinearColor(0.92f, 0.97f, 0.97f, 1.0f)));
 		Button->AddChild(Label);
+		DroneFrontEndUI::SetButtonPadding(Button, FMargin(14.f, 18.f));
 		if (UVerticalBoxSlot* ButtonSlot = MissionButtonsColumn->AddChildToVerticalBox(Button))
 		{
 			ButtonSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));

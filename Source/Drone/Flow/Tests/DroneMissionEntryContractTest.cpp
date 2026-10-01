@@ -56,7 +56,7 @@ bool FDroneMissionEntryContractTest::RunTest(const FString& Parameters)
 	const FName MissionId(TEXT("Mission.Tutorial.Training"));
 	FrontEndWidget->SetFlowSubsystem(Flow);
 	TestTrue(TEXT("Opening starts"), Flow->BeginOpeningTrailer());
-	TestTrue(TEXT("Opening enters Lobby"), FrontEndWidget->FinishOpeningTrailer());
+	TestTrue(TEXT("Title Training enters the Tutorial lobby"), FrontEndWidget->OpenTrainingLobby());
 	TestTrue(TEXT("Tutorial Mission is selected"), FrontEndWidget->SelectLobbyMission(MissionId));
 	TestTrue(TEXT("Mission selection enters static Briefing"), FrontEndWidget->ConfirmSelectedMission());
 	UDroneMissionDefinition* Mission = Flow->FindMissionDefinition(MissionId);
