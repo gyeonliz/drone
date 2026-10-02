@@ -27,7 +27,9 @@ public class Drone : ModuleRules
 			"SlateCore"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		// AssetRegistry: Mission/Drone Data Asset 폴더 자동 등록(DroneGameFlowSubsystem). Runtime에서도 쓴다.
+		// Json: 튜토리얼 최고 기록 저장 파일(TUT-BEST-01).
+		PrivateDependencyModuleNames.AddRange(new string[] { "AssetRegistry", "Json" });
 
 		if (Target.bBuildEditor)
 		{
@@ -35,7 +37,6 @@ public class Drone : ModuleRules
 			// Runtime/Game 빌드에는 Editor 전용 의존성을 포함하지 않는다.
 			PrivateDependencyModuleNames.AddRange(new string[] {
 				"UnrealEd",
-				"AssetRegistry",
 				"AnimGraph",
 				"BlueprintEditorLibrary",
 				"BlueprintGraph",

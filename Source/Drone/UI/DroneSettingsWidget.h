@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Types/SlateEnums.h"
+#include "UI/DroneGamepadFocus.h"
 #include "DroneSettingsWidget.generated.h"
 
 class UCheckBox;
@@ -30,6 +31,19 @@ public:
 	/** Root의 ESC/뒤로가기 경로에서도 호출해 미적용 사운드 미리보기를 되돌린다. */
 	UFUNCTION(BlueprintCallable, Category="Drone|Settings")
 	void CancelPendingSettings();
+
+	/** 설정 화면이 열릴 때 Root가 부른다. 다음 Tick부터 첫 조작 항목(음량 슬라이더)에 패드 포커스를 준다(UI-PAD-01). */
+	void RequestGamepadFocus();
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Settings|Gamepad", meta=(ClampMin="1.0", ClampMax="1.3"))
+	float GamepadFocusScale = 1.06f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Settings|Gamepad")
+	FLinearColor GamepadFocusTint = FLinearColor(1.0f, 0.86f, 0.42f, 1.0f);
+
+	UWidget* GetGamepadHighlightedWidget() const { return GamepadFocus.GetHighlighted(); }
+	/** 위→아래 조작 순서: 음량, 화면 모드, 해상도, 품질, VSync, FPS, 기본값·적용·뒤로. */
+	TArray<UWidget*> GetGamepadControls() const;
 
 	UFUNCTION(BlueprintCallable, Category="Drone|Settings")
 	bool ApplyPendingSettings();
@@ -65,8 +79,10 @@ public:
 protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativePreConstruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
+	FDroneGamepadFocus GamepadFocus;
 	void BuildLayout();
 	void UpdateControls();
 	UDroneAudioSettingsSubsystem* GetAudioSettings() const;

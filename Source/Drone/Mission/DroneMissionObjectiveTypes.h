@@ -21,6 +21,16 @@ enum class EDroneMissionObjectiveEvent : uint8
 };
 
 /** 이전 Mission이 남긴 Story Fact에 따라 같은 Definition 안의 목표를 선택적으로 활성화한다. */
+/** 실패(기체 파괴·제한 시간 초과·실패 Trigger) 때의 처리(MISSION-CHECKPOINT-01). */
+UENUM(BlueprintType)
+enum class EDroneMissionFailureResponse : uint8
+{
+	/** 기존 동작: 결과 화면을 띄운다. [다시 하기]는 맵을 다시 불러온다. */
+	ShowResult UMETA(DisplayName="결과 화면"),
+	/** 맵·완료 목표·부서진 표적은 그대로 두고, 마지막 체크포인트(없으면 출격 지점)에서 같은 기체로 다시 출격한다. 현재 목표 제한 시간은 다시 센다. */
+	RestartFromCheckpoint UMETA(DisplayName="체크포인트에서 재출격")
+};
+
 UENUM(BlueprintType)
 enum class EDroneMissionStoryFactCondition : uint8
 {

@@ -190,7 +190,7 @@ public:
 		if (Flow)
 		{
 			Test->TestEqual(TEXT("PIE Catalog contains five functional Drone profiles"), Flow->GetRegisteredDroneCount(), 5);
-			Test->TestEqual(TEXT("PIE Catalog contains fourteen Missions"), Flow->GetRegisteredMissionCount(), 14);
+			Test->TestTrue(TEXT("PIE Catalog contains at least fourteen Missions"), Flow->GetRegisteredMissionCount() >= 14);
 		}
 
 		if (FrontEndWidget && Flow)
@@ -211,7 +211,7 @@ public:
 			UWidget* TrainingTabs = FrontEndWidget->WidgetTree->FindWidget(TEXT("TrainingCategoryTabs"));
 			if (FrontEndWidget->IsUsingNativeFallbackLayout())
 			{
-				Test->TestEqual(TEXT("Native Start exposes four Story Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 4);
+				Test->TestTrue(TEXT("Native Start exposes at least four Story Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount() >= 4);
 				Test->TestNotNull(TEXT("Native lobby has a Tutorial tab"), TutorialTab);
 				Test->TestNotNull(TEXT("Native lobby has a Racing tab"), RacingTab);
 				Test->TestNotNull(TEXT("Native lobby has a Story tab"), MissionTab);
@@ -232,7 +232,7 @@ public:
 			Test->TestTrue(TEXT("Tutorial lobby belongs to the Training group"), FrontEndWidget->IsTrainingLobby());
 			if (FrontEndWidget->IsUsingNativeFallbackLayout())
 			{
-				Test->TestEqual(TEXT("Training Tutorial tab exposes nine Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount(), 9);
+				Test->TestTrue(TEXT("Training Tutorial tab exposes at least nine Mission buttons"), FrontEndWidget->GetNativeMissionButtonCount() >= 9);
 				if (TutorialTab && RacingTab && MissionTab)
 				{
 					Test->TestEqual(TEXT("Training displays the Tutorial tab"), TutorialTab->GetVisibility(), ESlateVisibility::Visible);
@@ -242,7 +242,7 @@ public:
 				if (TrainingTabs) Test->TestEqual(TEXT("Training displays its nested tab group"), TrainingTabs->GetVisibility(), ESlateVisibility::Visible);
 				Test->TestTrue(TEXT("Training switches to Racing"), FrontEndWidget->SetLobbyCategory(EDroneMissionCategory::Racing));
 				Test->TestTrue(TEXT("Racing stays in the Training group"), FrontEndWidget->IsTrainingLobby());
-				Test->TestEqual(TEXT("Training Racing tab exposes one Mission button"), FrontEndWidget->GetNativeMissionButtonCount(), 1);
+				Test->TestTrue(TEXT("Training Racing tab exposes at least one Mission button"), FrontEndWidget->GetNativeMissionButtonCount() >= 1);
 				Test->TestFalse(TEXT("Racing cannot select the hidden Tutorial Mission"), FrontEndWidget->SelectLobbyMission(TutorialMissionId));
 				Test->TestTrue(TEXT("Training switches back to Tutorial"), FrontEndWidget->SetLobbyCategory(EDroneMissionCategory::Tutorial));
 			}

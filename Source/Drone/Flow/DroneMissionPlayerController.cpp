@@ -120,6 +120,9 @@ void ADroneMissionPlayerController::EndPlay(const EEndPlayReason::Type EndPlayRe
 		MissionDirector->OnMissionFinished.RemoveDynamic(
 			this,
 			&ADroneMissionPlayerController::HandleMissionFinished);
+		MissionDirector->OnMissionRestartRequested.RemoveDynamic(
+			this,
+			&ADroneMissionPlayerController::HandleMissionRestartRequested);
 		MissionDirector = nullptr;
 	}
 	Super::EndPlay(EndPlayReason);
@@ -217,12 +220,19 @@ bool ADroneMissionPlayerController::StartSelectedDrone(
 	NewDirector->OnMissionFinished.AddUniqueDynamic(
 		this,
 		&ADroneMissionPlayerController::HandleMissionFinished);
+	// 재출격 요청을 받는 쪽이 연결돼 있어야 Director가 실패를 재출격으로 돌린다(DA가 RestartFromCheckpoint일 때).
+	NewDirector->OnMissionRestartRequested.AddUniqueDynamic(
+		this,
+		&ADroneMissionPlayerController::HandleMissionRestartRequested);
 	if (!NewDirector->InitializeMission(Flow, SelectedMission, NewDrone))
 	{
 		UE_LOG(LogDrone, Error, TEXT("Mission Director could not initialize the selected Mission."));
 		NewDirector->OnMissionFinished.RemoveDynamic(
 			this,
 			&ADroneMissionPlayerController::HandleMissionFinished);
+		NewDirector->OnMissionRestartRequested.RemoveDynamic(
+			this,
+			&ADroneMissionPlayerController::HandleMissionRestartRequested);
 		// 이 경로는 계약 오류다. InMission에 멈추지 않도록 일관된 실패 결과로 닫는다.
 		Flow->CompleteMission(EDroneMissionOutcome::Failure);
 		NewDirector->Destroy();
@@ -307,6 +317,51 @@ bool ADroneMissionPlayerController::ReturnToFrontEndLobby()
 	return true;
 }
 
+bool ADroneMissionPlayerController::StartNextMission()
+{
+	UDroneGameFlowSubsystem* Flow = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UDroneGameFlowSubsystem>()
+		: nullptr;
+	if (!Flow || !Flow->RequestNextMission())
+	{
+		return false;
+	}
+	// 기체 선택에서 뒤로 갈 때와 같은 경로다. FrontEnd가 MissionTrailer 상태를 보고 다음 미션 브리핑을 띄운다.
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/Drone/Maps/Lvl_DroneFrontEnd")), true);
+	return true;
+}
+
+bool ADroneMissionPlayerController::ContinueToMissionLobby()
+{
+	UDroneGameFlowSubsystem* Flow = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UDroneGameFlowSubsystem>()
+		: nullptr;
+	if (!Flow)
+	{
+		return false;
+	}
+	const TArray<FName> StoryMissions = Flow->GetMissionIdsInLobbyOrder(EDroneMissionCategory::Mission);
+	if (!Flow->RequestReturnToLobbyFocusing(StoryMissions.IsEmpty() ? NAME_None : StoryMissions[0]))
+	{
+		return false;
+	}
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/Drone/Maps/Lvl_DroneFrontEnd")), true);
+	return true;
+}
+
+bool ADroneMissionPlayerController::ReturnToTitleMenu()
+{
+	UDroneGameFlowSubsystem* Flow = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UDroneGameFlowSubsystem>()
+		: nullptr;
+	if (!Flow || !Flow->RequestReturnToTitle())
+	{
+		return false;
+	}
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/Drone/Maps/Lvl_DroneFrontEnd")), true);
+	return true;
+}
+
 void ADroneMissionPlayerController::CreateDroneSelectionWidget(UDroneGameFlowSubsystem* Flow)
 {
 	if (DroneSelectionWidget || !DroneSelectionWidgetClass || !Flow)
@@ -375,6 +430,62 @@ void ADroneMissionPlayerController::HandleMissionFinished(const EDroneMissionOut
 		InputMode.SetWidgetToFocus(MissionResultWidget->TakeWidget());
 	}
 	SetInputMode(InputMode);
+}
+
+void ADroneMissionPlayerController::HandleMissionRestartRequested(const FTransform& RestartTransform)
+{
+	// 이 호출은 기체 Health의 사망 Delegate 안에서 온다. 여기서 기체를 지우면 그 Delegate가 도는 중에 소유자가 사라지므로
+	// 다음 프레임에 바꾼다.
+	PendingRestartTransform = RestartTransform;
+	if (!bCheckpointRestartPending)
+	{
+		bCheckpointRestartPending = true;
+		GetWorldTimerManager().SetTimerForNextTick(this, &ADroneMissionPlayerController::PerformCheckpointRestart);
+	}
+}
+
+void ADroneMissionPlayerController::PerformCheckpointRestart()
+{
+	bCheckpointRestartPending = false;
+	ADronePrototypePawn* OldDrone = SpawnedDrone;
+	if (!MissionDirector || !MissionDirector->IsMissionActive() || !IsValid(OldDrone) || !GetWorld())
+	{
+		return;
+	}
+	// 같은 기체 종류·같은 정의·같은 조작 방식으로 다시 띄운다. 맵과 목표 진행은 그대로다.
+	UClass* PawnClass = OldDrone->GetClass();
+	UDroneGameFlowSubsystem* Flow = GetGameInstance() ? GetGameInstance()->GetSubsystem<UDroneGameFlowSubsystem>() : nullptr;
+	UDroneDefinition* Definition = Flow ? Flow->GetSelectedDroneDefinition() : nullptr;
+	const EDroneControlMode ControlMode = OldDrone->GetControlMode();
+
+	UnPossess();
+	OldDrone->Destroy();
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = this;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+	ADronePrototypePawn* NewDrone = GetWorld()->SpawnActor<ADronePrototypePawn>(PawnClass, PendingRestartTransform, SpawnParameters);
+	if (!NewDrone || (Definition && !NewDrone->ApplyDroneDefinition(Definition)))
+	{
+		UE_LOG(LogDrone, Error, TEXT("[MISSION-CHECKPOINT] Restart Drone could not be spawned; closing the mission as Failure."));
+		if (NewDrone) NewDrone->Destroy();
+		SpawnedDrone = nullptr;
+		// 재출격을 못 하면 미션을 멈춘 채로 두지 않고 기존 실패 결과로 닫는다.
+		MissionDirector->OnMissionRestartRequested.RemoveDynamic(this, &ADroneMissionPlayerController::HandleMissionRestartRequested);
+		MissionDirector->ReportMissionFailure();
+		return;
+	}
+	NewDrone->SetControlMode(ControlMode);
+	NewDrone->SetHandlingPreset(EDroneHandlingPreset::Balanced);
+	Possess(NewDrone);
+	SpawnedDrone = NewDrone;
+	MissionDirector->RebindActiveDrone(NewDrone);
+	if (MissionObjectiveWidget)
+	{
+		MissionObjectiveWidget->SetDronePawn(NewDrone);
+	}
+	SetInputMode(FInputModeGameOnly());
+	bShowMouseCursor = false;
 }
 
 FTransform ADroneMissionPlayerController::ResolveDroneSpawnTransform() const

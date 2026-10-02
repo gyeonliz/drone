@@ -19,9 +19,11 @@ bool FDroneGameFlowContractTest::RunTest(const FString& Parameters)
 	UDroneGameFlowSubsystem* CatalogFlow = NewObject<UDroneGameFlowSubsystem>(CatalogGameInstance);
 	TestTrue(TEXT("Default Catalog registers from saved assets"), CatalogFlow && CatalogFlow->EnsureDefaultCatalog());
 	TestEqual(TEXT("Default Catalog contains five implemented Drone roles"), CatalogFlow ? CatalogFlow->GetRegisteredDroneCount() : 0, 5);
-	TestEqual(TEXT("Default Catalog contains nine Tutorial, one Racing, four Story Missions"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 14);
+	// 2026-10-01부터 Data/Missions 폴더의 새 DA가 자동 등록되므로 기본 14개는 하한이다(정확한 폴더 대조는 Drone.Flow.CatalogAutoRegistration).
+	TestTrue(TEXT("Default Catalog contains at least nine Tutorial, one Racing, four Story Missions"), CatalogFlow && CatalogFlow->GetRegisteredMissionCount() >= 14);
+	const int32 InitialMissionCount = CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0;
 	TestEqual(TEXT("Default Catalog exposes five sorted Drone IDs"), CatalogFlow ? CatalogFlow->GetRegisteredDroneIds().Num() : 0, 5);
-	TestEqual(TEXT("Default Catalog exposes fourteen sorted Mission IDs"), CatalogFlow ? CatalogFlow->GetRegisteredMissionIds().Num() : 0, 14);
+	TestEqual(TEXT("Default Catalog exposes every registered Mission ID"), CatalogFlow ? CatalogFlow->GetRegisteredMissionIds().Num() : 0, CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : -1);
 	if (CatalogFlow && CatalogFlow->GetRegisteredMissionIds().Num() == 14)
 	{
 		const TArray<FName> ExpectedMissionIds = {
@@ -43,7 +45,7 @@ bool FDroneGameFlowContractTest::RunTest(const FString& Parameters)
 	}
 	TestTrue(TEXT("Default Catalog registration is idempotent"), CatalogFlow && CatalogFlow->EnsureDefaultCatalog());
 	TestEqual(TEXT("Idempotent registration keeps five Drones"), CatalogFlow ? CatalogFlow->GetRegisteredDroneCount() : 0, 5);
-	TestEqual(TEXT("Idempotent registration keeps fourteen Missions"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, 14);
+	TestEqual(TEXT("Idempotent registration keeps the same Missions"), CatalogFlow ? CatalogFlow->GetRegisteredMissionCount() : 0, InitialMissionCount);
 
 	UGameInstance* GameInstance = NewObject<UGameInstance>();
 	UDroneGameFlowSubsystem* Flow = NewObject<UDroneGameFlowSubsystem>(GameInstance);

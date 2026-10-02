@@ -6,6 +6,7 @@
 #include "EngineUtils.h"
 #include "Flow/DroneGameFlowSubsystem.h"
 #include "Health/DroneHealthComponent.h"
+#include "Health/DroneBatteryComponent.h"
 #include "Mission/DroneMissionDefinition.h"
 #include "Prototype/DronePrototypePawn.h"
 #include "Signal/DroneJammingVolume.h"
@@ -109,10 +110,21 @@ bool ADroneMissionDirector::InitializeMission(
 	Snapshot.State = EDroneMissionRuntimeState::Active;
 	Snapshot.CurrentObjectiveIndex = 0;
 	Snapshot.Outcome = EDroneMissionOutcome::None;
+	Snapshot.RestartCount = 0;
+	Snapshot.LastCheckpointId = NAME_None;
+	MissionStartWorldSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	MissionEndWorldSeconds = -1.0;
+	// 체크포인트를 아직 안 지났으면 처음 출격한 자리에서 다시 띄운다.
+	RestartTransform = InDrone->GetActorTransform();
 	ActiveDroneHealth = InDrone->GetHealthComponent();
 	if (ActiveDroneHealth)
 	{
 		ActiveDroneHealth->OnDeath.AddUniqueDynamic(this, &ADroneMissionDirector::HandleDroneDeath);
+	}
+	ActiveDroneBattery = InDrone->GetBatteryComponent();
+	if (UDroneBatteryComponent* Battery = ActiveDroneBattery.Get())
+	{
+		Battery->OnBatteryDepleted.AddUniqueDynamic(this, &ADroneMissionDirector::HandleBatteryDepleted);
 	}
 	BindOptionalTrainingCourse();
 	BindObjectiveEvents();
@@ -203,7 +215,118 @@ bool ADroneMissionDirector::SetCurrentObjectiveProgress(const int32 NewProgress)
 
 bool ADroneMissionDirector::ReportMissionFailure()
 {
+	// 기체 파괴·제한 시간 초과·실패 Trigger가 모두 이 경로를 지난다. DA가 재출격이면 결과 화면 대신 다시 띄운다.
+	if (CanRestartFromCheckpoint())
+	{
+		return RequestCheckpointRestart();
+	}
 	return FinishMission(EDroneMissionOutcome::Failure);
+}
+
+bool ADroneMissionDirector::CanRestartFromCheckpoint() const
+{
+	return IsMissionActive()
+		&& MissionDefinition
+		&& MissionDefinition->FailureResponse == EDroneMissionFailureResponse::RestartFromCheckpoint
+		&& (MissionDefinition->MaxCheckpointRestarts <= 0 || Snapshot.RestartCount < MissionDefinition->MaxCheckpointRestarts)
+		// 새 기체를 띄울 Controller가 없으면 재출격할 수 없으니 기존처럼 결과 화면으로 간다.
+		&& OnMissionRestartRequested.IsBound();
+}
+
+bool ADroneMissionDirector::RequestCheckpointRestart()
+{
+	// 죽은 기체가 다시 사망 이벤트를 보내지 않게 먼저 끊고, 제한 시간도 멈춘다. 새 기체가 붙으면 다시 센다.
+	UnbindActiveDroneEvents();
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ObjectiveTimeoutHandle);
+	}
+	++Snapshot.RestartCount;
+	UE_LOG(LogDrone, Log, TEXT("[MISSION-CHECKPOINT] '%s' restart %d from '%s'."),
+		*Snapshot.MissionId.ToString(), Snapshot.RestartCount,
+		Snapshot.LastCheckpointId.IsNone() ? TEXT("launch point") : *Snapshot.LastCheckpointId.ToString());
+	BroadcastSnapshot();
+	OnMissionRestartRequested.Broadcast(RestartTransform);
+	return true;
+}
+
+bool ADroneMissionDirector::ActivateCheckpoint(const FName CheckpointId, const FTransform& InRestartTransform)
+{
+	if (!IsMissionActive())
+	{
+		return false;
+	}
+	RestartTransform = InRestartTransform;
+	Snapshot.LastCheckpointId = CheckpointId;
+	BroadcastSnapshot();
+	return true;
+}
+
+bool ADroneMissionDirector::RebindActiveDrone(ADronePrototypePawn* NewDrone)
+{
+	if (!IsMissionActive() || !IsValid(NewDrone))
+	{
+		return false;
+	}
+	UnbindActiveDroneEvents();
+	ActiveDrone = NewDrone;
+	BindActiveDroneEvents();
+	// 완료한 목표·진행 수는 유지하고, 지금 목표의 제한 시간만 처음부터 다시 센다(Figma M1: 타이머 리셋 후 재시작).
+	StartCurrentObjectiveTimeout();
+	BroadcastSnapshot();
+	return true;
+}
+
+void ADroneMissionDirector::BindActiveDroneEvents()
+{
+	if (!ActiveDrone)
+	{
+		return;
+	}
+	ActiveDroneHealth = ActiveDrone->GetHealthComponent();
+	if (ActiveDroneHealth)
+	{
+		ActiveDroneHealth->OnDeath.AddUniqueDynamic(this, &ADroneMissionDirector::HandleDroneDeath);
+	}
+	ActiveDroneBattery = ActiveDrone->GetBatteryComponent();
+	if (UDroneBatteryComponent* Battery = ActiveDroneBattery.Get())
+	{
+		Battery->OnBatteryDepleted.AddUniqueDynamic(this, &ADroneMissionDirector::HandleBatteryDepleted);
+	}
+	ReconScan = ActiveDrone->GetReconScanComponent();
+	PayloadDrop = ActiveDrone->GetPayloadDropComponent();
+	if (UDroneReconScanComponent* Recon = ReconScan.Get())
+	{
+		Recon->OnScanCompleted.AddUniqueDynamic(this, &ADroneMissionDirector::HandleReconScanCompleted);
+	}
+	if (UDronePayloadDropComponent* Drop = PayloadDrop.Get())
+	{
+		Drop->OnPayloadResolved.AddUniqueDynamic(this, &ADroneMissionDirector::HandlePayloadResolved);
+	}
+}
+
+void ADroneMissionDirector::UnbindActiveDroneEvents()
+{
+	if (ActiveDroneHealth)
+	{
+		ActiveDroneHealth->OnDeath.RemoveDynamic(this, &ADroneMissionDirector::HandleDroneDeath);
+	}
+	if (UDroneBatteryComponent* Battery = ActiveDroneBattery.Get())
+	{
+		Battery->OnBatteryDepleted.RemoveDynamic(this, &ADroneMissionDirector::HandleBatteryDepleted);
+	}
+	if (UDroneReconScanComponent* Recon = ReconScan.Get())
+	{
+		Recon->OnScanCompleted.RemoveDynamic(this, &ADroneMissionDirector::HandleReconScanCompleted);
+	}
+	if (UDronePayloadDropComponent* Drop = PayloadDrop.Get())
+	{
+		Drop->OnPayloadResolved.RemoveDynamic(this, &ADroneMissionDirector::HandlePayloadResolved);
+	}
+	ActiveDroneHealth = nullptr;
+	ActiveDroneBattery.Reset();
+	ReconScan.Reset();
+	PayloadDrop.Reset();
 }
 
 bool ADroneMissionDirector::RegisterObjectiveTarget(AActor* TargetActor)
@@ -241,6 +364,15 @@ void ADroneMissionDirector::HandleDroneDeath(
 	AActor* /*DamageCauser*/)
 {
 	ReportMissionFailure();
+}
+
+void ADroneMissionDirector::HandleBatteryDepleted()
+{
+	const UDroneBatteryComponent* Battery = ActiveDroneBattery.Get();
+	if (Battery && Battery->DepletedResponse == EDroneBatteryDepletedResponse::FailMission)
+	{
+		ReportMissionFailure();
+	}
 }
 
 void ADroneMissionDirector::HandleTrainingLapCompleted(FDroneTrainingLapRecord /*LapRecord*/)
@@ -300,6 +432,18 @@ void ADroneMissionDirector::HandleObjectiveTimeExpired()
 	ReportMissionFailure();
 }
 
+double ADroneMissionDirector::GetMissionElapsedSeconds() const
+{
+	if (Snapshot.State == EDroneMissionRuntimeState::Inactive)
+	{
+		return 0.0;
+	}
+	const double Now = MissionEndWorldSeconds >= 0.0
+		? MissionEndWorldSeconds
+		: (GetWorld() ? GetWorld()->GetTimeSeconds() : MissionStartWorldSeconds);
+	return FMath::Max(0.0, Now - MissionStartWorldSeconds);
+}
+
 bool ADroneMissionDirector::FinishMission(const EDroneMissionOutcome Outcome)
 {
 	UDroneGameFlowSubsystem* Flow = FlowSubsystem.Get();
@@ -309,16 +453,19 @@ bool ADroneMissionDirector::FinishMission(const EDroneMissionOutcome Outcome)
 	{
 		return false;
 	}
-	const bool bFlowCompleted = Outcome == EDroneMissionOutcome::Success && MissionDefinition
-		? Flow->CompleteMissionWithStoryFacts(
-			Outcome,
-			MissionDefinition->StoryFactsGrantedOnSuccess,
-			MissionDefinition->StoryFactsRemovedOnSuccess)
-		: Flow->CompleteMission(Outcome);
+	static const TArray<FName> NoFacts;
+	const bool bApplyFacts = Outcome == EDroneMissionOutcome::Success && MissionDefinition;
+	const double FinishedAt = GetWorld() ? GetWorld()->GetTimeSeconds() : MissionStartWorldSeconds;
+	const bool bFlowCompleted = Flow->CompleteMissionWithStoryFacts(
+		Outcome,
+		bApplyFacts ? MissionDefinition->StoryFactsGrantedOnSuccess : NoFacts,
+		bApplyFacts ? MissionDefinition->StoryFactsRemovedOnSuccess : NoFacts,
+		FMath::Max(0.0, FinishedAt - MissionStartWorldSeconds));
 	if (!bFlowCompleted)
 	{
 		return false;
 	}
+	MissionEndWorldSeconds = FinishedAt;
 
 	Snapshot.State = EDroneMissionRuntimeState::Finished;
 	Snapshot.Outcome = Outcome;
@@ -443,6 +590,11 @@ void ADroneMissionDirector::ClearRuntimeBindings()
 	{
 		ActiveDroneHealth->OnDeath.RemoveDynamic(this, &ADroneMissionDirector::HandleDroneDeath);
 	}
+	if (UDroneBatteryComponent* Battery = ActiveDroneBattery.Get())
+	{
+		Battery->OnBatteryDepleted.RemoveDynamic(this, &ADroneMissionDirector::HandleBatteryDepleted);
+	}
+	ActiveDroneBattery.Reset();
 	if (TrainingLapRecorder)
 	{
 		TrainingLapRecorder->OnLapCompleted.RemoveDynamic(

@@ -4,6 +4,8 @@
 #include "CoreMinimal.h"
 #include "Flow/DroneGameFlowTypes.h"
 #include "Mission/DroneMissionDefinition.h"
+#include "UI/DroneGamepadFocus.h"
+#include "Engine/TimerHandle.h"
 #include "DroneFrontEndRootWidget.generated.h"
 
 class UButton;
@@ -17,6 +19,7 @@ class UVerticalBox;
 class UWidget;
 class USoundBase;
 class UDroneSettingsWidget;
+class UAudioComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FDroneMissionMapLoadRequestedSignature,
@@ -67,6 +70,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Front End|Feedback")
 	TObjectPtr<USoundBase> ButtonClickSound;
 
+	/**
+	 * 로비 작전 목록 버튼 글자의 줄바꿈 폭(1920 설계 px).
+	 * AutoWrap은 새로 만든 글자의 첫 프레임에 폭을 모르기 때문에 다음 프레임에 줄바꿈을 다시 계산하며
+	 * 목록이 한 번 튄다(UI-LAYOUT-01). 고정 폭이면 첫 프레임부터 같은 줄바꿈이 나온다.
+	 * 기본 270: 1920 설계 기준 목록 열 폭 309px(렌더 진단 실측) − 버튼 좌우 여백 14×2 = 약 281px 안쪽.
+	 * 가용 폭보다 크면 글자가 버튼 밖으로 넘치고, 너무 작으면 짧은 이름도 두 줄로 꺾인다.
+	 * 목록 칸 비율이나 버튼 여백을 바꾸면 같이 조정한다. 0이면 기존 AutoWrap을 쓴다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Front End|Layout", meta=(ClampMin="0", UIMin="0"))
+	float MissionButtonLabelWrapWidth = 270.f;
+
 	UFUNCTION(BlueprintCallable, Category="Drone|Front End|Settings")
 	void SetSettingsVisible(bool bVisible);
 	UFUNCTION(BlueprintPure, Category="Drone|Front End|Settings")
@@ -103,6 +117,40 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Drone|Front End")
 	EDroneGameFlowState GetDisplayedState() const { return DisplayedState; }
+
+	/** 패드 포커스 강조 배율(UI-PAD-01). 1이면 크기를 바꾸지 않는다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Front End|Gamepad", meta=(ClampMin="1.0", ClampMax="1.3"))
+	float GamepadFocusScale = 1.06f;
+
+	/** 패드 포커스를 받은 버튼의 글자 색 배율. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Front End|Gamepad")
+	FLinearColor GamepadFocusTint = FLinearColor(1.0f, 0.86f, 0.42f, 1.0f);
+
+	/** 지금 패드 강조 중인 위젯(테스트·디버그용). */
+	UWidget* GetGamepadHighlightedWidget() const { return GamepadFocus.GetHighlighted(); }
+	/** 네이티브 로비 목록의 Index번째 미션 버튼. 없으면 nullptr. */
+	UButton* GetNativeMissionButton(int32 Index) const;
+	/** 타이틀 버튼(시작·훈련·설정·종료 순). */
+	UButton* GetTitleButton(int32 Index) const { return TitleButtons.IsValidIndex(Index) ? TitleButtons[Index].Get() : nullptr; }
+	UDroneSettingsWidget* GetSettingsWidget() const { return SettingsWidget.Get(); }
+
+	/** MISSION-BRIEFING-02: 음성이 없을 때 글자 하나당 보여 줄 시간(초). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Front End|Briefing", meta=(ClampMin="0.01"))
+	float BriefingSecondsPerCharacter = 0.075f;
+
+	/** 자막 한 줄 최소·최대 표시 시간(초). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Front End|Briefing", meta=(ClampMin="0.5"))
+	float BriefingMinLineSeconds = 2.5f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Drone|Front End|Briefing", meta=(ClampMin="0.5"))
+	float BriefingMaxLineSeconds = 9.0f;
+
+	/** 지금 보여 주는 브리핑 대사 번호. 대사가 없으면 INDEX_NONE. */
+	UFUNCTION(BlueprintPure, Category="Drone|Front End|Briefing")
+	int32 GetBriefingLineIndex() const { return BriefingLineIndex; }
+
+	/** 지금 대사를 건너뛰고 다음 대사로 간다(패드 Y·Tab). 마지막 대사면 false. */
+	UFUNCTION(BlueprintCallable, Category="Drone|Front End|Briefing")
+	bool SkipBriefingLine();
 
 	UFUNCTION(BlueprintPure, Category="Drone|Front End")
 	bool IsUsingNativeFallbackLayout() const { return bUsingNativeFallbackLayout; }
@@ -161,6 +209,7 @@ protected:
 	virtual void NativePreConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
 	UFUNCTION()
@@ -191,6 +240,40 @@ private:
 	TObjectPtr<UDroneSettingsWidget> SettingsWidget;
 	UPROPERTY(Transient)
 	bool bSettingsVisible = false;
+
+	/** UI-PAD-01: 화면별 첫 포커스·강조. */
+	FDroneGamepadFocus GamepadFocus;
+	/** 타이틀 화면에서 마지막으로 포커스했던 버튼. 로비·설정에서 돌아오면 여기로 복귀한다. */
+	TWeakObjectPtr<UWidget> LastTitleFocus;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UButton>> TitleButtons;
+
+	void RequestScreenFocus(EDroneGameFlowState State);
+
+	/** MISSION-BRIEFING-02 */
+	void StartBriefingLines();
+	void ShowBriefingLine(int32 Index);
+	void StopBriefingLines();
+	/** 브리핑을 시작할 때 고른 미션의 대사 중 스토리 조건에 맞는 것만 담는다. */
+	TArray<struct FDroneMissionBriefingLine> ActiveBriefingLines;
+	int32 BriefingLineIndex = INDEX_NONE;
+	float BriefingLineDuration = 0.0f;
+	/** 자동 진행은 월드 타이머로 센다. 위젯 Tick은 화면을 그릴 때만 돌아 진행 시간이 그리기에 묶인다. */
+	FTimerHandle BriefingLineTimer;
+	void HandleBriefingLineTimer();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> BriefingVoice;
+
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UWidget> MissionBriefingSubtitlePanel;
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UTextBlock> MissionBriefingSpeakerText;
+	UPROPERTY(Transient, meta=(BindWidgetOptional))
+	TObjectPtr<UTextBlock> MissionBriefingLineText;
+	TArray<UWidget*> GetGamepadHighlightables() const;
+	void ConfigureMissionScroll(class UScrollBox* MissionScroll) const;
 	UFUNCTION()
 	void HandleTutorialTabClicked();
 	UFUNCTION()
@@ -227,6 +310,11 @@ private:
 	void ApplyDisplayedState(EDroneGameFlowState State);
 	void RefreshLobbyContent();
 	void RebuildNativeMissionButtons(const TArray<FName>& MissionIds);
+	/** 이미 만든 버튼이 같은 목록·같은 부모에 그대로 있으면 true. 이때는 다시 만들지 않고 갱신만 한다. */
+	bool CanReuseNativeMissionButtons(const TArray<FName>& MissionIds) const;
+	/** 버튼 하나의 글자와 선택 색만 현재 Flow 상태에 맞춘다. 위젯을 새로 만들지 않는다. */
+	void RefreshNativeMissionButton(int32 Index, FName MissionId);
+	void ApplyMissionButtonLabelWrap(UTextBlock* Label) const;
 	void RefreshMissionBriefingContent();
 	void ClearFlowBinding();
 	void ApplyTitleButtonStyle(UButton* Button);
@@ -314,6 +402,16 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UDroneMissionSelectionButton>> NativeMissionButtons;
+
+	/** NativeMissionButtons와 같은 순서의 글자 위젯과 Mission ID. 재사용 판정과 제자리 갱신에 쓴다. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> NativeMissionButtonLabels;
+
+	UPROPERTY(Transient)
+	TArray<FName> NativeMissionButtonIds;
+
+	/** 지금 라벨들에 실제로 적용된 줄바꿈 폭. MissionButtonLabelWrapWidth와 다르면 재사용 때 다시 적용한다. */
+	float AppliedMissionButtonLabelWrapWidth = -1.f;
 
 	UPROPERTY(Transient, meta=(BindWidgetOptional))
 	TObjectPtr<UTextBlock> MissionNameText;

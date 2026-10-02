@@ -64,4 +64,12 @@ struct FDroneGameFlowSnapshot
 	/** Front-end 계층이 한 번 소비할 수 있는 로비 복귀 요청이다. */
 	UPROPERTY(BlueprintReadOnly, Category="Drone Flow")
 	bool bLobbyReturnRequested = false;
+
+	/** 마지막 미션 출격부터 결과까지 걸린 시간(초, 재출격 포함). 모르면 음수(TUT-PROGRESS-01). */
+	UPROPERTY(BlueprintReadOnly, Category="Drone Flow")
+	double LastMissionElapsedSeconds = -1.0;
+
+	/** 이번 실행(GameInstance) 동안 성공한 미션. 영구 저장 여부는 현재 미정이라 다시 켜면 비워진다. */
+	UPROPERTY(BlueprintReadOnly, Category="Drone Flow")
+	TArray<FName> CompletedMissionIds;
 };

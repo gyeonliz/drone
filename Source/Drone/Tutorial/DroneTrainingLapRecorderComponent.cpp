@@ -4,6 +4,10 @@
 #include "Telemetry/DroneTelemetryComponent.h"
 #include "Tutorial/DroneTrainingGate.h"
 #include "Tutorial/DroneTrainingGateSequenceComponent.h"
+#include "Tutorial/DroneTrainingCourse.h"
+#include "Tutorial/DroneTrainingRecordSubsystem.h"
+#include "Engine/GameInstance.h"
+#include "Engine/World.h"
 
 namespace DroneTrainingLapRecorder
 {
@@ -478,6 +482,35 @@ void UDroneTrainingLapRecorderComponent::CompleteLap(const double EndTimeSeconds
 	// 비교 평균은 반드시 현재 Lap을 History에 넣기 전에 계산한다.
 	LastCompletedComparison = BuildLapComparison(SuccessfulLaps, LapRecord);
 	SuccessfulLaps.Add(LapRecord);
+
+	// TUT-BEST-01: 유효한 완주를 코스·기체·조작 방식 조합의 저장 최고 기록과 비교하고, 더 빠르면 저장한다.
+	const ADronePrototypePawn* Drone = Cast<ADronePrototypePawn>(ActiveDrone.Get());
+	const ADroneTrainingCourse* Course = Cast<ADroneTrainingCourse>(GetOwner());
+	UGameInstance* GameInstance = GetWorld() ? GetWorld()->GetGameInstance() : nullptr;
+	if (UDroneTrainingRecordSubsystem* Records = GameInstance ? GameInstance->GetSubsystem<UDroneTrainingRecordSubsystem>() : nullptr;
+		Records && Drone && Course)
+	{
+		bool bHadSaved = false;
+		double SavedBest = 0.0;
+		const bool bNewSaved = Records->SubmitLap(Course->GetCourseId(), Drone->GetAppliedDroneId(), Drone->GetControlMode(),
+			LapRecord.ElapsedSeconds, bHadSaved, SavedBest);
+		FDroneTrainingLapComparison& Comparison = LastCompletedComparison;
+		Comparison.bHasSavedBest = bHadSaved;
+		Comparison.SavedBestElapsedSeconds = bHadSaved ? SavedBest : 0.0;
+		Comparison.bIsNewSavedBest = bNewSaved;
+		if (bHadSaved)
+		{
+			// 화면의 "최고 기록"은 이번 실행 History와 저장 기록 중 더 빠른 쪽이다.
+			const double MemoryBest = Comparison.bHasPreviousBaseline ? Comparison.BestElapsedSeconds : LapRecord.ElapsedSeconds;
+			Comparison.BestElapsedSeconds = FMath::Min(MemoryBest, SavedBest);
+			Comparison.bIsNewBestTime = LapRecord.ElapsedSeconds < SavedBest
+				&& (!Comparison.bHasPreviousBaseline || Comparison.bIsNewBestTime);
+		}
+		else if (!Comparison.bHasPreviousBaseline)
+		{
+			Comparison.BestElapsedSeconds = LapRecord.ElapsedSeconds;
+		}
+	}
 
 	UnbindActiveDrone();
 	RecordState = EDroneTrainingLapRecordState::Completed;

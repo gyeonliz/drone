@@ -65,7 +65,20 @@ struct DRONE_API FDroneMissionRuntimeSnapshot
 
 	UPROPERTY(BlueprintReadOnly, Category="Drone Mission")
 	EDroneMissionOutcome Outcome = EDroneMissionOutcome::None;
+
+	/** 이번 미션에서 체크포인트 재출격을 한 횟수(MISSION-CHECKPOINT-01). */
+	UPROPERTY(BlueprintReadOnly, Category="Drone Mission")
+	int32 RestartCount = 0;
+
+	/** 마지막으로 지난 체크포인트. 없으면 None이며 재출격은 처음 출격 지점에서 한다. */
+	UPROPERTY(BlueprintReadOnly, Category="Drone Mission")
+	FName LastCheckpointId = NAME_None;
 };
+
+/** 실패를 재출격으로 처리할 때 Controller에게 기체를 다시 띄울 위치를 알린다. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FDroneMissionRestartRequestedSignature,
+	const FTransform&, RestartTransform);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FDroneMissionRuntimeSnapshotChangedSignature,

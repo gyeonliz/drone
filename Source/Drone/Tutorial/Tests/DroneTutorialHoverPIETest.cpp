@@ -107,7 +107,9 @@ public:
 		}
 
 		const FName MissionId(TEXT("Mission.Tutorial.Hover"));
-		Test->TestTrue(TEXT("Hover PIE finishes Opening"), Widget->FinishOpeningTrailer());
+		// 2026-10 로비 개편 이후 타이틀 [시작]은 Story, [훈련]은 Tutorial 탭으로 들어간다.
+		// 둘 다 타이틀(OpeningTrailer)에서만 호출할 수 있으므로 FinishOpeningTrailer 대신 OpenTrainingLobby를 쓴다.
+		Test->TestTrue(TEXT("Hover PIE opens the Training lobby from the title"), Widget->OpenTrainingLobby());
 		Test->TestTrue(TEXT("Hover PIE selects the Hover lesson"), Widget->SelectLobbyMission(MissionId));
 		Test->TestTrue(TEXT("Hover PIE confirms the Hover lesson"), Widget->ConfirmSelectedMission());
 		Test->TestTrue(TEXT("Hover PIE finishes the briefing"), Widget->FinishMissionBriefing());
